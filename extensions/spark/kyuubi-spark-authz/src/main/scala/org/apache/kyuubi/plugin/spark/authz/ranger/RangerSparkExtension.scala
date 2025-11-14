@@ -51,6 +51,7 @@ class RangerSparkExtension extends (SparkSessionExtensions => Unit) {
     v1.injectResolutionRule(RuleApplyRowFilter)
     v1.injectResolutionRule(RuleApplyDataMaskingStage0)
     v1.injectResolutionRule(RuleApplyDataMaskingStage1)
+    v1.injectPostHocResolutionRule(RuleAuthorization)
     v1.injectOptimizerRule(_ => RuleEliminateMarker)
     v1.injectOptimizerRule(RuleAuthorization)
     v1.injectOptimizerRule(RuleEliminatePermanentViewMarker)

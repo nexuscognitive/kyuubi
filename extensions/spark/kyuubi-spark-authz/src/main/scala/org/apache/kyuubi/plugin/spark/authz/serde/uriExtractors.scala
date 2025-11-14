@@ -24,6 +24,7 @@ import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, SubqueryAlias}
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.execution.datasources.HadoopFsRelation
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
+import org.apache.hadoop.fs.Path
 
 import org.apache.kyuubi.plugin.spark.authz.util.PathIdentifier._
 import org.apache.kyuubi.util.reflect.ReflectUtils.invokeAs
@@ -44,6 +45,16 @@ class StringURIExtractor extends URIExtractor {
     v1 match {
       case uriPath: String => Seq(Uri(uriPath))
       case Some(uriPath: String) => Seq(Uri(uriPath))
+      case _ => Nil
+    }
+  }
+}
+
+class PathURIExtractor extends URIExtractor {
+  override def apply(spark: SparkSession, v1: AnyRef): Seq[Uri] = {
+    v1 match {
+      case path: Path => Seq(Uri(path.toString))
+      case Some(path: Path) => Seq(Uri(path.toString))
       case _ => Nil
     }
   }
