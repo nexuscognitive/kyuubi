@@ -17,224 +17,235 @@
 
 package org.apache.kyuubi.plugin.spark.authz.ranger
 
-import java.io.File
-import java.util
-
 import scala.language.implicitConversions
 
 import org.apache.ranger.plugin.policyengine.RangerAccessResourceImpl
+import org.apache.spark.sql.SparkSession
 
-import org.apache.kyuubi.plugin.spark.authz.{ObjectType, PrivilegeObject}
+import org.apache.kyuubi.plugin.spark.authz.ObjectType
 import org.apache.kyuubi.plugin.spark.authz.ObjectType._
-import org.apache.kyuubi.plugin.spark.authz.OperationType.OperationType
+import org.apache.kyuubi.plugin.spark.authz.serde.{Database, Table}
 
-class AccessResource private (val objectType: ObjectType, val catalog: Option[String])
+/**
+ * Extended AccessResource that supports catalog-aware resource building.
+ * 
+ * This class builds Ranger access resources with either:
+ * - Hive-style: database/table/column (legacy)
+ * - Catalog-style: catalog/schema/table/column (for Trino/unified services)
+ * 
+ * The mode is controlled by spark.ranger.plugin.spark.resource.mode configuration.
+ */
+class AccessResource private (
+    val objectType: ObjectType,
+    val catalog: Option[String])
   extends RangerAccessResourceImpl {
+
   implicit def asString(obj: Object): String = if (obj != null) obj.asInstanceOf[String] else null
+
   def getDatabase: String = getValue("database")
   def getTable: String = getValue("table")
   def getColumn: String = getValue("column")
+  def getSchema: String = getValue("schema")
+  def getCatalog: String = getValue("catalog")
+  def getUrl: String = getValue("url")
+
   def getColumns: Seq[String] = {
     val columnStr = getColumn
     if (columnStr == null) Nil else columnStr.split(",").filter(_.nonEmpty)
   }
-  // New: support schema key for Trino-style service definitions
-  def getSchema: String = getValue("schema")
-  def getCatalog: String = getValue("catalog")
 }
 
 object AccessResource {
 
-  /**
-   * Configuration key to enable catalog-aware resource building.
-   * When enabled, resources use catalog/schema/table/column hierarchy (Trino-style)
-   * instead of database/table/column (Hive-style).
-   * 
-   * Set via ranger-spark-security.xml or spark conf:
-   * ranger.plugin.spark.resource.catalog.enabled=true
-   */
-  val CATALOG_RESOURCE_ENABLED_KEY = "ranger.plugin.spark.resource.catalog.enabled"
-  
-  /**
-   * Configuration key for default catalog mapping.
-   * Maps Spark's default catalog name to the target catalog name in Ranger policies.
-   * 
-   * Example: spark_catalog -> iceberg
-   * ranger.plugin.spark.catalog.default.spark=spark_catalog
-   * ranger.plugin.spark.catalog.default.target=iceberg
-   */
-  val CATALOG_DEFAULT_SPARK_KEY = "ranger.plugin.spark.catalog.default.spark"
-  val CATALOG_DEFAULT_TARGET_KEY = "ranger.plugin.spark.catalog.default.target"
-  
-  /**
-   * Additional catalog mappings in format: spark_name:target_name,other:mapped
-   * ranger.plugin.spark.catalog.mapping=hive_metastore:hive,delta:delta
-   */
+  // Configuration keys
+  val RESOURCE_MODE_KEY = "ranger.plugin.spark.resource.mode"
+  val CATALOG_MAPPING_ENABLED_KEY = "ranger.plugin.spark.catalog.mapping.enabled"
+  val DEFAULT_SPARK_CATALOG_KEY = "ranger.plugin.spark.catalog.default.spark"
+  val DEFAULT_TARGET_CATALOG_KEY = "ranger.plugin.spark.catalog.default.target"
   val CATALOG_MAPPING_KEY = "ranger.plugin.spark.catalog.mapping"
 
-  // Lazy initialization of configuration
-  @volatile private var catalogResourceEnabled: Option[Boolean] = None
-  @volatile private var catalogMapping: Map[String, String] = Map.empty
-  @volatile private var defaultSparkCatalog: String = "spark_catalog"
-  @volatile private var defaultTargetCatalog: String = "iceberg"
+  // Resource modes
+  val MODE_HIVE = "hive"
+  val MODE_CATALOG = "catalog"
 
-  private def initConfig(): Unit = synchronized {
-    if (catalogResourceEnabled.isEmpty) {
-      val conf = SparkRangerAdminPlugin.getRangerConf
-      
-      catalogResourceEnabled = Some(
-        conf.getBoolean(CATALOG_RESOURCE_ENABLED_KEY, false)
-      )
-      
-      if (catalogResourceEnabled.get) {
-        defaultSparkCatalog = conf.get(CATALOG_DEFAULT_SPARK_KEY, "spark_catalog")
-        defaultTargetCatalog = conf.get(CATALOG_DEFAULT_TARGET_KEY, "iceberg")
-        
-        val mappingStr = conf.get(CATALOG_MAPPING_KEY, "")
-        val additionalMappings = if (mappingStr.nonEmpty) {
-          mappingStr.split(",").flatMap { pair =>
-            val parts = pair.trim.split(":")
-            if (parts.length == 2) Some(parts(0).trim -> parts(1).trim) else None
-          }.toMap
-        } else Map.empty[String, String]
-        
-        // Build full mapping: explicit mappings + default catalog mapping
-        catalogMapping = additionalMappings + (defaultSparkCatalog -> defaultTargetCatalog)
+  // Default values
+  val DEFAULT_SPARK_CATALOG = "spark_catalog"
+  val DEFAULT_TARGET_CATALOG = "iceberg"
+
+  // Cached configuration
+  @volatile private var initialized = false
+  @volatile private var resourceMode = MODE_HIVE
+  @volatile private var mappingEnabled = false
+  @volatile private var sparkDefaultCatalog = DEFAULT_SPARK_CATALOG
+  @volatile private var targetDefaultCatalog = DEFAULT_TARGET_CATALOG
+  @volatile private var catalogMapping: Map[String, String] = Map.empty
+
+  /**
+   * Initialize configuration from SparkSession.
+   */
+  private def initialize(spark: SparkSession): Unit = synchronized {
+    if (!initialized) {
+      resourceMode = spark.conf.get(RESOURCE_MODE_KEY, MODE_HIVE)
+      mappingEnabled = spark.conf.getOption(CATALOG_MAPPING_ENABLED_KEY)
+        .exists(_.equalsIgnoreCase("true"))
+
+      if (mappingEnabled) {
+        sparkDefaultCatalog = spark.conf.get(DEFAULT_SPARK_CATALOG_KEY, DEFAULT_SPARK_CATALOG)
+        targetDefaultCatalog = spark.conf.get(DEFAULT_TARGET_CATALOG_KEY, DEFAULT_TARGET_CATALOG)
+
+        val mappingStr = spark.conf.get(CATALOG_MAPPING_KEY, "")
+        catalogMapping = parseMappingString(mappingStr) + (sparkDefaultCatalog -> targetDefaultCatalog)
       }
+
+      initialized = true
     }
   }
 
   /**
-   * Check if catalog-aware resource building is enabled.
+   * Parse catalog mapping string: "spark:target,other:mapped"
    */
-  def isCatalogResourceEnabled: Boolean = {
-    initConfig()
-    catalogResourceEnabled.getOrElse(false)
+  private def parseMappingString(mappingStr: String): Map[String, String] = {
+    if (mappingStr == null || mappingStr.trim.isEmpty) {
+      Map.empty
+    } else {
+      mappingStr.split(",").flatMap { pair =>
+        val parts = pair.trim.split(":")
+        if (parts.length == 2) Some(parts(0).trim -> parts(1).trim)
+        else None
+      }.toMap
+    }
   }
 
   /**
-   * Map a Spark catalog name to the target catalog name for Ranger policies.
-   * Returns the original name if no mapping exists.
+   * Map a Spark catalog name to its Ranger policy equivalent.
    */
-  def mapCatalog(catalog: Option[String]): Option[String] = {
-    initConfig()
-    if (!isCatalogResourceEnabled) {
+  def mapCatalog(catalog: String)(implicit spark: SparkSession): String = {
+    if (!initialized) initialize(spark)
+
+    if (!mappingEnabled || catalog == null || catalog.isEmpty) {
       catalog
     } else {
-      catalog match {
-        case Some(cat) => Some(catalogMapping.getOrElse(cat, cat))
-        case None => Some(defaultTargetCatalog) // Use default when no catalog specified
-      }
+      catalogMapping.getOrElse(catalog, catalog)
     }
   }
 
-  def apply(
-      objectType: ObjectType,
-      firstLevelResource: String,
-      secondLevelResource: String,
-      thirdLevelResource: String,
-      owner: Option[String] = None,
-      catalog: Option[String] = None): AccessResource = {
-    val resource = new AccessResource(objectType, catalog)
+  /**
+   * Get the effective catalog name, applying mapping and defaults.
+   */
+  def getEffectiveCatalog(catalog: Option[String])(implicit spark: SparkSession): String = {
+    if (!initialized) initialize(spark)
 
-    // Determine if we should use catalog-aware (Trino-style) resource hierarchy
-    val useCatalogResource = isCatalogResourceEnabled
-    
-    // Map the catalog name if catalog-aware mode is enabled
-    val mappedCatalog = if (useCatalogResource) mapCatalog(catalog) else None
-
-    resource.objectType match {
-      case DATABASE =>
-        if (useCatalogResource) {
-          // Trino-style: catalog/schema
-          mappedCatalog.foreach(c => resource.setValue("catalog", c))
-          resource.setValue("schema", firstLevelResource)
-        } else {
-          // Hive-style: database
-          resource.setValue("database", firstLevelResource)
-        }
-        
-      case FUNCTION =>
-        if (useCatalogResource) {
-          // Trino-style: catalog/schema/function
-          mappedCatalog.foreach(c => resource.setValue("catalog", c))
-          resource.setValue("schema", Option(firstLevelResource).getOrElse(""))
-          resource.setValue("function", secondLevelResource)
-        } else {
-          // Hive-style: database/udf
-          resource.setValue("database", Option(firstLevelResource).getOrElse(""))
-          resource.setValue("udf", secondLevelResource)
-        }
-        
-      case COLUMN =>
-        if (useCatalogResource) {
-          // Trino-style: catalog/schema/table/column
-          mappedCatalog.foreach(c => resource.setValue("catalog", c))
-          resource.setValue("schema", firstLevelResource)
-          resource.setValue("table", secondLevelResource)
-          resource.setValue("column", thirdLevelResource)
-        } else {
-          // Hive-style: database/table/column
-          resource.setValue("database", firstLevelResource)
-          resource.setValue("table", secondLevelResource)
-          resource.setValue("column", thirdLevelResource)
-        }
-        
-      case TABLE | VIEW | INDEX =>
-        if (useCatalogResource) {
-          // Trino-style: catalog/schema/table
-          mappedCatalog.foreach(c => resource.setValue("catalog", c))
-          resource.setValue("schema", firstLevelResource)
-          resource.setValue("table", secondLevelResource)
-        } else {
-          // Hive-style: database/table
-          resource.setValue("database", firstLevelResource)
-          resource.setValue("table", secondLevelResource)
-        }
-        
-      case URI =>
-        // URL resource is the same for both styles
-        val objectList = new util.ArrayList[String]
-        Option(firstLevelResource)
-          .filter(_.nonEmpty)
-          .foreach { path =>
-            val s = path.stripSuffix(File.separator)
-            objectList.add(s)
-            objectList.add(s + File.separator)
-          }
-        resource.setValue("url", objectList)
+    val rawCatalog = catalog.getOrElse(sparkDefaultCatalog)
+    if (mappingEnabled) {
+      catalogMapping.getOrElse(rawCatalog, rawCatalog)
+    } else {
+      rawCatalog
     }
-    resource.setServiceDef(SparkRangerAdminPlugin.getServiceDef)
-    owner.foreach(resource.setOwnerUser)
+  }
+
+  /**
+   * Check if catalog-aware mode is enabled.
+   */
+  def isCatalogMode(implicit spark: SparkSession): Boolean = {
+    if (!initialized) initialize(spark)
+    resourceMode == MODE_CATALOG
+  }
+
+  /**
+   * Build a table resource for Ranger authorization.
+   * 
+   * In catalog mode: catalog/schema/table/column
+   * In hive mode: database/table/column
+   */
+  def buildTableResource(
+      table: Table,
+      columns: Seq[String] = Seq.empty)(implicit spark: SparkSession): AccessResource = {
+    if (!initialized) initialize(spark)
+
+    val resource = new AccessResource(TABLE, table.catalog)
+
+    if (resourceMode == MODE_CATALOG) {
+      // Catalog-aware mode (Trino-style)
+      val effectiveCatalog = getEffectiveCatalog(table.catalog)
+      resource.setValue("catalog", effectiveCatalog)
+      table.database.foreach(db => resource.setValue("schema", db))
+      resource.setValue("table", table.table)
+      if (columns.nonEmpty) {
+        resource.setValue("column", columns.mkString(","))
+      }
+    } else {
+      // Legacy Hive mode
+      table.database.foreach(db => resource.setValue("database", db))
+      resource.setValue("table", table.table)
+      if (columns.nonEmpty) {
+        resource.setValue("column", columns.mkString(","))
+      }
+    }
+
     resource
   }
 
-  def apply(
-      objectType: ObjectType,
-      firstLevelResource: String,
-      catalog: Option[String]): AccessResource = {
-    apply(objectType, firstLevelResource, null, null, catalog = catalog)
-  }
+  /**
+   * Build a database/schema resource for Ranger authorization.
+   */
+  def buildDatabaseResource(
+      database: Database)(implicit spark: SparkSession): AccessResource = {
+    if (!initialized) initialize(spark)
 
-  def apply(
-      obj: PrivilegeObject,
-      opType: OperationType): AccessResource = {
-    apply(
-      ObjectType(obj, opType),
-      obj.dbname,
-      obj.objectName,
-      obj.columns.mkString(","),
-      obj.owner,
-      obj.catalog)
+    val resource = new AccessResource(DATABASE, database.catalog)
+
+    if (resourceMode == MODE_CATALOG) {
+      val effectiveCatalog = getEffectiveCatalog(database.catalog)
+      resource.setValue("catalog", effectiveCatalog)
+      database.database.foreach(db => resource.setValue("schema", db))
+    } else {
+      database.database.foreach(db => resource.setValue("database", db))
+    }
+
+    resource
   }
 
   /**
-   * Reset configuration cache (for testing purposes).
+   * Build a URL resource for path-based authorization.
    */
-  def resetConfig(): Unit = synchronized {
-    catalogResourceEnabled = None
+  def buildUrlResource(url: String): AccessResource = {
+    val resource = new AccessResource(URI, None)
+    resource.setValue("url", url)
+    resource
+  }
+
+  /**
+   * Build a function/UDF resource.
+   */
+  def buildFunctionResource(
+      database: Option[String],
+      functionName: String,
+      catalog: Option[String] = None)(implicit spark: SparkSession): AccessResource = {
+    if (!initialized) initialize(spark)
+
+    val resource = new AccessResource(FUNCTION, catalog)
+
+    if (resourceMode == MODE_CATALOG && catalog.isDefined) {
+      val effectiveCatalog = getEffectiveCatalog(catalog)
+      resource.setValue("catalog", effectiveCatalog)
+      database.foreach(db => resource.setValue("schema", db))
+    } else {
+      database.foreach(db => resource.setValue("database", db))
+    }
+    resource.setValue("udf", functionName)
+
+    resource
+  }
+
+  /**
+   * Reset cached configuration (for testing).
+   */
+  def reset(): Unit = synchronized {
+    initialized = false
+    resourceMode = MODE_HIVE
+    mappingEnabled = false
+    sparkDefaultCatalog = DEFAULT_SPARK_CATALOG
+    targetDefaultCatalog = DEFAULT_TARGET_CATALOG
     catalogMapping = Map.empty
-    defaultSparkCatalog = "spark_catalog"
-    defaultTargetCatalog = "iceberg"
   }
 }
