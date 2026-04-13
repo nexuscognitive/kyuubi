@@ -108,11 +108,10 @@ class TFrontendServiceSuite extends KyuubiFunSuite {
     val conf2 = KyuubiConf()
       .set(FRONTEND_CONNECTION_URL_USE_HOSTNAME, false)
       .set(FRONTEND_THRIFT_BINARY_BIND_PORT, 0)
-      .unset(FRONTEND_THRIFT_BINARY_BIND_HOST)
-      .unset(FRONTEND_BIND_HOST)
+      .set(FRONTEND_THRIFT_BINARY_BIND_HOST.key, "localhost")
     service2.initialize(conf2)
-    // use ip
-    assert(service2.connectionUrl.split("\\.")(0).toInt > 0)
+    // use what user configured
+    assert(service2.connectionUrl.startsWith("localhost"))
   }
 
   test("advertised host") {
