@@ -45,14 +45,7 @@ object ServiceUtils {
     endIdx
   }
 
-  def getShortName(userName: String): String = {
-    val indexOfDomainMatch = ServiceUtils.indexOfDomainMatch(userName)
-    if (indexOfDomainMatch <= 0) {
-      userName
-    } else {
-      userName.substring(0, indexOfDomainMatch)
-    }
-  }
+  def getShortName(userName: String): String = { userName }
 
   /**
    * Close the Closeable objects and <b>ignore</b> any [[IOException]] or

@@ -21,10 +21,8 @@ import java.io._
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path, Paths, StandardCopyOption}
 import java.security.PrivilegedAction
-import java.text.SimpleDateFormat
-import java.util.{Date, Properties, TimeZone, UUID}
+import java.util.{Properties, TimeZone, UUID}
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.locks.Lock
 
 import scala.collection.JavaConverters._
@@ -49,7 +47,6 @@ object Utils extends Logging {
    * An atomic counter used in writeToTempFile method
    * avoiding duplication in temporary file name generation
    */
-  private lazy val tempFileIdCounter: AtomicLong = new AtomicLong(0)
 
   def strToSeq(s: String, sp: String = ","): Seq[String] = {
     require(s != null)
@@ -204,13 +201,8 @@ object Utils extends Logging {
       if (!dir.toFile.exists()) {
         dir.toFile.mkdirs()
       }
-      val (prefix, suffix) = fileName.lastIndexOf(".") match {
-        case i if i > 0 => (fileName.substring(0, i), fileName.substring(i))
-        case _ => (fileName, "")
-      }
-      val currentTime = new SimpleDateFormat("yyyyMMddHHmmss").format(new Date())
-      val identifier = s"$currentTime-${tempFileIdCounter.incrementAndGet()}"
-      val filePath = Paths.get(dir.toString, s"$prefix-$identifier$suffix")
+      // Preserve original filename - collision avoidance is handled by batch-specific directory
+      val filePath = Paths.get(dir.toString, fileName)
       try {
         Files.copy(source, filePath, StandardCopyOption.REPLACE_EXISTING)
       } finally {
@@ -220,9 +212,7 @@ object Utils extends Logging {
       filePath.toFile
     } catch {
       case e: Exception =>
-        error(
-          s"failed to write to temp file in path $dir, original file name: $fileName",
-          e)
+        error(s"failed to write to temp file in path $dir, original file name: $fileName", e)
         throw e
     }
   }

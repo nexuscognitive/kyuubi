@@ -60,10 +60,12 @@ case class RuleAuthorization(spark: SparkSession) extends Authorization(spark) {
       resource.objectType match {
         case ObjectType.COLUMN if resource.getColumns.nonEmpty =>
           resource.getColumns.map { col =>
+            val dbOrSchema = Option(resource.getDatabase).orElse(Option(resource.getSchema))
+              .orNull
             val cr =
               AccessResource(
                 COLUMN,
-                resource.getDatabase,
+                dbOrSchema,
                 resource.getTable,
                 col,
                 Option(resource.getOwnerUser),
