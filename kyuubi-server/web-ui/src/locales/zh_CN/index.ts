@@ -21,6 +21,8 @@ export default {
   client_ip: '客户端地址',
   server_ip: '服务端地址',
   kyuubi_instance: '服务端实例',
+  session_type: '类型',
+  status: '状态',
   session_id: 'Session ID',
   operation_id: 'Operation ID',
   create_time: '创建时间',

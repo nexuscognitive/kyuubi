@@ -18,11 +18,16 @@
 package org.apache.kyuubi.server.api.v1
 
 import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 import javax.ws.rs._
 import javax.ws.rs.core.{MediaType, Response}
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ListBuffer
+import scala.concurrent.{Await, Future}
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.duration._
+import scala.util.{Failure, Success, Try}
 
 import io.swagger.v3.oas.annotations.media.{ArraySchema, Content, Schema}
 import io.swagger.v3.oas.annotations.responses.ApiResponse
@@ -45,6 +50,58 @@ import org.apache.kyuubi.session.{KyuubiSession, KyuubiSessionManager, SessionHa
 @Tag(name = "Admin")
 @Produces(Array(MediaType.APPLICATION_JSON))
 private[v1] class AdminResource extends ApiRequestContext with Logging {
+
+  // Shared internal rest clients keyed by peer instance (host:port), reused across requests.
+  // Mirrors the cache BatchesResource uses for batch redirection.
+  private val internalRestClients = new ConcurrentHashMap[String, InternalRestClient]()
+  private lazy val internalSocketTimeout =
+    fe.getConf.get(BATCH_INTERNAL_REST_CLIENT_SOCKET_TIMEOUT).toInt
+  private lazy val internalConnectTimeout =
+    fe.getConf.get(BATCH_INTERNAL_REST_CLIENT_CONNECT_TIMEOUT).toInt
+  private lazy val internalRequestMaxAttempts =
+    fe.getConf.get(BATCH_INTERNAL_REST_CLIENT_REQUEST_MAX_ATTEMPTS)
+  private lazy val internalRequestAttemptWait =
+    fe.getConf.get(BATCH_INTERNAL_REST_CLIENT_REQUEST_ATTEMPT_WAIT).toInt
+  private lazy val internalSecurityEnabled =
+    fe.getConf.get(ENGINE_SECURITY_ENABLED)
+  // Upper bound on a cluster-wide fan-out read; dead/slow peers are dropped, never block forever.
+  private val peerFanOutTimeout = 10.seconds
+
+  private def getInternalRestClient(kyuubiInstance: String): InternalRestClient = {
+    internalRestClients.computeIfAbsent(
+      kyuubiInstance,
+      (inst: String) =>
+        new InternalRestClient(
+          inst,
+          fe.getConf.get(FRONTEND_PROXY_HTTP_CLIENT_IP_HEADER),
+          internalSocketTimeout,
+          internalConnectTimeout,
+          internalSecurityEnabled,
+          internalRequestMaxAttempts,
+          internalRequestAttemptWait))
+  }
+
+  /**
+   * REST endpoints (host:port) of all peer Kyuubi servers except self.
+   *
+   * Discovery registers the THRIFT_BINARY frontend's connectionUrl (host:thriftPort), but our
+   * fan-out talks to peers over REST. In a homogeneous deployment (k8s StatefulSet / identical
+   * config) every node uses the same REST bind port, so we remap each discovered host to this
+   * node's REST port. Self is excluded by comparing against fe.connectionUrl (the REST url).
+   *
+   * Requires a registering frontend to be enabled (THRIFT_BINARY) - otherwise discovery is empty.
+   */
+  private def peerInstances(): Seq[String] = {
+    val myRestUrl = fe.connectionUrl
+    val restPort = myRestUrl.substring(myRestUrl.lastIndexOf(":") + 1)
+    val serverSpec = DiscoveryPaths.makePath(null, fe.getConf.get(HA_NAMESPACE))
+    withDiscoveryClient(fe.getConf) { discoveryClient =>
+      discoveryClient.getServiceNodesInfo(serverSpec)
+        .map(node => s"${node.host}:$restPort")
+        .filter(_ != myRestUrl)
+        .distinct
+    }
+  }
 
   @ApiResponse(
     responseCode = "200",
@@ -171,10 +228,12 @@ private[v1] class AdminResource extends ApiRequestContext with Logging {
   @Path("sessions")
   def sessions(
       @QueryParam("users") users: String,
-      @QueryParam("sessionType") sessionType: String): Seq[SessionData] = {
+      @QueryParam("sessionType") sessionType: String,
+      @QueryParam("clusterWide") @DefaultValue("false") clusterWide: Boolean): Seq[SessionData] = {
     val userName = fe.getSessionUser(Map.empty[String, String])
     val ipAddress = fe.getIpAddress
-    info(s"Received listing all live sessions request from $userName/$ipAddress")
+    info(s"Received listing all live sessions request from $userName/$ipAddress" +
+      (if (clusterWide) " (cluster-wide)" else ""))
     if (!fe.isAdministrator(userName)) {
       throw new ForbiddenException(
         s"$userName is not allowed to list all live sessions")
@@ -188,7 +247,32 @@ private[v1] class AdminResource extends ApiRequestContext with Logging {
       val usersSet = users.split(",").toSet
       sessions = sessions.filter(session => usersSet.contains(session.user))
     }
-    sessions.map(session => ApiUtils.sessionData(session.asInstanceOf[KyuubiSession])).toSeq
+    val localData =
+      sessions.map(session => ApiUtils.sessionData(session.asInstanceOf[KyuubiSession])).toSeq
+
+    if (!clusterWide) return localData
+
+    // Fan-out: query each peer's PLAIN (non-aggregating) list in parallel, tolerate dead peers.
+    val peerFutures = peerInstances().map { inst =>
+      Future {
+        Try(getInternalRestClient(inst).listLocalSessions(userName)) match {
+          case Success(rows) => rows
+          case Failure(e) =>
+            error(s"Failed to list sessions from peer $inst (showing partial results)", e)
+            Seq.empty[SessionData]
+        }
+      }
+    }
+    val peerData = Try(Await.result(Future.sequence(peerFutures), peerFanOutTimeout))
+      .getOrElse(Seq.empty).flatten
+      // peers ran the no-arg list, so re-apply the requested filters here
+      .filter(s => StringUtils.isBlank(sessionType) || sessionType.equals(s.getSessionType))
+      .filter { s =>
+        StringUtils.isBlank(users) || users.split(",").toSet.contains(s.getUser)
+      }
+
+    // dedupe by session handle (a session lives on exactly one instance, but be defensive)
+    (localData ++ peerData).groupBy(_.getIdentifier).values.map(_.head).toSeq
   }
 
   @ApiResponse(
@@ -197,7 +281,9 @@ private[v1] class AdminResource extends ApiRequestContext with Logging {
     description = "Close a session")
   @DELETE
   @Path("sessions/{sessionHandle}")
-  def closeSession(@PathParam("sessionHandle") sessionHandleStr: String): Response = {
+  def closeSession(
+      @PathParam("sessionHandle") sessionHandleStr: String,
+      @QueryParam("kyuubiInstance") kyuubiInstance: String): Response = {
     val userName = fe.getSessionUser(Map.empty[String, String])
     val ipAddress = fe.getIpAddress
     info(s"Received closing a session request from $userName/$ipAddress")
@@ -205,8 +291,23 @@ private[v1] class AdminResource extends ApiRequestContext with Logging {
       throw new ForbiddenException(
         s"$userName is not allowed to close the session $sessionHandleStr")
     }
-    fe.be.closeSession(SessionHandle.fromUUID(sessionHandleStr))
-    Response.ok(s"Session $sessionHandleStr is closed successfully.").build()
+
+    // Forward to the owning instance when the hint points elsewhere. The forwarded close
+    // carries no kyuubiInstance hint, so the peer acts locally and never ping-pongs back.
+    if (StringUtils.isNotBlank(kyuubiInstance) && kyuubiInstance != fe.connectionUrl) {
+      info(s"Redirecting close session[$sessionHandleStr] to $kyuubiInstance")
+      getInternalRestClient(kyuubiInstance).closeSession(userName, sessionHandleStr)
+      return Response.ok(s"Session $sessionHandleStr closed on $kyuubiInstance.").build()
+    }
+
+    val handle = SessionHandle.fromUUID(sessionHandleStr)
+    fe.be.sessionManager.getSessionOption(handle) match {
+      case Some(_) =>
+        fe.be.closeSession(handle)
+        Response.ok(s"Session $sessionHandleStr is closed successfully.").build()
+      case None =>
+        throw new NotFoundException(s"Invalid session handle: $sessionHandleStr")
+    }
   }
 
   @ApiResponse(
@@ -222,10 +323,13 @@ private[v1] class AdminResource extends ApiRequestContext with Logging {
   def listOperations(
       @QueryParam("users") users: String,
       @QueryParam("sessionHandle") sessionHandle: String,
-      @QueryParam("sessionType") sessionType: String): Seq[OperationData] = {
+      @QueryParam("sessionType") sessionType: String,
+      @QueryParam("clusterWide") @DefaultValue("false")
+      clusterWide: Boolean): Seq[OperationData] = {
     val userName = fe.getSessionUser(Map.empty[String, String])
     val ipAddress = fe.getIpAddress
-    info(s"Received listing all of the active operations request from $userName/$ipAddress")
+    info(s"Received listing all of the active operations request from $userName/$ipAddress" +
+      (if (clusterWide) " (cluster-wide)" else ""))
     if (!fe.isAdministrator(userName)) {
       throw new ForbiddenException(
         s"$userName is not allowed to list all the operations")
@@ -244,8 +348,33 @@ private[v1] class AdminResource extends ApiRequestContext with Logging {
         sessionType.equalsIgnoreCase(
           operation.getSession.asInstanceOf[KyuubiSession].sessionType.toString))
     }
-    operations
+    val localData = operations
       .map(operation => ApiUtils.operationData(operation.asInstanceOf[KyuubiOperation])).toSeq
+
+    if (!clusterWide) return localData
+
+    // Fan-out: query each peer's PLAIN (non-aggregating) list in parallel, tolerate dead peers.
+    val peerFutures = peerInstances().map { inst =>
+      Future {
+        Try(getInternalRestClient(inst).listLocalOperations(userName)) match {
+          case Success(rows) => rows
+          case Failure(e) =>
+            error(s"Failed to list operations from peer $inst (showing partial results)", e)
+            Seq.empty[OperationData]
+        }
+      }
+    }
+    val peerData = Try(Await.result(Future.sequence(peerFutures), peerFanOutTimeout))
+      .getOrElse(Seq.empty).flatten
+      // peers ran the no-arg list, so re-apply the requested filters here.
+      .filter(o =>
+        StringUtils.isBlank(sessionType) || sessionType.equalsIgnoreCase(o.getSessionType))
+      .filter(o => StringUtils.isBlank(sessionHandle) || sessionHandle.equals(o.getSessionId))
+      .filter { o =>
+        StringUtils.isBlank(users) || users.split(",").toSet.contains(o.getSessionUser)
+      }
+
+    (localData ++ peerData).groupBy(_.getIdentifier).values.map(_.head).toSeq
   }
 
   @ApiResponse(
@@ -254,7 +383,9 @@ private[v1] class AdminResource extends ApiRequestContext with Logging {
     description = "close an operation")
   @DELETE
   @Path("operations/{operationHandle}")
-  def closeOperation(@PathParam("operationHandle") operationHandleStr: String): Response = {
+  def closeOperation(
+      @PathParam("operationHandle") operationHandleStr: String,
+      @QueryParam("kyuubiInstance") kyuubiInstance: String): Response = {
     val userName = fe.getSessionUser(Map.empty[String, String])
     val ipAddress = fe.getIpAddress
     info(s"Received close an operation request from $userName/$ipAddress")
@@ -262,6 +393,15 @@ private[v1] class AdminResource extends ApiRequestContext with Logging {
       throw new ForbiddenException(
         s"$userName is not allowed to close the operation $operationHandleStr")
     }
+
+    // Forward to the owning instance when the hint points elsewhere. No hint on the forwarded
+    // call, so the peer acts locally and never re-forwards.
+    if (StringUtils.isNotBlank(kyuubiInstance) && kyuubiInstance != fe.connectionUrl) {
+      info(s"Redirecting close operation[$operationHandleStr] to $kyuubiInstance")
+      getInternalRestClient(kyuubiInstance).closeOperation(userName, operationHandleStr)
+      return Response.ok(s"Operation $operationHandleStr closed on $kyuubiInstance.").build()
+    }
+
     val operationHandle = OperationHandle(operationHandleStr)
     fe.be.closeOperation(operationHandle)
     Response.ok(s"Operation $operationHandleStr is closed successfully.").build()

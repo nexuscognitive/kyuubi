@@ -69,6 +69,20 @@ class SparkProcessBuilder(
   override def mainClass: String = "org.apache.kyuubi.engine.spark.SparkSQLEngine"
 
   /**
+   * Set the `SPARK_USER` environment variable on the spark-submit launcher process to the
+   * submitting user, unless it has already been provided. Spark reads `SPARK_USER` when
+   * resolving the current user, so this ensures the engine runs as the submitting user.
+   */
+  override def env: Map[String, String] = {
+    val baseEnv = super.env
+    if (baseEnv.contains("SPARK_USER")) {
+      baseEnv
+    } else {
+      baseEnv + ("SPARK_USER" -> proxyUser)
+    }
+  }
+
+  /**
    * Add `spark.master` if KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT
    * are defined. So we can deploy spark on kubernetes without setting `spark.master`
    * explicitly when kyuubi-servers are on kubernetes, which also helps in case that
@@ -150,6 +164,7 @@ class SparkProcessBuilder(
       engineLogPathConf ++
       extraYarnConf(allConf) ++
       appendPodNameConf(allConf) ++
+      appendYuniKornUserInfoConf(allConf) ++
       prepareK8sFileUploadPath() ++
       engineWaitCompletionConf).foreach {
       case (k, v) => buffer ++= confKeyValue(convertConfigKey(k), v)
@@ -271,6 +286,25 @@ class SparkProcessBuilder(
             forciblyRewriteDriverPodName)
           map += (KUBERNETES_DRIVER_POD_NAME -> name)
         }
+      }
+    }
+    map.result().toMap
+  }
+
+  /**
+   * Inject the YuniKorn `user.info` annotation for the driver and executor pods so that the
+   * scheduler attributes the application to the submitting user. The annotations are only added
+   * on Kubernetes and only when they are not already provided by the user.
+   */
+  def appendYuniKornUserInfoConf(conf: Map[String, String]): Map[String, String] = {
+    val map = mutable.Map.newBuilder[String, String]
+    if (clusterManager().exists(cm => cm.toLowerCase(Locale.ROOT).startsWith("k8s"))) {
+      val userInfo = s"""{"user":"$proxyUser"}"""
+      if (!conf.contains(KUBERNETES_DRIVER_YUNIKORN_USER_INFO_ANNOTATION)) {
+        map += (KUBERNETES_DRIVER_YUNIKORN_USER_INFO_ANNOTATION -> userInfo)
+      }
+      if (!conf.contains(KUBERNETES_EXECUTOR_YUNIKORN_USER_INFO_ANNOTATION)) {
+        map += (KUBERNETES_EXECUTOR_YUNIKORN_USER_INFO_ANNOTATION -> userInfo)
       }
     }
     map.result().toMap
@@ -406,6 +440,10 @@ object SparkProcessBuilder {
   final val KUBERNETES_EXECUTOR_POD_NAME_PREFIX = "spark.kubernetes.executor.podNamePrefix"
   final val KUBERNETES_SUBMISSION_WAIT_APP_COMPLETION =
     "spark.kubernetes.submission.waitAppCompletion"
+  final val KUBERNETES_DRIVER_YUNIKORN_USER_INFO_ANNOTATION =
+    "spark.kubernetes.driver.annotation.yunikorn.apache.org/user.info"
+  final val KUBERNETES_EXECUTOR_YUNIKORN_USER_INFO_ANNOTATION =
+    "spark.kubernetes.executor.annotation.yunikorn.apache.org/user.info"
   final val YARN_MAX_APP_ATTEMPTS_KEY = "spark.yarn.maxAppAttempts"
   final val YARN_SUBMIT_WAIT_APP_COMPLETION = "spark.yarn.submit.waitAppCompletion"
   final val INTERNAL_RESOURCE = "spark-internal"

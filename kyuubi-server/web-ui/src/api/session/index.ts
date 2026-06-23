@@ -20,14 +20,16 @@ import request from '@/utils/request'
 export function getAllSessions() {
   return request({
     url: 'api/v1/admin/sessions',
-    method: 'get'
+    method: 'get',
+    params: { clusterWide: true }
   })
 }
 
-export function deleteSession(sessionId: string) {
+export function deleteSession(sessionId: string, kyuubiInstance?: string) {
   return request({
     url: `api/v1/admin/sessions/${sessionId}`,
-    method: 'delete'
+    method: 'delete',
+    params: kyuubiInstance ? { kyuubiInstance } : {}
   })
 }
 

@@ -32,6 +32,24 @@
         prop="kyuubiInstance"
         :label="$t('kyuubi_instance')"
         width="180px" />
+      <el-table-column
+        prop="sessionType"
+        :label="$t('session_type')"
+        width="120px" />
+      <el-table-column :label="$t('status')" width="120px">
+        <template #default="scope">
+          <el-tooltip
+            v-if="scope.row.exception"
+            effect="dark"
+            :content="scope.row.exception"
+            placement="top">
+            <el-tag type="danger">ERROR</el-tag>
+          </el-tooltip>
+          <el-tag v-else :type="sessionStatus(scope.row) === 'ACTIVE' ? 'success' : 'info'">
+            {{ sessionStatus(scope.row) }}
+          </el-tag>
+        </template>
+      </el-table-column>
       <!-- TODO need jump to session page -->
       <el-table-column :label="$t('session_id')" width="300px">
         <template #default="scope">
@@ -53,7 +71,9 @@
         <template #default="scope">
           <el-popconfirm
             :title="$t('operation.delete_confirm')"
-            @confirm="handleDeleteSession(scope.row.identifier)">
+            @confirm="
+              handleDeleteSession(scope.row.identifier, scope.row.kyuubiInstance)
+            ">
             <template #reference>
               <span>
                 <el-tooltip
@@ -82,8 +102,23 @@
   import { Router, useRouter } from 'vue-router'
   const { t } = useI18n()
   const { tableData, loading, getList: _getList } = useTable()
-  const handleDeleteSession = (sessionId: string) => {
-    deleteSession(sessionId)
+  // Coarse, derived connection-level status (no cross-instance join needed):
+  // recently-active session with live operations => ACTIVE, otherwise IDLE.
+  const sessionStatus = (row: {
+    totalOperations?: number
+    idleTime?: number
+  }): string => {
+    if (
+      (row.totalOperations ?? 0) > 0 &&
+      row.idleTime != null &&
+      row.idleTime < 60000
+    ) {
+      return 'ACTIVE'
+    }
+    return 'IDLE'
+  }
+  const handleDeleteSession = (sessionId: string, kyuubiInstance?: string) => {
+    deleteSession(sessionId, kyuubiInstance)
       .then(() => {
         // need add delete success or failed logic after api support
         ElMessage({

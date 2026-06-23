@@ -26,6 +26,10 @@
         width="300" />
       <el-table-column prop="statement" :label="$t('statement')" width="160" />
       <el-table-column prop="state" :label="$t('state')" width="160" />
+      <el-table-column
+        prop="kyuubiInstance"
+        :label="$t('kyuubi_instance')"
+        width="180" />
       <el-table-column :label="$t('start_time')" width="160">
         <template #default="scope">
           {{
@@ -60,7 +64,13 @@
             <el-popconfirm
               v-if="!isTerminalState(scope.row.state)"
               :title="$t('operation.cancel_confirm')"
-              @confirm="handleOperate(scope.row.identifier, 'CANCEL')">
+              @confirm="
+                handleOperate(
+                  scope.row.identifier,
+                  scope.row.kyuubiInstance,
+                  'CANCEL'
+                )
+              ">
               <template #reference>
                 <span>
                   <el-tooltip
@@ -76,7 +86,13 @@
             </el-popconfirm>
             <el-popconfirm
               :title="$t('operation.close_confirm')"
-              @confirm="handleOperate(scope.row.identifier, 'CLOSE')">
+              @confirm="
+                handleOperate(
+                  scope.row.identifier,
+                  scope.row.kyuubiInstance,
+                  'CLOSE'
+                )
+              ">
               <template #reference>
                 <span>
                   <el-tooltip
@@ -98,7 +114,7 @@
 </template>
 
 <script lang="ts" setup>
-  import { getAllOperations, actionOnOperation } from '@/api/operation'
+  import { getAllOperations, deleteOperation } from '@/api/operation'
   import { millTransfer } from '@/utils/unit'
   import { format } from 'date-fns'
   import { useI18n } from 'vue-i18n'
@@ -107,17 +123,31 @@
 
   const { t } = useI18n()
   const { tableData, loading, getList: _getList } = useTable()
-  const handleOperate = (operationId: string, action: 'CANCEL' | 'CLOSE') => {
-    actionOnOperation(operationId, { action: action }).then(() => {
-      // TODO add delete success or failed logic after api support
-      ElMessage({
-        message: t(`${action.toLowerCase()}_succeeded`, {
-          operationId: operationId
-        }),
-        type: 'success'
+  // Route the close to the owning instance (admin endpoint). Closing a RUNNING
+  // operation cancels the query; this is the cluster-wide "cancel any operation".
+  const handleOperate = (
+    operationId: string,
+    kyuubiInstance: string,
+    action: 'CANCEL' | 'CLOSE'
+  ) => {
+    deleteOperation(operationId, kyuubiInstance)
+      .then(() => {
+        ElMessage({
+          message: t(`message.${action.toLowerCase()}_succeeded`, {
+            name: 'operation'
+          }),
+          type: 'success'
+        })
       })
-      getList()
-    })
+      .catch(() => {
+        ElMessage({
+          message: t('message.delete_failed', { name: 'operation' }),
+          type: 'error'
+        })
+      })
+      .finally(() => {
+        getList()
+      })
   }
   const getList = () => {
     _getList(getAllOperations)

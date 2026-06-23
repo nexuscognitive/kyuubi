@@ -22,12 +22,14 @@ import java.util.concurrent.{Future, TimeUnit}
 import java.util.concurrent.atomic.{AtomicBoolean, AtomicInteger}
 import java.util.concurrent.locks.ReentrantLock
 import javax.servlet.DispatcherType
+import javax.servlet.http.{HttpServlet, HttpServletRequest, HttpServletResponse}
 import javax.ws.rs.WebApplicationException
 import javax.ws.rs.core.Response.Status
 
 import com.google.common.annotations.VisibleForTesting
+import com.google.common.io.ByteStreams
 import org.apache.hadoop.conf.Configuration
-import org.eclipse.jetty.servlet.{ErrorPageErrorHandler, FilterHolder}
+import org.eclipse.jetty.servlet.{ErrorPageErrorHandler, FilterHolder, ServletHolder}
 
 import org.apache.kyuubi.{KyuubiException, Utils}
 import org.apache.kyuubi.config.KyuubiConf
@@ -91,7 +93,8 @@ class KyuubiRestFrontendService(override val serverable: Serverable)
     conf.get(KyuubiConf.SERVER_ADMINISTRATORS) + Utils.currentUser
 
   def isAdministrator(userName: String): Boolean =
-    if (securityEnabled) administrators.contains(userName) else true
+    if (securityEnabled) administrators.contains("*") || administrators.contains(userName)
+    else true
 
   override def initialize(conf: KyuubiConf): Unit = synchronized {
     this.conf = conf
@@ -135,10 +138,31 @@ class KyuubiRestFrontendService(override val serverable: Serverable)
     server.addRedirectHandler("/", "/ui")
 
     val servletHandler = JettyUtils.createStaticHandler("dist", "/ui")
-    // HTML5 Web History Mode requires redirect any url path under Web UI Servlet to the main page.
-    // See more details at https://router.vuejs.org/guide/essentials/history-mode.html#html5-mode
+
+    // HTML5 history mode (vue-router): a deep link or refresh on /ui/<route> reaches the server
+    // for a path that is not a real file, so DefaultServlet returns 404. Serve index.html with
+    // HTTP 200 for those so the SPA can resolve the route client-side.
+    // See https://router.vuejs.org/guide/essentials/history-mode.html#html5-mode
+    // Note: mapping the 404 page to "/" relies on welcome-file resolution during an ERROR
+    // dispatch (unreliable, and keeps the 404 status); a dedicated servlet is deterministic.
+    val indexHtml: Array[Byte] = {
+      val url = Thread.currentThread().getContextClassLoader.getResource("dist/index.html")
+      if (url == null) throw new KyuubiException("Could not find dist/index.html for Web UI")
+      val in = url.openStream()
+      try ByteStreams.toByteArray(in)
+      finally in.close()
+    }
+    val spaFallbackServlet = new HttpServlet {
+      override def doGet(req: HttpServletRequest, resp: HttpServletResponse): Unit = {
+        resp.setStatus(HttpServletResponse.SC_OK)
+        resp.setContentType("text/html; charset=utf-8")
+        resp.getOutputStream.write(indexHtml)
+      }
+    }
+    servletHandler.addServlet(new ServletHolder(spaFallbackServlet), "/spa-fallback")
+
     val errorHandler = new ErrorPageErrorHandler
-    errorHandler.addErrorPage(404, "/")
+    errorHandler.addErrorPage(HttpServletResponse.SC_NOT_FOUND, "/spa-fallback")
     servletHandler.setErrorHandler(errorHandler)
     server.addHandler(servletHandler)
   }

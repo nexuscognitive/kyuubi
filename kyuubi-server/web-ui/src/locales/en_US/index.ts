@@ -21,6 +21,8 @@ export default {
   client_ip: 'Client IP',
   server_ip: 'Server IP',
   kyuubi_instance: 'Kyuubi Instance',
+  session_type: 'Type',
+  status: 'Status',
   session_id: 'Session ID',
   operation_id: 'Operation ID',
   create_time: 'Create Time',

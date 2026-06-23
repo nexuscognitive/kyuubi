@@ -3344,7 +3344,8 @@ object KyuubiConf {
       .doc("Comma-separated list of Kyuubi service administrators. " +
         "We use this config to grant admin permission to any service accounts when " +
         s"security mechanism is enabled. Note, when ${AUTHENTICATION_METHOD.key} is " +
-        "configured to NOSASL or NONE, everyone is treated as administrator.")
+        "configured to NOSASL or NONE, everyone is treated as administrator. " +
+        "Use the wildcard '*' to treat everyone as an administrator.")
       .version("1.8.0")
       .serverOnly
       .stringConf
