@@ -17,13 +17,13 @@
 
 org.apache.kyuubi.plugin.spark.authz.serde.CatalogPluginCatalogExtractor
 org.apache.kyuubi.plugin.spark.authz.serde.CatalogPluginOptionCatalogExtractor
-org.apache.kyuubi.plugin.spark.authz.serde.StringOptionCatalogExtractor
-org.apache.kyuubi.plugin.spark.authz.serde.DataSourceV2RelationCatalogExtractor
-org.apache.kyuubi.plugin.spark.authz.serde.ResolvedTableCatalogExtractor
-org.apache.kyuubi.plugin.spark.authz.serde.ResolvedIdentifierCatalogExtractor
-org.apache.kyuubi.plugin.spark.authz.serde.ResolvedDbObjectNameCatalogExtractor
 org.apache.kyuubi.plugin.spark.authz.serde.CatalogTableCatalogExtractor
 org.apache.kyuubi.plugin.spark.authz.serde.CatalogTableOptionCatalogExtractor
+org.apache.kyuubi.plugin.spark.authz.serde.DataSourceV2RelationCatalogExtractor
+org.apache.kyuubi.plugin.spark.authz.serde.ResolvedDbObjectNameCatalogExtractor
+org.apache.kyuubi.plugin.spark.authz.serde.ResolvedIdentifierCatalogExtractor
+org.apache.kyuubi.plugin.spark.authz.serde.ResolvedNamespaceCatalogExtractor
+org.apache.kyuubi.plugin.spark.authz.serde.ResolvedTableCatalogExtractor
+org.apache.kyuubi.plugin.spark.authz.serde.StringOptionCatalogExtractor
 org.apache.kyuubi.plugin.spark.authz.serde.TableIdentifierCatalogExtractor
 org.apache.kyuubi.plugin.spark.authz.serde.TableIdentifierOptionCatalogExtractor
-org.apache.kyuubi.plugin.spark.authz.serde.ResolvedNamespaceCatalogExtractor

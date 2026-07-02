@@ -58,6 +58,14 @@ trait SparkSessionProvider {
         "spark.sql.warehouse.dir",
         Utils.createTempDir("spark-warehouse").toString)
       .config("spark.sql.extensions", sqlExtensions)
+      // Authz runs in catalog mode (the deployed default). The test Ranger
+      // policies are authored under a single `iceberg` catalog, so map every
+      // catalog the test suites use onto it.
+      .config(
+        "ranger.plugin.spark.catalog.mapping",
+        "spark_catalog:iceberg,local:iceberg,testcat:iceberg," +
+          "paimon_catalog:iceberg,jdbc_catalog:iceberg," +
+          "default_cache_iceberg:iceberg")
       .withExtensions(extension)
       .config(extraSparkConf)
 

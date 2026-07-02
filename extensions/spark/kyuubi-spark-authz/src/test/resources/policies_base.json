@@ -550,7 +550,7 @@
       "rowFilterPolicyItems": [
         {
           "rowFilterInfo": {
-            "filterExpr": "key\u003c20"
+            "filterExpr": "key<20"
           },
           "accesses": [
             {
@@ -608,7 +608,7 @@
       "rowFilterPolicyItems": [
         {
           "rowFilterInfo": {
-            "filterExpr": "key\u003c20"
+            "filterExpr": "key<20"
           },
           "accesses": [
             {
@@ -1264,7 +1264,7 @@
         "defaultValue": "",
         "validationRegEx": "",
         "validationMessage": "",
-        "uiHint": "{\"TextFieldWithIcon\":true, \"info\": \"1.For Remote Mode, eg.\u003cbr\u003ejdbc:hive2://\u0026lt;host\u0026gt;:\u0026lt;port\u0026gt;\u003cbr\u003e2.For Embedded Mode (no host or port), eg.\u003cbr\u003ejdbc:hive2:///;initFile\u003d\u0026lt;file\u0026gt;\u003cbr\u003e3.For HTTP Mode, eg.\u003cbr\u003ejdbc:hive2://\u0026lt;host\u0026gt;:\u0026lt;port\u0026gt;/;\u003cbr\u003etransportMode\u003dhttp;httpPath\u003d\u0026lt;httpPath\u0026gt;\u003cbr\u003e4.For SSL Mode, eg.\u003cbr\u003ejdbc:hive2://\u0026lt;host\u0026gt;:\u0026lt;port\u0026gt;/;ssl\u003dtrue;\u003cbr\u003esslTrustStore\u003dtStore;trustStorePassword\u003dpw\u003cbr\u003e5.For ZooKeeper Mode, eg.\u003cbr\u003ejdbc:hive2://\u0026lt;host\u0026gt;/;serviceDiscoveryMode\u003d\u003cbr\u003ezooKeeper;zooKeeperNamespace\u003dhiveserver2\u003cbr\u003e6.For Kerberos Mode, eg.\u003cbr\u003ejdbc:hive2://\u0026lt;host\u0026gt;:\u0026lt;port\u0026gt;/;\u003cbr\u003eprincipal\u003dhive/domain@EXAMPLE.COM\u003cbr\u003e\"}"
+        "uiHint": "{\"TextFieldWithIcon\":true, \"info\": \"1.For Remote Mode, eg.<br>jdbc:hive2://&lt;host&gt;:&lt;port&gt;<br>2.For Embedded Mode (no host or port), eg.<br>jdbc:hive2:///;initFile=&lt;file&gt;<br>3.For HTTP Mode, eg.<br>jdbc:hive2://&lt;host&gt;:&lt;port&gt;/;<br>transportMode=http;httpPath=&lt;httpPath&gt;<br>4.For SSL Mode, eg.<br>jdbc:hive2://&lt;host&gt;:&lt;port&gt;/;ssl=true;<br>sslTrustStore=tStore;trustStorePassword=pw<br>5.For ZooKeeper Mode, eg.<br>jdbc:hive2://&lt;host&gt;/;serviceDiscoveryMode=<br>zooKeeper;zooKeeperNamespace=hiveserver2<br>6.For Kerberos Mode, eg.<br>jdbc:hive2://&lt;host&gt;:&lt;port&gt;/;<br>principal=hive/domain@EXAMPLE.COM<br>\"}"
       },
       {
         "itemId": 5,
@@ -1280,7 +1280,7 @@
     "resources": [
       {
         "itemId": 1,
-        "name": "database",
+        "name": "catalog",
         "type": "string",
         "level": 10,
         "mandatory": true,
@@ -1295,39 +1295,41 @@
         "validationRegEx": "",
         "validationMessage": "",
         "uiHint": "",
-        "label": "Hive Database",
-        "description": "Hive Database",
+        "label": "Catalog",
+        "description": "Catalog",
         "accessTypeRestrictions": [],
-        "isValidLeaf": false
+        "isValidLeaf": true,
+        "parent": ""
       },
       {
-        "itemId": 5,
-        "name": "url",
+        "itemId": 2,
+        "name": "schema",
         "type": "string",
-        "level": 10,
+        "level": 20,
         "mandatory": true,
-        "lookupSupported": false,
-        "recursiveSupported": true,
-        "excludesSupported": false,
-        "matcher": "org.apache.ranger.plugin.resourcematcher.RangerPathResourceMatcher",
+        "lookupSupported": true,
+        "recursiveSupported": false,
+        "excludesSupported": true,
+        "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
         "matcherOptions": {
           "wildCard": "true",
-          "ignoreCase": "false"
+          "ignoreCase": "true"
         },
         "validationRegEx": "",
         "validationMessage": "",
         "uiHint": "",
-        "label": "URL",
-        "description": "URL",
+        "label": "Schema",
+        "description": "Schema / Namespace",
         "accessTypeRestrictions": [],
-        "isValidLeaf": true
+        "isValidLeaf": true,
+        "parent": "catalog"
       },
       {
-        "itemId": 2,
+        "itemId": 3,
         "name": "table",
         "type": "string",
-        "level": 20,
-        "parent": "database",
+        "level": 30,
+        "parent": "schema",
         "mandatory": true,
         "lookupSupported": true,
         "recursiveSupported": false,
@@ -1343,14 +1345,14 @@
         "label": "Hive Table",
         "description": "Hive Table",
         "accessTypeRestrictions": [],
-        "isValidLeaf": false
+        "isValidLeaf": true
       },
       {
-        "itemId": 3,
+        "itemId": 4,
         "name": "udf",
         "type": "string",
-        "level": 20,
-        "parent": "database",
+        "level": 30,
+        "parent": "schema",
         "mandatory": true,
         "lookupSupported": true,
         "recursiveSupported": false,
@@ -1369,10 +1371,10 @@
         "isValidLeaf": true
       },
       {
-        "itemId": 4,
+        "itemId": 5,
         "name": "column",
         "type": "string",
-        "level": 30,
+        "level": 40,
         "parent": "table",
         "mandatory": true,
         "lookupSupported": true,
@@ -1388,6 +1390,28 @@
         "uiHint": "",
         "label": "Hive Column",
         "description": "Hive Column",
+        "accessTypeRestrictions": [],
+        "isValidLeaf": true
+      },
+      {
+        "itemId": 6,
+        "name": "url",
+        "type": "string",
+        "level": 10,
+        "mandatory": true,
+        "lookupSupported": false,
+        "recursiveSupported": true,
+        "excludesSupported": false,
+        "matcher": "org.apache.ranger.plugin.resourcematcher.RangerPathResourceMatcher",
+        "matcherOptions": {
+          "wildCard": "true",
+          "ignoreCase": "false"
+        },
+        "validationRegEx": "",
+        "validationMessage": "",
+        "uiHint": "",
+        "label": "URL",
+        "description": "URL",
         "accessTypeRestrictions": [],
         "isValidLeaf": true
       }
@@ -1473,7 +1497,7 @@
           "itemId": 1,
           "name": "MASK",
           "label": "Redact",
-          "description": "Replace lowercase with \u0027x\u0027, uppercase with \u0027X\u0027, digits with \u00270\u0027",
+          "description": "Replace lowercase with 'x', uppercase with 'X', digits with '0'",
           "transformer": "mask({col})",
           "dataMaskOptions": {}
         },
@@ -1481,16 +1505,16 @@
           "itemId": 2,
           "name": "MASK_SHOW_LAST_4",
           "label": "Partial mask: show last 4",
-          "description": "Show last 4 characters; replace rest with \u0027x\u0027",
-          "transformer": "mask_show_last_n({col}, 4, \u0027x\u0027, \u0027x\u0027, \u0027x\u0027, -1, \u00271\u0027)",
+          "description": "Show last 4 characters; replace rest with 'x'",
+          "transformer": "mask_show_last_n({col}, 4, 'x', 'x', 'x', -1, '1')",
           "dataMaskOptions": {}
         },
         {
           "itemId": 3,
           "name": "MASK_SHOW_FIRST_4",
           "label": "Partial mask: show first 4",
-          "description": "Show first 4 characters; replace rest with \u0027x\u0027",
-          "transformer": "mask_show_first_n({col}, 4, \u0027x\u0027, \u0027x\u0027, \u0027x\u0027, -1, \u00271\u0027)",
+          "description": "Show first 4 characters; replace rest with 'x'",
+          "transformer": "mask_show_first_n({col}, 4, 'x', 'x', 'x', -1, '1')",
           "dataMaskOptions": {}
         },
         {
@@ -1520,7 +1544,7 @@
           "name": "MASK_DATE_SHOW_YEAR",
           "label": "Date: show only year",
           "description": "Date: show only year",
-          "transformer": "mask({col}, \u0027x\u0027, \u0027x\u0027, \u0027x\u0027, -1, \u00271\u0027, 1, 0, -1)",
+          "transformer": "mask({col}, 'x', 'x', 'x', -1, '1', 1, 0, -1)",
           "dataMaskOptions": {}
         },
         {
@@ -1542,7 +1566,29 @@
       "resources": [
         {
           "itemId": 1,
-          "name": "database",
+          "name": "catalog",
+          "type": "string",
+          "level": 10,
+          "mandatory": true,
+          "lookupSupported": true,
+          "recursiveSupported": false,
+          "excludesSupported": false,
+          "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+          "matcherOptions": {
+            "wildCard": "false",
+            "ignoreCase": "true"
+          },
+          "validationRegEx": "",
+          "validationMessage": "",
+          "uiHint": "{ \"singleValue\":true }",
+          "label": "Hive Database",
+          "description": "Hive Database",
+          "accessTypeRestrictions": [],
+          "isValidLeaf": false
+        },
+        {
+          "itemId": 1,
+          "name": "schema",
           "type": "string",
           "level": 10,
           "mandatory": true,
@@ -1622,7 +1668,29 @@
       "resources": [
         {
           "itemId": 1,
-          "name": "database",
+          "name": "catalog",
+          "type": "string",
+          "level": 10,
+          "mandatory": true,
+          "lookupSupported": true,
+          "recursiveSupported": false,
+          "excludesSupported": false,
+          "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+          "matcherOptions": {
+            "wildCard": "false",
+            "ignoreCase": "true"
+          },
+          "validationRegEx": "",
+          "validationMessage": "",
+          "uiHint": "{ \"singleValue\":true }",
+          "label": "Hive Database",
+          "description": "Hive Database",
+          "accessTypeRestrictions": [],
+          "isValidLeaf": false
+        },
+        {
+          "itemId": 1,
+          "name": "schema",
           "type": "string",
           "level": 10,
           "mandatory": true,

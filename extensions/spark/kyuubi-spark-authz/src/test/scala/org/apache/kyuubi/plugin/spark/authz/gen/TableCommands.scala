@@ -38,7 +38,10 @@ object TableCommands extends CommandSpecs[TableCommandSpec] {
 
   val AlterTable = {
     val cmd = "org.apache.spark.sql.catalyst.plans.logical.AlterTable"
-    val tableDesc = TableDesc("ident", classOf[IdentifierTableExtractor])
+    val tableDesc = TableDesc(
+      "ident",
+      classOf[IdentifierTableExtractor],
+      catalogDesc = Some(CatalogDesc()))
     val uriDescs = Seq(UriDesc("ident", classOf[IdentifierURIExtractor]))
     TableCommandSpec(cmd, Seq(tableDesc), ALTERTABLE_PROPERTIES, uriDescs = uriDescs)
   }

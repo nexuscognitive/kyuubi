@@ -167,6 +167,14 @@ class StringTableExtractor extends TableExtractor {
       case 1 => Table(None, None, tableNameArr(0), None)
       case 2 => Table(None, Some(tableNameArr(0)), tableNameArr(1), None)
       case 3 => Table(Some(tableNameArr(0)), Some(tableNameArr(1)), tableNameArr(2), None)
+      // 4+ parts: catalog.<multi-level namespace>.table, where the namespace levels
+      // are flattened into a single (dot-joined) database string.
+      case _ =>
+        Table(
+          Some(tableNameArr.head),
+          Some(quote(tableNameArr.slice(1, tableNameArr.length - 1))),
+          tableNameArr.last,
+          None)
     }
     Option(maybeTable)
   }
@@ -195,6 +203,14 @@ class ArrayBufferTableExtractor extends TableExtractor {
       case Seq(dbName, tblName) => Table(None, Some(dbName), tblName, None)
       case Seq(catalogName, dbName, tblName) =>
         Table(Some(catalogName), Some(dbName), tblName, None)
+      // 4+ parts: catalog.<multi-level namespace>.table, where the namespace levels
+      // are flattened into a single (dot-joined) database string.
+      case parts =>
+        Table(
+          Some(parts.head),
+          Some(quote(parts.slice(1, parts.length - 1))),
+          parts.last,
+          None)
     }
     Option(maybeTable)
   }
@@ -212,19 +228,19 @@ class DataSourceV2RelationTableExtractor extends TableExtractor {
             !isPathIdentifier(v2Relation.identifier.get.name(), spark) =>
         val maybeCatalog = v2Relation.catalog.flatMap(catalogPlugin =>
           lookupExtractor[CatalogPluginCatalogExtractor].apply(catalogPlugin))
-        lookupExtractor[TableTableExtractor].apply(spark, v2Relation.table)
-          .map { table =>
-            val maybeOwner = TableExtractor.getOwner(v2Relation)
-            val maybeDatabase: Option[String] = table.database match {
-              case Some(x) => Some(x)
-              case None =>
-                val maybeIdentifier = invokeAs[Option[AnyRef]](v2Relation, "identifier")
-                maybeIdentifier.flatMap { id =>
-                  lookupExtractor[IdentifierTableExtractor].apply(spark, id)
-                }.flatMap(table => table.database)
-            }
-            table.copy(catalog = maybeCatalog, database = maybeDatabase, owner = maybeOwner)
-          }
+        val maybeOwner = TableExtractor.getOwner(v2Relation)
+        // Prefer the relation's `identifier`: its `namespace()` is a real
+        // multi-level array, so nested namespaces (including a single level that
+        // contains a dot, e.g. `cat`.`a.b`.`tbl`) are preserved exactly. The
+        // `table.name()` string is dot-flattened and lossy - it cannot tell a
+        // nested namespace from a dotted single level, and yields an empty
+        // database for catalogs that don't encode the namespace in the name,
+        // which would then be defaulted to the current database (fail-open).
+        val identifierTable = invokeAs[Option[AnyRef]](v2Relation, "identifier")
+          .flatMap(id => lookupExtractor[IdentifierTableExtractor].apply(spark, id))
+        identifierTable
+          .orElse(lookupExtractor[TableTableExtractor].apply(spark, v2Relation.table))
+          .map(_.copy(catalog = maybeCatalog, owner = maybeOwner))
       case _ => None
     }
   }

@@ -117,6 +117,15 @@ case class ScanSpec(
     }
   }
 
+  /**
+   * Like [[tables]] but does NOT swallow extraction exceptions - it lets them
+   * propagate so the caller can fail closed (deny) rather than silently skip
+   * the privilege check. A descriptor that legitimately finds no table still
+   * returns None (no exception) and is skipped as usual.
+   */
+  def tablesStrict: (LogicalPlan, SparkSession) => Seq[Table] = (plan, spark) =>
+    scanDescs.flatMap(_.extract(plan, spark))
+
   def uris: LogicalPlan => Seq[Uri] = plan => {
     uriDescs.flatMap { ud =>
       try {

@@ -22,6 +22,7 @@ import scala.collection.mutable
 import org.apache.ranger.plugin.policyengine.RangerAccessRequest
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.slf4j.LoggerFactory
 
 import org.apache.kyuubi.plugin.spark.authz._
 import org.apache.kyuubi.plugin.spark.authz.ObjectType._
@@ -30,11 +31,30 @@ import org.apache.kyuubi.plugin.spark.authz.ranger.SparkRangerAdminPlugin._
 import org.apache.kyuubi.plugin.spark.authz.rule.Authorization
 import org.apache.kyuubi.plugin.spark.authz.util.AuthZUtils._
 
+object RuleAuthorization extends (SparkSession => RuleAuthorization) {
+  private final val LOG = LoggerFactory.getLogger(classOf[RuleAuthorization])
+  override def apply(spark: SparkSession): RuleAuthorization = new RuleAuthorization(spark)
+}
+
 case class RuleAuthorization(spark: SparkSession) extends Authorization(spark) {
   override def checkPrivileges(spark: SparkSession, plan: LogicalPlan): Unit = {
     val auditHandler = new SparkRangerAuditHandler
     val ugi = getAuthzUgi(spark.sparkContext)
     val (inputs, outputs, opType) = PrivilegesBuilder.build(plan, spark)
+
+    // Diagnostic: log the privilege objects that were built for this plan. An
+    // EMPTY inputs/outputs here means NOTHING will be checked (fail open) - the
+    // usual signature of a table whose identity could not be extracted.
+    if (RuleAuthorization.LOG.isDebugEnabled) {
+      def fmt(o: PrivilegeObject): String =
+        s"${o.catalog.getOrElse("-")}.${Option(o.dbname).getOrElse("-")}.${o.objectName}" +
+          (if (o.columns.nonEmpty) o.columns.mkString("(", ",", ")") else "")
+      RuleAuthorization.LOG.debug(
+        s"[authz] user=${ugi.getShortUserName} node=${plan.getClass.getSimpleName} " +
+          s"opType=$opType " +
+          s"inputs=${inputs.map(fmt).mkString("{", ", ", "}")} " +
+          s"outputs=${outputs.map(fmt).mkString("{", ", ", "}")}")
+    }
 
     // Use a HashSet to deduplicate the same AccessResource and AccessType, the requests will be all
     // the non-duplicate requests and in the same order as the input requests.

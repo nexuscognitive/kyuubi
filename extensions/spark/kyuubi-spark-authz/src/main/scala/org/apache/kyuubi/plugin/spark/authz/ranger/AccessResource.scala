@@ -267,7 +267,9 @@ object AccessResource {
 
     val resource = new AccessResource(FUNCTION, catalog)
 
-    if (resourceMode == MODE_CATALOG && catalog.isDefined) {
+    if (resourceMode == MODE_CATALOG) {
+      // Functions rarely carry an explicit catalog; fall back to the effective
+      // (default-mapped) catalog so the resource still has a `catalog` level.
       val effectiveCatalog = getEffectiveCatalog(catalog)
       resource.setValue("catalog", effectiveCatalog)
       database.foreach(db => resource.setValue("schema", db))
@@ -305,7 +307,7 @@ object AccessResource {
           resource.setValue("database", firstLevelResource)
         }
       case FUNCTION =>
-        if (resourceMode == MODE_CATALOG && catalog.isDefined) {
+        if (resourceMode == MODE_CATALOG) {
           val effectiveCatalog = getEffectiveCatalog(catalog)(spark)
           resource.setValue("catalog", effectiveCatalog)
           Option(firstLevelResource).filter(_.nonEmpty)
