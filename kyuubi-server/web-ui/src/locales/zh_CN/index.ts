@@ -23,6 +23,8 @@ export default {
   kyuubi_instance: '服务端实例',
   session_type: '类型',
   status: '状态',
+  driver_pod: 'Driver Pod',
+  search: '搜索',
   session_id: 'Session ID',
   operation_id: 'Operation ID',
   create_time: '创建时间',
@@ -41,6 +43,12 @@ export default {
   session_properties: 'Session 参数',
   no_data: '无数据',
   no_log: '无日志',
+  summary: {
+    total: '总计',
+    active: '活跃',
+    idle: '空闲',
+    error: '错误'
+  },
   run_sql_tips: '请运行SQL获取结果',
   result: '结果',
   log: '日志',

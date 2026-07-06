@@ -18,38 +18,79 @@
 import { ref, Ref } from 'vue'
 
 export function useTable() {
-  const list: Ref<any[]> = ref([])
-  const tableData: Ref<any[]> = ref([])
+  const list: Ref<any[]> = ref([]) // full, unfiltered result set
+  const tableData: Ref<any[]> = ref([]) // current page after filter + sort
   const loading = ref(false)
   const currentPage = ref(1)
   const pageSize = ref(10)
-  const totalPage = ref(1)
+  const totalPage = ref(0) // total rows AFTER filtering
+  const searchText = ref('')
+  const sortProp = ref('')
+  const sortOrder = ref('') // 'ascending' | 'descending' | ''
 
-  const handleSizeChange = (val: number) => {
-    if (
-      currentPage.value === 1 ||
-      (currentPage.value > 1 && totalPage.value > (currentPage.value - 1) * val)
-    ) {
-      loading.value = true
-      setTimeout(() => {
-        setTableData()
-      }, 200)
+  // Apply free-text filter -> sort -> pagination over the FULL list, so both act across all
+  // pages rather than only the visible one.
+  const setTableData = () => {
+    let data = [...list.value]
+
+    const q = searchText.value.trim().toLowerCase()
+    if (q) {
+      data = data.filter((row) =>
+        Object.values(row || {}).some(
+          (v) => v != null && String(v).toLowerCase().includes(q)
+        )
+      )
     }
+
+    if (sortProp.value && sortOrder.value) {
+      const prop = sortProp.value
+      const dir = sortOrder.value === 'ascending' ? 1 : -1
+      data.sort((a, b) => {
+        const av = a?.[prop]
+        const bv = b?.[prop]
+        if (av == null && bv == null) return 0
+        if (av == null) return 1
+        if (bv == null) return -1
+        if (typeof av === 'number' && typeof bv === 'number') {
+          return (av - bv) * dir
+        }
+        return String(av).localeCompare(String(bv)) * dir
+      })
+    }
+
+    totalPage.value = data.length
+    tableData.value = data.slice(
+      (currentPage.value - 1) * pageSize.value,
+      currentPage.value * pageSize.value
+    )
+    loading.value = false
+  }
+
+  const handleSizeChange = () => {
+    currentPage.value = 1
+    setTableData()
   }
 
   const handleCurrentChange = () => {
-    loading.value = true
-    setTimeout(() => {
-      setTableData()
-    }, 200)
+    setTableData()
   }
 
-  const setTableData = () => {
-    tableData.value = [...list.value].splice(
-      (currentPage.value - 1) * pageSize.value,
-      pageSize.value
-    )
-    loading.value = false
+  const handleSortChange = ({
+    prop,
+    order
+  }: {
+    prop: string | null
+    order: string | null
+  }) => {
+    sortProp.value = prop || ''
+    sortOrder.value = order || ''
+    currentPage.value = 1
+    setTableData()
+  }
+
+  const handleSearch = () => {
+    currentPage.value = 1
+    setTableData()
   }
 
   const getList = (func: Function, data?: any) => {
@@ -59,20 +100,22 @@ export function useTable() {
       .catch(() => (list.value = []))
       .finally(() => {
         currentPage.value = 1
-        pageSize.value = 10
-        totalPage.value = list.value.length
         setTableData()
       })
   }
 
   return {
+    list, // full, unfiltered result set (for summaries/aggregates)
     tableData,
     loading,
     currentPage,
     pageSize,
     totalPage,
+    searchText,
     handleSizeChange,
     handleCurrentChange,
+    handleSortChange,
+    handleSearch,
     getList
   }
 }

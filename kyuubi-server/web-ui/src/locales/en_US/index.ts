@@ -23,6 +23,8 @@ export default {
   kyuubi_instance: 'Kyuubi Instance',
   session_type: 'Type',
   status: 'Status',
+  driver_pod: 'Driver Pod',
+  search: 'Search',
   session_id: 'Session ID',
   operation_id: 'Operation ID',
   create_time: 'Create Time',
@@ -41,6 +43,12 @@ export default {
   session_properties: 'Session Properties',
   no_data: 'No data',
   no_log: 'No log',
+  summary: {
+    total: 'Total',
+    active: 'Active',
+    idle: 'Idle',
+    error: 'Error'
+  },
   run_sql_tips: 'Run a SQL to get result',
   result: 'Result',
   log: 'Log',
