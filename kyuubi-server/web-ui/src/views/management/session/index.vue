@@ -108,34 +108,47 @@
           }}
         </template>
       </el-table-column>
-      <el-table-column fixed="right" :label="$t('operation.text')">
+      <el-table-column fixed="right" :label="$t('operation.text')" width="120">
         <template #default="scope">
-          <el-tooltip
-            v-if="isOwnerDown(scope.row)"
-            effect="dark"
-            :content="$t('owner_down_hint')"
-            placement="top">
-            <el-button type="info" icon="Delete" circle disabled />
-          </el-tooltip>
-          <el-popconfirm
-            v-else
-            :title="$t('operation.delete_confirm')"
-            @confirm="
-              handleDeleteSession(scope.row.identifier, scope.row.kyuubiInstance)
-            ">
-            <template #reference>
-              <span>
-                <el-tooltip
-                  effect="dark"
-                  :content="$t('operation.delete')"
-                  placement="top">
-                  <template #default>
-                    <el-button type="danger" icon="Delete" circle />
-                  </template>
-                </el-tooltip>
-              </span>
-            </template>
-          </el-popconfirm>
+          <el-space wrap>
+            <el-tooltip
+              v-if="scope.row.sessionType === 'BATCH'"
+              effect="dark"
+              :content="$t('driver_log')"
+              placement="top">
+              <el-button
+                type="primary"
+                icon="Document"
+                circle
+                @click="openDriverLog(scope.row)" />
+            </el-tooltip>
+            <el-tooltip
+              v-if="isOwnerDown(scope.row)"
+              effect="dark"
+              :content="$t('owner_down_hint')"
+              placement="top">
+              <el-button type="info" icon="Delete" circle disabled />
+            </el-tooltip>
+            <el-popconfirm
+              v-else
+              :title="$t('operation.delete_confirm')"
+              @confirm="
+                handleDeleteSession(scope.row.identifier, scope.row.kyuubiInstance)
+              ">
+              <template #reference>
+                <span>
+                  <el-tooltip
+                    effect="dark"
+                    :content="$t('operation.delete')"
+                    placement="top">
+                    <template #default>
+                      <el-button type="danger" icon="Delete" circle />
+                    </template>
+                  </el-tooltip>
+                </span>
+              </template>
+            </el-popconfirm>
+          </el-space>
         </template>
       </el-table-column>
     </el-table>
@@ -149,12 +162,29 @@
       @size-change="handleSizeChange"
       @current-change="handleCurrentChange" />
   </el-card>
+
+  <el-dialog
+    v-model="driverLogVisible"
+    :title="$t('driver_log') + (driverLogBatchId ? ': ' + driverLogBatchId : '')"
+    width="72%"
+    top="6vh">
+    <div class="driver-log-toolbar">
+      <el-button
+        size="small"
+        icon="Refresh"
+        :loading="driverLogLoading"
+        @click="refreshDriverLog">
+        {{ $t('refresh') }}
+      </el-button>
+    </div>
+    <pre v-loading="driverLogLoading" class="driver-log">{{ driverLogText }}</pre>
+  </el-dialog>
 </template>
 
 <script lang="ts" setup>
-  import { computed } from 'vue'
+  import { computed, ref } from 'vue'
   import { format } from 'date-fns'
-  import { getAllSessions, deleteSession } from '@/api/session'
+  import { getAllSessions, deleteSession, getBatchDriverLog } from '@/api/session'
   import { ElMessage } from 'element-plus'
   import { useI18n } from 'vue-i18n'
   import { useTable } from '@/utils/use-table'
@@ -258,6 +288,33 @@
   }
   const router: Router = useRouter()
 
+  // Spark driver pod log viewer (batch sessions). The batch id is the session identifier;
+  // the endpoint reads the driver pod directly, so it works from any instance.
+  const driverLogVisible = ref(false)
+  const driverLogLoading = ref(false)
+  const driverLogText = ref('')
+  const driverLogBatchId = ref('')
+  const openDriverLog = (row: { identifier: string }) => {
+    driverLogBatchId.value = row.identifier
+    driverLogVisible.value = true
+    refreshDriverLog()
+  }
+  const refreshDriverLog = () => {
+    if (!driverLogBatchId.value) return
+    driverLogLoading.value = true
+    getBatchDriverLog(driverLogBatchId.value, 500)
+      .then((res: any) => {
+        const lines = res?.logRowSet || []
+        driverLogText.value = lines.length ? lines.join('\n') : t('no_log')
+      })
+      .catch(() => {
+        driverLogText.value = t('no_log')
+      })
+      .finally(() => {
+        driverLogLoading.value = false
+      })
+  }
+
   function handleSessionDetailJump(sessionId: string) {
     router.push({
       path: '/detail/session',
@@ -278,5 +335,21 @@
     margin-top: 12px;
     display: flex;
     justify-content: flex-end;
+  }
+  .driver-log-toolbar {
+    margin-bottom: 8px;
+  }
+  .driver-log {
+    margin: 0;
+    max-height: 62vh;
+    overflow: auto;
+    padding: 12px;
+    background: var(--el-fill-color-light);
+    border-radius: 6px;
+    font-family: monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-all;
   }
 </style>

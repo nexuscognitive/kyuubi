@@ -514,6 +514,25 @@ private[v1] class BatchesResource extends ApiRequestContext with Logging {
     responseCode = "200",
     content = Array(new Content(
       mediaType = MediaType.APPLICATION_JSON,
+      schema = new Schema(implementation = classOf[OperationLog]))),
+    description = "get the tail of the Spark driver pod log lines for this batch")
+  @GET
+  @Path("{batchId}/driverLog")
+  def getBatchDriverLog(
+      @PathParam("batchId") batchId: String,
+      @QueryParam("size") @DefaultValue("100") size: Int): OperationLog = {
+    val userName = fe.getSessionUser(Map.empty[String, String])
+    info(s"Received getting driver log request for batch $batchId from $userName")
+    // Driver logs are read directly from the Spark driver pod via the Kubernetes API by label, so
+    // any Kyuubi instance can serve this regardless of which one owns the batch session.
+    val lines = sessionManager.applicationManager.getDriverLog(batchId, size).asJava
+    new OperationLog(lines, lines.size)
+  }
+
+  @ApiResponse(
+    responseCode = "200",
+    content = Array(new Content(
+      mediaType = MediaType.APPLICATION_JSON,
       schema = new Schema(implementation = classOf[CloseBatchResponse]))),
     description = "close and cancel a batch session")
   @DELETE

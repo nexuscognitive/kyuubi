@@ -26,6 +26,8 @@ export default {
   driver_pod: 'Driver Pod',
   search: '搜索',
   reconnecting: '重连中',
+  driver_log: 'Driver 日志',
+  refresh: '刷新',
   owner_down_hint: '所属实例暂时不可达 — 作业仍在运行，实例恢复或被其他节点接管后会重新关联。',
   session_id: 'Session ID',
   operation_id: 'Operation ID',

@@ -341,6 +341,43 @@ class KubernetesApplicationOperation extends ApplicationOperation with Logging {
     }
   }
 
+  /**
+   * Fetch the tail of the Spark driver pod's log for a batch, located by the kyuubi unique tag.
+   * Read directly from the driver pod via the Kubernetes API, so any Kyuubi instance can serve it
+   * regardless of which one owns the batch session. Only available while the driver pod exists.
+   */
+  private[kyuubi] def getDriverLogByTag(tag: String, size: Int): Seq[String] = {
+    val maxLines = if (size <= 0) 1000 else size
+    val result = kubernetesClients.values().asScala.iterator.flatMap { client =>
+      try {
+        client.pods()
+          .withLabel(LABEL_KYUUBI_UNIQUE_KEY, tag)
+          .withLabel(SPARK_ROLE_LABEL, SPARK_ROLE_DRIVER)
+          .list().getItems.asScala.headOption.map { pod =>
+          val ns = pod.getMetadata.getNamespace
+          val name = pod.getMetadata.getName
+          val log = client.pods().inNamespace(ns).withName(name)
+            .tailingLines(maxLines).getLog()
+          if (log == null || log.isEmpty) {
+            Seq(s"Driver pod $name has not produced any logs yet.")
+          } else {
+            log.split("\n").toSeq
+          }
+        }
+      } catch {
+        case NonFatal(e) =>
+          warn(s"Failed to fetch driver log for ${toLabel(tag)}: ${e.getMessage}")
+          None
+      }
+    }
+    if (result.hasNext) {
+      result.next()
+    } else {
+      Seq(s"Driver pod for ${toLabel(tag)} was not found " +
+        "(it may not be scheduled yet, or has already been cleaned up).")
+    }
+  }
+
   override def supportPersistedAppState: Boolean = true
 
   override def stop(): Unit = {
@@ -599,6 +636,8 @@ object KubernetesApplicationOperation extends Logging {
   val LABEL_KYUUBI_UNIQUE_KEY = "kyuubi-unique-tag"
   private val SPARK_APP_ID_LABEL = "spark-app-selector"
   private val SPARK_APP_NAME_LABEL = "spark-app-name"
+  private val SPARK_ROLE_LABEL = "spark-role"
+  private val SPARK_ROLE_DRIVER = "driver"
   val KUBERNETES_SERVICE_HOST = "KUBERNETES_SERVICE_HOST"
   val KUBERNETES_SERVICE_PORT = "KUBERNETES_SERVICE_PORT"
   val SPARK_UI_PORT_NAME = "spark-ui"

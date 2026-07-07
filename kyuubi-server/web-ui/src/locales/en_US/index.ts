@@ -26,6 +26,8 @@ export default {
   driver_pod: 'Driver Pod',
   search: 'Search',
   reconnecting: 'Reconnecting',
+  driver_log: 'Driver Log',
+  refresh: 'Refresh',
   owner_down_hint:
     'Owning instance is unreachable — the batch is still running and will reattach when the instance returns or a peer takes it over.',
   session_id: 'Session ID',

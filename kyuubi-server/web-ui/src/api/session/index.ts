@@ -46,3 +46,12 @@ export function getAllTypeOperation(sessionId: string) {
     method: 'get'
   })
 }
+
+// Tail of the Spark driver pod log for a batch (batchId == the batch session identifier).
+export function getBatchDriverLog(batchId: string, size = 500) {
+  return request({
+    url: `api/v1/batches/${batchId}/driverLog`,
+    method: 'get',
+    params: { size }
+  })
+}
