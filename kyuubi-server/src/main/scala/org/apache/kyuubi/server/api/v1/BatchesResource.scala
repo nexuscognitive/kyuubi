@@ -220,8 +220,10 @@ private[v1] class BatchesResource extends ApiRequestContext with Logging {
     openBatchSessionInternal(
       batchRequest,
       isResourceFromUpload = true,
-      resourceFileInputStream = Some(resourceFileInputStream),
-      resourceFileMetadata = Some(resourceFileMetadata),
+      // The main resource file is optional: when it is not uploaded, the resource URI already set
+      // on the batch request is kept (e.g. an s3:// jar), so callers can upload only extra files.
+      resourceFileInputStream = Option(resourceFileInputStream),
+      resourceFileMetadata = Option(resourceFileMetadata),
       formDataMultiPartOpt = Some(formDataMultiPart))
   }
 
@@ -269,8 +271,8 @@ private[v1] class BatchesResource extends ApiRequestContext with Logging {
           handleUploadingFiles(
             batchId,
             request,
-            resourceFileInputStream.get,
-            resourceFileMetadata.get.getFileName,
+            resourceFileInputStream,
+            resourceFileMetadata,
             formDataMultiPartOpt)
         }
         request.setConf(
@@ -614,16 +616,20 @@ private[v1] class BatchesResource extends ApiRequestContext with Logging {
   private def handleUploadingFiles(
       batchId: String,
       request: BatchRequest,
-      resourceFileInputStream: InputStream,
-      resourceFileName: String,
+      resourceFileInputStream: Option[InputStream],
+      resourceFileMetadata: Option[FormDataContentDisposition],
       formDataMultiPartOpt: Option[FormDataMultiPart]): Option[JPath] = {
     val uploadFileFolderPath = KyuubiApplicationManager.sessionUploadFolderPath(batchId)
     try {
-      handleUploadingResourceFile(
-        request,
-        resourceFileInputStream,
-        resourceFileName,
-        uploadFileFolderPath)
+      // The main resource file is optional. When a resourceFile part with a filename is present we
+      // upload it and use it as the batch resource; otherwise we keep request.getResource (already
+      // validated non-null above), letting callers point the resource at an s3:// URI while still
+      // uploading extra files.
+      (resourceFileInputStream, resourceFileMetadata.map(_.getFileName)) match {
+        case (Some(inputStream), Some(fileName)) if StringUtils.isNotBlank(fileName) =>
+          handleUploadingResourceFile(request, inputStream, fileName, uploadFileFolderPath)
+        case _ =>
+      }
       handleUploadingExtraResourcesFiles(request, formDataMultiPartOpt, uploadFileFolderPath)
       Some(uploadFileFolderPath)
     } catch {
