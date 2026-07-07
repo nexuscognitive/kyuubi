@@ -62,10 +62,17 @@
         :label="$t('session_type')"
         width="120px"
         sortable="custom" />
-      <el-table-column :label="$t('status')" width="120px">
+      <el-table-column :label="$t('status')" width="130px">
         <template #default="scope">
           <el-tooltip
-            v-if="scope.row.exception"
+            v-if="isOwnerDown(scope.row)"
+            effect="dark"
+            :content="$t('owner_down_hint')"
+            placement="top">
+            <el-tag type="warning">{{ $t('reconnecting') }}</el-tag>
+          </el-tooltip>
+          <el-tooltip
+            v-else-if="scope.row.exception"
             effect="dark"
             :content="scope.row.exception"
             placement="top">
@@ -103,7 +110,15 @@
       </el-table-column>
       <el-table-column fixed="right" :label="$t('operation.text')">
         <template #default="scope">
+          <el-tooltip
+            v-if="isOwnerDown(scope.row)"
+            effect="dark"
+            :content="$t('owner_down_hint')"
+            placement="top">
+            <el-button type="info" icon="Delete" circle disabled />
+          </el-tooltip>
           <el-popconfirm
+            v-else
             :title="$t('operation.delete_confirm')"
             @confirm="
               handleDeleteSession(scope.row.identifier, scope.row.kyuubiInstance)
@@ -187,23 +202,37 @@
     }
     return 'IDLE'
   }
-  // Counts across the FULL result set (not just the current page). A session with an
-  // exception is surfaced as ERROR; otherwise it is ACTIVE or IDLE per sessionStatus().
+  // A batch merged in from the metadata store whose owning instance is currently unreachable
+  // (dead/restarting pod). The job keeps running; it will reattach when the owner returns or a
+  // peer takes it over.
+  const isOwnerDown = (row: { conf?: Record<string, string> }): boolean =>
+    row?.conf?.['kyuubi.session.owner.reachable'] === 'false'
+  // Counts across the FULL result set (not just the current page). Owner-down rows are counted
+  // separately; otherwise a session with an exception is ERROR, else ACTIVE or IDLE.
   const summary = computed(() => {
     const rows = list.value
-    const error = rows.filter((r) => !!r.exception).length
+    const ownerDown = rows.filter(isOwnerDown).length
+    const error = rows.filter((r) => !isOwnerDown(r) && !!r.exception).length
     const active = rows.filter(
-      (r) => !r.exception && sessionStatus(r) === 'ACTIVE'
+      (r) => !isOwnerDown(r) && !r.exception && sessionStatus(r) === 'ACTIVE'
     ).length
     const idle = rows.filter(
-      (r) => !r.exception && sessionStatus(r) === 'IDLE'
+      (r) => !isOwnerDown(r) && !r.exception && sessionStatus(r) === 'IDLE'
     ).length
-    return [
+    const items = [
       { label: t('summary.total'), value: rows.length, type: 'default' },
       { label: t('summary.active'), value: active, type: 'success' },
       { label: t('summary.idle'), value: idle, type: 'info' },
       { label: t('summary.error'), value: error, type: 'danger' }
     ]
+    if (ownerDown > 0) {
+      items.push({
+        label: t('summary.reconnecting'),
+        value: ownerDown,
+        type: 'warning'
+      })
+    }
+    return items
   })
   const handleDeleteSession = (sessionId: string, kyuubiInstance?: string) => {
     deleteSession(sessionId, kyuubiInstance)

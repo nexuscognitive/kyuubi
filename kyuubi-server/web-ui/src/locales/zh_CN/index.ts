@@ -25,6 +25,8 @@ export default {
   status: '状态',
   driver_pod: 'Driver Pod',
   search: '搜索',
+  reconnecting: '重连中',
+  owner_down_hint: '所属实例暂时不可达 — 作业仍在运行，实例恢复或被其他节点接管后会重新关联。',
   session_id: 'Session ID',
   operation_id: 'Operation ID',
   create_time: '创建时间',
@@ -47,7 +49,8 @@ export default {
     total: '总计',
     active: '活跃',
     idle: '空闲',
-    error: '错误'
+    error: '错误',
+    reconnecting: '重连中'
   },
   run_sql_tips: '请运行SQL获取结果',
   result: '结果',

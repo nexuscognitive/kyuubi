@@ -25,6 +25,9 @@ export default {
   status: 'Status',
   driver_pod: 'Driver Pod',
   search: 'Search',
+  reconnecting: 'Reconnecting',
+  owner_down_hint:
+    'Owning instance is unreachable — the batch is still running and will reattach when the instance returns or a peer takes it over.',
   session_id: 'Session ID',
   operation_id: 'Operation ID',
   create_time: 'Create Time',
@@ -47,7 +50,8 @@ export default {
     total: 'Total',
     active: 'Active',
     idle: 'Idle',
-    error: 'Error'
+    error: 'Error',
+    reconnecting: 'Reconnecting'
   },
   run_sql_tips: 'Run a SQL to get result',
   result: 'Result',
