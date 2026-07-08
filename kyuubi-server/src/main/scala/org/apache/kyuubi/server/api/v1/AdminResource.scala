@@ -282,11 +282,45 @@ private[v1] class AdminResource extends ApiRequestContext with Logging {
     if (StringUtils.isNotBlank(sessionType) && !SessionType.BATCH.toString.equals(sessionType)) {
       return liveData
     }
-    liveData ++ orphanBatchSessions(liveData.map(_.getIdentifier).toSet, users)
+    val allRows = liveData ++ orphanBatchSessions(liveData.map(_.getIdentifier).toSet, users)
+    enrichDriverPodState(allRows)
+    allRows
   }
 
   // conf marker on a merged-in batch whose owning instance is currently unreachable.
   private val OWNER_REACHABLE_CONF = "kyuubi.session.owner.reachable"
+
+  // conf marker carrying the current Spark driver pod state for a batch row.
+  private val DRIVER_POD_STATE_CONF = "kyuubi.driver.pod.state"
+
+  /**
+   * Attach the current Spark driver pod state to each batch row (in place, via conf), from a
+   * single bulk Kubernetes list. Best effort: if K8s is unreachable the listing still succeeds
+   * without the state.
+   */
+  private def enrichDriverPodState(rows: Seq[SessionData]): Unit = {
+    if (!rows.exists(_.getSessionType == SessionType.BATCH.toString)) return
+    val states =
+      try {
+        fe.be.sessionManager.asInstanceOf[KyuubiSessionManager]
+          .applicationManager.getDriverPodStates()
+      } catch {
+        case e: Throwable =>
+          error("Failed to read driver pod states for session listing", e)
+          Map.empty[String, String]
+      }
+    if (states.isEmpty) return
+    rows.foreach { row =>
+      if (row.getSessionType == SessionType.BATCH.toString) {
+        states.get(row.getIdentifier).foreach { st =>
+          val conf = new java.util.HashMap[String, String]()
+          conf.putAll(row.getConf)
+          conf.put(DRIVER_POD_STATE_CONF, st)
+          row.setConf(conf)
+        }
+      }
+    }
+  }
 
   /**
    * Active (PENDING/RUNNING) batches from the metadata store that are not present in the live

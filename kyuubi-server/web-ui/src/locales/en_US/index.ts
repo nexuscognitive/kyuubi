@@ -27,6 +27,7 @@ export default {
   search: 'Search',
   reconnecting: 'Reconnecting',
   driver_log: 'Driver Log',
+  driver_state: 'Driver State',
   refresh: 'Refresh',
   owner_down_hint:
     'Owning instance is unreachable — the batch is still running and will reattach when the instance returns or a peer takes it over.',

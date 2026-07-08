@@ -83,6 +83,17 @@
           </el-tag>
         </template>
       </el-table-column>
+      <el-table-column :label="$t('driver_state')" width="180px">
+        <template #default="scope">
+          <el-tag
+            v-if="scope.row.sessionType === 'BATCH' && driverPodState(scope.row)"
+            :type="driverStateType(driverPodState(scope.row))"
+            size="small">
+            {{ driverPodState(scope.row) }}
+          </el-tag>
+          <span v-else>-</span>
+        </template>
+      </el-table-column>
       <!-- TODO need jump to session page -->
       <el-table-column
         prop="identifier"
@@ -237,6 +248,15 @@
   // peer takes it over.
   const isOwnerDown = (row: { conf?: Record<string, string> }): boolean =>
     row?.conf?.['kyuubi.session.owner.reachable'] === 'false'
+  // Current Spark driver pod state for a batch row, surfaced by the backend via conf.
+  const driverPodState = (row: { conf?: Record<string, string> }): string =>
+    row?.conf?.['kyuubi.driver.pod.state'] || ''
+  const driverStateType = (state: string): string => {
+    if (state.startsWith('Running')) return 'success'
+    if (state.startsWith('Failed')) return 'danger'
+    if (state.startsWith('Pending')) return 'warning'
+    return 'info' // Succeeded / Unknown / other
+  }
   // Counts across the FULL result set (not just the current page). Owner-down rows are counted
   // separately; otherwise a session with an exception is ERROR, else ACTIVE or IDLE.
   const summary = computed(() => {

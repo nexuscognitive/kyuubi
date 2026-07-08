@@ -378,6 +378,43 @@ class KubernetesApplicationOperation extends ApplicationOperation with Logging {
     }
   }
 
+  /**
+   * Current state of every Spark driver pod, keyed by its kyuubi unique tag (== batch id). One
+   * bulk list call per Kubernetes client, so it can enrich a whole batch listing cheaply. Best
+   * effort: returns what it can and never throws.
+   */
+  private[kyuubi] def getDriverPodStates(): Map[String, String] = {
+    kubernetesClients.values().asScala.flatMap { client =>
+      try {
+        client.pods()
+          .withLabel(SPARK_ROLE_LABEL, SPARK_ROLE_DRIVER)
+          .list().getItems.asScala.flatMap { pod =>
+          Option(pod.getMetadata.getLabels.get(LABEL_KYUUBI_UNIQUE_KEY))
+            .map(tag => tag -> driverPodState(pod))
+        }
+      } catch {
+        case NonFatal(e) =>
+          warn(s"Failed to list driver pod states: ${e.getMessage}")
+          Nil
+      }
+    }.toMap
+  }
+
+  // Pod phase (Pending/Running/Succeeded/Failed/Unknown), enriched with the container's
+  // waiting/terminated reason when present, e.g. "Pending (ContainerCreating)", "Failed (Error)".
+  private def driverPodState(pod: Pod): String = {
+    val status = Option(pod.getStatus)
+    val phase = status.map(_.getPhase).filter(_ != null).getOrElse("Unknown")
+    val reason = status
+      .flatMap(s => Option(s.getContainerStatuses).flatMap(_.asScala.headOption))
+      .flatMap { cs =>
+        Option(cs.getState.getWaiting).map(_.getReason)
+          .orElse(Option(cs.getState.getTerminated).map(_.getReason))
+      }
+      .filter(r => r != null && r.nonEmpty && r != phase)
+    reason.map(r => s"$phase ($r)").getOrElse(phase)
+  }
+
   override def supportPersistedAppState: Boolean = true
 
   override def stop(): Unit = {

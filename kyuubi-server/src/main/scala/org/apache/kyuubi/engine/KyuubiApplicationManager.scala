@@ -109,6 +109,10 @@ class KyuubiApplicationManager(metadataManager: Option[MetadataManager])
     getKubernetesApplicationOperation.map(_.getDriverLogByTag(tag, size)).getOrElse(
       Seq("Driver log is only available for Kubernetes batch applications."))
 
+  /** Current driver pod state per batch (Kubernetes only), keyed by unique tag (== batch id). */
+  def getDriverPodStates(): Map[String, String] =
+    getKubernetesApplicationOperation.map(_.getDriverPodStates()).getOrElse(Map.empty)
+
   private[kyuubi] def getApplicationOperation(appMgrInfo: ApplicationManagerInfo)
       : Option[ApplicationOperation] = {
     operations.find(_.isSupported(appMgrInfo))
