@@ -115,6 +115,11 @@ class AuthenticationFilter(conf: KyuubiConf) extends Filter with Logging {
     val httpRequest = request.asInstanceOf[HttpServletRequest]
     val httpResponse = response.asInstanceOf[HttpServletResponse]
 
+    if (AuthenticationFilter.isUnauthenticatedPath(httpRequest.getRequestURI)) {
+      filterChain.doFilter(request, response)
+      return
+    }
+
     val authorization = httpRequest.getHeader(AUTHORIZATION_HEADER)
     val matchedHandler = getMatchedHandler(authorization).orNull
     HTTP_CLIENT_IP_ADDRESS.set(httpRequest.getRemoteAddr)
@@ -179,6 +184,14 @@ class AuthenticationFilter(conf: KyuubiConf) extends Filter with Logging {
 }
 
 object AuthenticationFilter {
+  // endpoints that must stay reachable without credentials, e.g. for Kubernetes probes
+  private final val UNAUTHENTICATED_PATH_SUFFIXES = Seq("/v1/ping", "/v1/version")
+
+  def isUnauthenticatedPath(requestUri: String): Boolean = {
+    val path = Option(requestUri).getOrElse("").stripSuffix("/")
+    UNAUTHENTICATED_PATH_SUFFIXES.exists(path.endsWith)
+  }
+
   final val HTTP_CLIENT_IP_ADDRESS = new ThreadLocal[String]() {
     override protected def initialValue: String = null
   }

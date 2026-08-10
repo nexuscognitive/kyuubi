@@ -46,6 +46,19 @@ trait MetadataStore extends Closeable {
   def transformMetadataState(identifier: String, fromState: String, targetState: String): Boolean
 
   /**
+   * Transfer the ownership of the metadata from one Kyuubi instance to another, only if it is
+   * still owned by `fromKyuubiInstance`.
+   * @param identifier the identifier
+   * @param fromKyuubiInstance the expected current owner
+   * @param toKyuubiInstance the new owner
+   * @return `true` if the ownership was successfully transferred, otherwise `false`
+   */
+  def transferMetadataOwnership(
+      identifier: String,
+      fromKyuubiInstance: String,
+      toKyuubiInstance: String): Boolean
+
+  /**
    * Get the persisted metadata by batch identifier.
    * @param identifier the identifier.
    * @return selected metadata.

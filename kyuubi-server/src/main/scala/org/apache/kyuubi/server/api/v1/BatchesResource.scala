@@ -220,8 +220,8 @@ private[v1] class BatchesResource extends ApiRequestContext with Logging {
     openBatchSessionInternal(
       batchRequest,
       isResourceFromUpload = true,
-      resourceFileInputStream = Some(resourceFileInputStream),
-      resourceFileMetadata = Some(resourceFileMetadata),
+      resourceFileInputStream = Option(resourceFileInputStream),
+      resourceFileMetadata = Option(resourceFileMetadata),
       formDataMultiPartOpt = Some(formDataMultiPart))
   }
 
@@ -269,8 +269,8 @@ private[v1] class BatchesResource extends ApiRequestContext with Logging {
           handleUploadingFiles(
             batchId,
             request,
-            resourceFileInputStream.get,
-            resourceFileMetadata.get.getFileName,
+            resourceFileInputStream,
+            resourceFileMetadata,
             formDataMultiPartOpt)
         }
         request.setConf(
@@ -512,6 +512,40 @@ private[v1] class BatchesResource extends ApiRequestContext with Logging {
     responseCode = "200",
     content = Array(new Content(
       mediaType = MediaType.APPLICATION_JSON,
+      schema = new Schema(implementation = classOf[OperationLog]))),
+    description = "get the tail of the Spark driver pod log lines for this batch")
+  @GET
+  @Path("{batchId}/driverLog")
+  def getBatchDriverLog(
+      @PathParam("batchId") batchId: String,
+      @QueryParam("size") @DefaultValue("100") size: Int): OperationLog = {
+    val userName = fe.getSessionUser(Map.empty[String, String])
+    info(s"Received getting driver log request for batch $batchId from $userName")
+    val lines = sessionManager.applicationManager.getDriverLog(batchId, size).asJava
+    new OperationLog(lines, lines.size)
+  }
+
+  @ApiResponse(
+    responseCode = "200",
+    content = Array(new Content(
+      mediaType = MediaType.APPLICATION_JSON,
+      schema = new Schema(implementation = classOf[OperationLog]))),
+    description = "get the recent Kubernetes events for the Spark driver pod of this batch")
+  @GET
+  @Path("{batchId}/driverPodEvents")
+  def getBatchDriverPodEvents(
+      @PathParam("batchId") batchId: String,
+      @QueryParam("size") @DefaultValue("100") size: Int): OperationLog = {
+    val userName = fe.getSessionUser(Map.empty[String, String])
+    info(s"Received getting driver pod events request for batch $batchId from $userName")
+    val lines = sessionManager.applicationManager.getDriverPodEvents(batchId, size).asJava
+    new OperationLog(lines, lines.size)
+  }
+
+  @ApiResponse(
+    responseCode = "200",
+    content = Array(new Content(
+      mediaType = MediaType.APPLICATION_JSON,
       schema = new Schema(implementation = classOf[CloseBatchResponse]))),
     description = "close and cancel a batch session")
   @DELETE
@@ -614,16 +648,18 @@ private[v1] class BatchesResource extends ApiRequestContext with Logging {
   private def handleUploadingFiles(
       batchId: String,
       request: BatchRequest,
-      resourceFileInputStream: InputStream,
-      resourceFileName: String,
+      resourceFileInputStream: Option[InputStream],
+      resourceFileMetadata: Option[FormDataContentDisposition],
       formDataMultiPartOpt: Option[FormDataMultiPart]): Option[JPath] = {
     val uploadFileFolderPath = KyuubiApplicationManager.sessionUploadFolderPath(batchId)
     try {
-      handleUploadingResourceFile(
-        request,
-        resourceFileInputStream,
-        resourceFileName,
-        uploadFileFolderPath)
+      // the main resourceFile part is optional: a batch may reference an already-remote
+      // resource (e.g. on S3) and only upload the extra resources
+      (resourceFileInputStream, resourceFileMetadata.map(_.getFileName)) match {
+        case (Some(inputStream), Some(fileName)) if StringUtils.isNotBlank(fileName) =>
+          handleUploadingResourceFile(request, inputStream, fileName, uploadFileFolderPath)
+        case _ =>
+      }
       handleUploadingExtraResourcesFiles(request, formDataMultiPartOpt, uploadFileFolderPath)
       Some(uploadFileFolderPath)
     } catch {

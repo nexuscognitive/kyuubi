@@ -241,6 +241,19 @@ class JDBCMetadataStore(conf: KyuubiConf) extends MetadataStore with Logging {
     }
   }
 
+  override def transferMetadataOwnership(
+      identifier: String,
+      fromKyuubiInstance: String,
+      toKyuubiInstance: String): Boolean = {
+    val query =
+      s"UPDATE $METADATA_TABLE SET kyuubi_instance = ? WHERE identifier = ? AND kyuubi_instance = ?"
+    JdbcUtils.withConnection { connection =>
+      withUpdateCount(connection, query, toKyuubiInstance, identifier, fromKyuubiInstance) {
+        updateCount => updateCount == 1
+      }
+    }
+  }
+
   override def getMetadata(identifier: String): Metadata = {
     val query = s"SELECT $METADATA_COLUMNS FROM $METADATA_TABLE WHERE identifier = ?"
 

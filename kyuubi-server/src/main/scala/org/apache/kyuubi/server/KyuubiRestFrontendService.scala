@@ -34,8 +34,11 @@ import org.eclipse.jetty.servlet.{ErrorPageErrorHandler, FilterHolder, ServletHo
 import org.apache.kyuubi.{KyuubiException, Utils}
 import org.apache.kyuubi.config.KyuubiConf
 import org.apache.kyuubi.config.KyuubiConf._
+import org.apache.kyuubi.ha.HighAvailabilityConf.HA_NAMESPACE
+import org.apache.kyuubi.ha.client.{DiscoveryClientProvider, DiscoveryPaths, ServiceDiscovery}
 import org.apache.kyuubi.metrics.{MetricsConstants, MetricsSystem}
 import org.apache.kyuubi.metrics.MetricsConstants.OPERATION_BATCH_PENDING_MAX_ELAPSE
+import org.apache.kyuubi.operation.OperationState
 import org.apache.kyuubi.server.api.v1.ApiRootResource
 import org.apache.kyuubi.server.http.authentication.{AuthenticationFilter, KyuubiHttpAuthenticationFactory}
 import org.apache.kyuubi.server.ui.{JettyServer, JettyUtils}
@@ -65,6 +68,13 @@ class KyuubiRestFrontendService(override val serverable: Serverable)
   private[kyuubi] lazy val batchService: Option[KyuubiBatchService] =
     if (conf.get(BATCH_SUBMITTER_ENABLED)) {
       Some(new KyuubiBatchService(this, sessionManager))
+    } else {
+      None
+    }
+
+  private[kyuubi] lazy val batchTakeoverService: Option[BatchTakeoverService] =
+    if (conf.get(BATCH_SUBMITTER_ENABLED) && ServiceDiscovery.supportServiceDiscovery(conf)) {
+      Some(new BatchTakeoverService(this, sessionManager))
     } else {
       None
     }
@@ -106,6 +116,7 @@ class KyuubiRestFrontendService(override val serverable: Serverable)
       conf.get(FRONTEND_REST_JETTY_STOP_TIMEOUT),
       conf.get(FRONTEND_JETTY_SEND_VERSION_ENABLED))
     batchService.foreach(addService)
+    batchTakeoverService.foreach(addService)
     super.initialize(conf)
   }
 
@@ -288,6 +299,58 @@ class KyuubiRestFrontendService(override val serverable: Serverable)
       }
     }
 
+  /**
+   * The REST connection URLs of every Kyuubi server currently registered in discovery,
+   * including this one. Discovery advertises the Thrift port, so the host is taken from
+   * discovery and the REST port from our own connection URL.
+   */
+  private[kyuubi] def liveRestInstances(): Set[String] = {
+    val self = connectionUrl
+    val restPort = self.substring(self.lastIndexOf(":") + 1)
+    val serverSpec = DiscoveryPaths.makePath(null, conf.get(HA_NAMESPACE))
+    val peers = DiscoveryClientProvider.withDiscoveryClient(conf) { discoveryClient =>
+      discoveryClient.getServiceNodesInfo(serverSpec).map(node => s"${node.host}:$restPort")
+    }
+    (peers :+ self).toSet
+  }
+
+  /**
+   * On a graceful shutdown, reassign the batches this instance owns to live peers so they are
+   * picked up immediately instead of waiting for a peer's takeover sweep.
+   */
+  private def handoffBatchSessionsToPeers(): Unit = {
+    if (batchTakeoverService.isEmpty || sessionManager.metadataManager.isEmpty) return
+    try {
+      val peers = (liveRestInstances() - connectionUrl).toSeq
+      val localBatchIds = sessionManager.allSessions().collect {
+        case s: KyuubiBatchSession
+            if !OperationState.isTerminal(s.batchJobSubmissionOp.getStatus.state) =>
+          s.batchJobSubmissionOp.batchId
+      }.toSeq
+      if (peers.isEmpty) {
+        if (localBatchIds.nonEmpty) {
+          warn(s"No live peers to hand off ${localBatchIds.size} batch session(s) to;" +
+            s" they will be reclaimed by a peer's takeover sweep after this instance" +
+            s" leaves discovery")
+        }
+        return
+      }
+      localBatchIds.zipWithIndex.foreach { case (batchId, idx) =>
+        val peer = peers(idx % peers.size)
+        try {
+          if (sessionManager.metadataManager.exists(
+              _.transferBatchOwnership(batchId, connectionUrl, peer))) {
+            info(s"Handed off batch $batchId to peer $peer for graceful shutdown")
+          }
+        } catch {
+          case e: Throwable => warn(s"Failed to hand off batch $batchId to $peer", e)
+        }
+      }
+    } catch {
+      case e: Throwable => warn("Error during batch handoff on shutdown", e)
+    }
+  }
+
   private def getBatchPendingMaxElapse(): Long = {
     val batchPendingElapseTimes = sessionManager.allSessions().map {
       case session: KyuubiBatchSession => session.batchJobSubmissionOp.getPendingElapsedTime
@@ -328,6 +391,7 @@ class KyuubiRestFrontendService(override val serverable: Serverable)
   override def stop(): Unit = synchronized {
     ThreadUtils.shutdown(batchChecker)
     if (isStarted.getAndSet(false)) {
+      handoffBatchSessionsToPeers()
       server.stop()
     }
     super.stop()

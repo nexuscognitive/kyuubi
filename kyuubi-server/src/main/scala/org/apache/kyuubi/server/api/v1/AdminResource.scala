@@ -17,7 +17,7 @@
 
 package org.apache.kyuubi.server.api.v1
 
-import java.util.Collections
+import java.util.{Collections, HashMap => JHashMap}
 import java.util.concurrent.ConcurrentHashMap
 import javax.ws.rs._
 import javax.ws.rs.core.{MediaType, Response}
@@ -42,10 +42,11 @@ import org.apache.kyuubi.engine.ApplicationManagerInfo
 import org.apache.kyuubi.ha.HighAvailabilityConf.HA_NAMESPACE
 import org.apache.kyuubi.ha.client.{DiscoveryPaths, ServiceNodeInfo}
 import org.apache.kyuubi.ha.client.DiscoveryClientProvider.withDiscoveryClient
-import org.apache.kyuubi.operation.{KyuubiOperation, OperationHandle}
+import org.apache.kyuubi.operation.{KyuubiOperation, OperationHandle, OperationState}
 import org.apache.kyuubi.server.KyuubiServer
 import org.apache.kyuubi.server.api.{ApiRequestContext, ApiUtils}
-import org.apache.kyuubi.session.{KyuubiSession, KyuubiSessionManager, SessionHandle}
+import org.apache.kyuubi.server.metadata.api.MetadataFilter
+import org.apache.kyuubi.session.{KyuubiSession, KyuubiSessionManager, SessionHandle, SessionType}
 
 @Tag(name = "Admin")
 @Produces(Array(MediaType.APPLICATION_JSON))
@@ -54,18 +55,20 @@ private[v1] class AdminResource extends ApiRequestContext with Logging {
   // Shared internal rest clients keyed by peer instance (host:port), reused across requests.
   // Mirrors the cache BatchesResource uses for batch redirection.
   private val internalRestClients = new ConcurrentHashMap[String, InternalRestClient]()
-  private lazy val internalSocketTimeout =
-    fe.getConf.get(BATCH_INTERNAL_REST_CLIENT_SOCKET_TIMEOUT).toInt
-  private lazy val internalConnectTimeout =
-    fe.getConf.get(BATCH_INTERNAL_REST_CLIENT_CONNECT_TIMEOUT).toInt
-  private lazy val internalRequestMaxAttempts =
-    fe.getConf.get(BATCH_INTERNAL_REST_CLIENT_REQUEST_MAX_ATTEMPTS)
-  private lazy val internalRequestAttemptWait =
-    fe.getConf.get(BATCH_INTERNAL_REST_CLIENT_REQUEST_ATTEMPT_WAIT).toInt
+  // The admin fan-out is a best-effort read across every peer, so it uses its own short,
+  // non-retrying timeouts rather than the batch-redirection ones: a dead peer must not hold
+  // the whole listing hostage.
+  private val internalSocketTimeout = 5000
+  private val internalConnectTimeout = 2000
+  private val internalRequestMaxAttempts = 1
+  private val internalRequestAttemptWait = 1000
   private lazy val internalSecurityEnabled =
     fe.getConf.get(ENGINE_SECURITY_ENABLED)
   // Upper bound on a cluster-wide fan-out read; dead/slow peers are dropped, never block forever.
   private val peerFanOutTimeout = 10.seconds
+  // Marks a row whose owning Kyuubi instance did not answer the fan-out.
+  private val OWNER_REACHABLE_CONF = "kyuubi.session.owner.reachable"
+  private val DRIVER_POD_STATE_CONF = "kyuubi.driver.pod.state"
 
   private def getInternalRestClient(kyuubiInstance: String): InternalRestClient = {
     internalRestClients.computeIfAbsent(
@@ -272,7 +275,86 @@ private[v1] class AdminResource extends ApiRequestContext with Logging {
       }
 
     // dedupe by session handle (a session lives on exactly one instance, but be defensive)
-    (localData ++ peerData).groupBy(_.getIdentifier).values.map(_.head).toSeq
+    val liveData = (localData ++ peerData).groupBy(_.getIdentifier).values.map(_.head).toSeq
+
+    if (StringUtils.isNotBlank(sessionType) &&
+      !SessionType.BATCH.toString.equals(sessionType)) return liveData
+
+    // A batch whose owner is down has no live session anywhere, so the fan-out cannot see it.
+    // Fall back to the metadata store so those rows do not silently disappear from the UI.
+    val allRows = liveData ++ orphanBatchSessions(liveData.map(_.getIdentifier).toSet, users)
+    enrichDriverPodState(allRows)
+    allRows
+  }
+
+  private def enrichDriverPodState(rows: Seq[SessionData]): Unit = {
+    if (!rows.exists(_.getSessionType == SessionType.BATCH.toString)) return
+    val states =
+      try {
+        fe.be.sessionManager.asInstanceOf[KyuubiSessionManager]
+          .applicationManager.getDriverPodStates()
+      } catch {
+        case e: Throwable =>
+          error("Failed to read driver pod states for session listing", e)
+          Map.empty[String, String]
+      }
+    if (states.isEmpty) return
+    rows.foreach { row =>
+      if (row.getSessionType == SessionType.BATCH.toString) {
+        states.get(row.getIdentifier).foreach { st =>
+          val conf = new JHashMap[String, String]()
+          conf.putAll(row.getConf)
+          conf.put(DRIVER_POD_STATE_CONF, st)
+          row.setConf(conf)
+        }
+      }
+    }
+  }
+
+  private def orphanBatchSessions(excludeIds: Set[String], users: String): Seq[SessionData] = {
+    val km = fe.be.sessionManager.asInstanceOf[KyuubiSessionManager]
+    val userFilter =
+      if (StringUtils.isNotBlank(users)) users.split(",").toSet else Set.empty[String]
+    val batches =
+      try {
+        Seq(OperationState.PENDING, OperationState.RUNNING).flatMap { state =>
+          km.getBatchesFromMetadataStore(
+            MetadataFilter(sessionType = SessionType.BATCH, state = state.toString),
+            0,
+            Int.MaxValue)
+        }
+      } catch {
+        case e: Throwable =>
+          error("Failed to read batches from metadata store for session listing", e)
+          Nil
+      }
+    batches
+      .filterNot(b => excludeIds.contains(b.getId))
+      .filter(b => userFilter.isEmpty || userFilter.contains(b.getUser))
+      .groupBy(_.getId).values.map(_.head).toSeq
+      .map(batchToSessionData)
+  }
+
+  private def batchToSessionData(b: Batch): SessionData = {
+    val conf = new JHashMap[String, String]()
+    conf.put(OWNER_REACHABLE_CONF, "false")
+    new SessionData(
+      b.getId,
+      null,
+      b.getUser,
+      null,
+      conf,
+      b.getCreateTime,
+      null,
+      null,
+      null,
+      SessionType.BATCH.toString,
+      b.getKyuubiInstance,
+      b.getAppId,
+      b.getName,
+      b.getAppUrl,
+      b.getName,
+      0)
   }
 
   @ApiResponse(

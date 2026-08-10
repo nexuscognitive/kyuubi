@@ -216,6 +216,13 @@ class MetadataManager extends AbstractService("MetadataManager") {
     }
   }
 
+  def transferBatchOwnership(
+      identifier: String,
+      fromKyuubiInstance: String,
+      toKyuubiInstance: String): Boolean = withMetadataRequestMetrics {
+    _metadataStore.transferMetadataOwnership(identifier, fromKyuubiInstance, toKyuubiInstance)
+  }
+
   def upsertKubernetesMetadata(kubernetesEngineInfo: KubernetesEngineInfo): Unit = {
     try {
       withMetadataRequestMetrics(_metadataStore.upsertKubernetesEngineInfo(kubernetesEngineInfo))
