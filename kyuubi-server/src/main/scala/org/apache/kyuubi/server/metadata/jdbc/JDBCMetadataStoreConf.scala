@@ -19,24 +19,16 @@ package org.apache.kyuubi.server.metadata.jdbc
 
 import java.util.Properties
 
+import org.apache.kyuubi.Utils
 import org.apache.kyuubi.config.{ConfigEntry, KyuubiConf, OptionalConfigEntry}
+import org.apache.kyuubi.config.ConfigAudience.SERVER
 import org.apache.kyuubi.config.KyuubiConf.buildConf
-import org.apache.kyuubi.util.JavaUtils
 
 object JDBCMetadataStoreConf {
   final val METADATA_STORE_JDBC_DATASOURCE_PREFIX = "kyuubi.metadata.store.jdbc.datasource"
 
   def getMetadataStoreJdbcUrl(conf: KyuubiConf): String = {
-    val rawJdbcUrl = conf.get(METADATA_STORE_JDBC_URL)
-    if (rawJdbcUrl.contains("<KYUUBI_HOME>")) {
-      rawJdbcUrl.replace(
-        "<KYUUBI_HOME>",
-        sys.env.getOrElse(
-          "KYUUBI_HOME",
-          JavaUtils.getCodeSourceLocation(getClass).split("kyuubi-server").head))
-    } else {
-      rawJdbcUrl
-    }
+    Utils.substituteKyuubiEnvVars(conf.get(METADATA_STORE_JDBC_URL))
   }
 
   /** Get metadata store jdbc datasource properties. */
@@ -60,7 +52,8 @@ object JDBCMetadataStoreConf {
         " please specify them with the prefix: kyuubi.metadata.store.jdbc.datasource." +
         " For example, kyuubi.metadata.store.jdbc.datasource.connectionTimeout=10000.")
       .version("1.6.0")
-      .serverOnly
+      .audience(SERVER)
+      .immutable
       .stringConf
       .transformToUpperCase
       .createWithDefault("SQLITE")
@@ -69,7 +62,8 @@ object JDBCMetadataStoreConf {
     buildConf("kyuubi.metadata.store.jdbc.database.schema.init")
       .doc("Whether to init the JDBC metadata store database schema.")
       .version("1.6.0")
-      .serverOnly
+      .audience(SERVER)
+      .immutable
       .booleanConf
       .createWithDefault(true)
 
@@ -77,7 +71,8 @@ object JDBCMetadataStoreConf {
     buildConf("kyuubi.metadata.store.jdbc.driver")
       .doc("JDBC driver class name for server jdbc metadata store.")
       .version("1.6.0")
-      .serverOnly
+      .audience(SERVER)
+      .immutable
       .stringConf
       .createOptional
 
@@ -86,17 +81,20 @@ object JDBCMetadataStoreConf {
       .doc("The JDBC url for server JDBC metadata store. By default, it is a SQLite database " +
         "url, and the state information is not shared across Kyuubi instances. To enable high " +
         "availability for multiple kyuubi instances, please specify a production JDBC url. " +
-        "Note: this value support the variables substitution: `<KYUUBI_HOME>`.")
+        "Note: this value support the variables substitution: `{{KYUUBI_HOME}}`, " +
+        "`{{KYUUBI_WORK_DIR_ROOT}}`.")
       .version("1.6.0")
-      .serverOnly
+      .audience(SERVER)
+      .immutable
       .stringConf
-      .createWithDefault("jdbc:sqlite:<KYUUBI_HOME>/kyuubi_state_store.db")
+      .createWithDefault("jdbc:sqlite:{{KYUUBI_HOME}}/kyuubi_state_store.db")
 
   val METADATA_STORE_JDBC_USER: ConfigEntry[String] =
     buildConf("kyuubi.metadata.store.jdbc.user")
       .doc("The username for server JDBC metadata store.")
       .version("1.6.0")
-      .serverOnly
+      .audience(SERVER)
+      .immutable
       .stringConf
       .createWithDefault("")
 
@@ -104,7 +102,8 @@ object JDBCMetadataStoreConf {
     buildConf("kyuubi.metadata.store.jdbc.password")
       .doc("The password for server JDBC metadata store.")
       .version("1.6.0")
-      .serverOnly
+      .audience(SERVER)
+      .immutable
       .stringConf
       .createWithDefault("")
 
@@ -116,7 +115,8 @@ object JDBCMetadataStoreConf {
         "when using MySQL 5.7 as the metastore backend due to the lack of support " +
         "for mixed order index. See more details at KYUUBI #5329.")
       .version("1.8.0")
-      .serverOnly
+      .audience(SERVER)
+      .immutable
       .booleanConf
       .createWithDefault(false)
 }

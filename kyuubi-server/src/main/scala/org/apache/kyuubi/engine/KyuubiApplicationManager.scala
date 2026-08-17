@@ -19,7 +19,7 @@ package org.apache.kyuubi.engine
 
 import java.io.File
 import java.net.{URI, URISyntaxException}
-import java.nio.file.{Files, Path}
+import java.nio.file.{Files, Path, Paths}
 import java.util.Locale
 
 import scala.util.control.NonFatal
@@ -177,7 +177,7 @@ object KyuubiApplicationManager {
             s"Relative path ${uri.getPath} is not allowed, please use absolute path.")
         }
 
-        if (!localDirAllowList.exists(uri.getPath.startsWith(_))) {
+        if (!localDirAllowList.exists(Paths.get(uri.getPath).normalize.startsWith(_))) {
           throw new KyuubiException(
             s"The file ${uri.getPath} to access is not in the local dir allow list" +
               s" [${localDirAllowList.mkString(",")}].")
@@ -190,10 +190,15 @@ object KyuubiApplicationManager {
       appConf: Map[String, String],
       kyuubiConf: KyuubiConf): Unit = {
     if (kyuubiConf.get(KyuubiConf.SESSION_LOCAL_DIR_ALLOW_LIST).nonEmpty) {
-      SparkProcessBuilder.PATH_CONFIGS.flatMap { key =>
-        appConf.get(key).map(_.split(",")).getOrElse(Array.empty)
-      }.filter(_.nonEmpty).foreach { path =>
-        checkApplicationAccessPath(path, kyuubiConf)
+      val policedKeys = SparkProcessBuilder.PATH_CONFIGS.toSet ++
+        kyuubiConf.get(KyuubiConf.SERVER_SPARK_FILE_CONFIG_LIST)
+          .map(SparkProcessBuilder.convertConfigKey)
+      appConf.foreach { case (key, value) =>
+        if (policedKeys.contains(SparkProcessBuilder.convertConfigKey(key))) {
+          value.split(",").filter(_.nonEmpty).foreach { path =>
+            checkApplicationAccessPath(path, kyuubiConf)
+          }
+        }
       }
     }
   }

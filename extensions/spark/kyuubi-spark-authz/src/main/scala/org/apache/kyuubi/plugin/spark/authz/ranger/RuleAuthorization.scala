@@ -20,6 +20,7 @@ package org.apache.kyuubi.plugin.spark.authz.ranger
 import scala.collection.mutable
 
 import org.apache.ranger.plugin.policyengine.RangerAccessRequest
+import org.apache.ranger.plugin.util.RangerPerfTracer
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.slf4j.LoggerFactory
@@ -37,71 +38,86 @@ object RuleAuthorization extends (SparkSession => RuleAuthorization) {
 }
 
 case class RuleAuthorization(spark: SparkSession) extends Authorization(spark) {
-  override def checkPrivileges(spark: SparkSession, plan: LogicalPlan): Unit = {
-    val auditHandler = new SparkRangerAuditHandler
-    val ugi = getAuthzUgi(spark.sparkContext)
-    val (inputs, outputs, opType) = PrivilegesBuilder.build(plan, spark)
+  private val PERF_SPARKAUTH_REQUEST_LOG =
+    RangerPerfTracer.getPerfLogger("sparkauth.request")
 
-    // Diagnostic: log the privilege objects that were built for this plan. An
-    // EMPTY inputs/outputs here means NOTHING will be checked (fail open) - the
-    // usual signature of a table whose identity could not be extracted.
-    if (RuleAuthorization.LOG.isDebugEnabled) {
-      def fmt(o: PrivilegeObject): String =
-        s"${o.catalog.getOrElse("-")}.${Option(o.dbname).getOrElse("-")}.${o.objectName}" +
-          (if (o.columns.nonEmpty) o.columns.mkString("(", ",", ")") else "")
-      RuleAuthorization.LOG.debug(
-        s"[authz] user=${ugi.getShortUserName} node=${plan.getClass.getSimpleName} " +
-          s"opType=$opType " +
-          s"inputs=${inputs.map(fmt).mkString("{", ", ", "}")} " +
-          s"outputs=${outputs.map(fmt).mkString("{", ", ", "}")}")
+  override def checkPrivileges(spark: SparkSession, plan: LogicalPlan): Unit = {
+    val perf = if (RangerPerfTracer.isPerfTraceEnabled(PERF_SPARKAUTH_REQUEST_LOG)) {
+      RangerPerfTracer.getPerfTracer(
+        PERF_SPARKAUTH_REQUEST_LOG,
+        "RuleAuthorization.checkPrivileges()")
+    } else {
+      null
     }
 
-    // Use a HashSet to deduplicate the same AccessResource and AccessType, the requests will be all
-    // the non-duplicate requests and in the same order as the input requests.
-    val requests = new mutable.ArrayBuffer[AccessRequest]()
-    val requestsSet = new mutable.HashSet[(AccessResource, AccessType)]()
+    try {
+      val auditHandler = new SparkRangerAuditHandler
+      val ugi = getAuthzUgi(spark.sparkContext)
+      val (inputs, outputs, opType) = PrivilegesBuilder.build(plan, spark)
 
-    def addAccessRequest(objects: Iterable[PrivilegeObject], isInput: Boolean): Unit = {
-      objects.foreach { obj =>
-        val resource = AccessResource(obj, opType)
-        val accessType = ranger.AccessType(obj, opType, isInput)
-        if (accessType != AccessType.NONE && !requestsSet.contains((resource, accessType))) {
-          requests += AccessRequest(resource, ugi, opType, accessType)
-          requestsSet.add(resource, accessType)
+      // Diagnostic: log the privilege objects that were built for this plan. An
+      // EMPTY inputs/outputs here means NOTHING will be checked (fail open) - the
+      // usual signature of a table whose identity could not be extracted.
+      if (RuleAuthorization.LOG.isDebugEnabled) {
+        def fmt(o: PrivilegeObject): String =
+          s"${o.catalog.getOrElse("-")}.${Option(o.dbname).getOrElse("-")}.${o.objectName}" +
+            (if (o.columns.nonEmpty) o.columns.mkString("(", ",", ")") else "")
+        RuleAuthorization.LOG.debug(
+          s"[authz] user=${ugi.getShortUserName} node=${plan.getClass.getSimpleName} " +
+            s"opType=$opType " +
+            s"inputs=${inputs.map(fmt).mkString("{", ", ", "}")} " +
+            s"outputs=${outputs.map(fmt).mkString("{", ", ", "}")}")
+      }
+
+      // Use a HashSet to deduplicate the same AccessResource and AccessType. The requests will be
+      // all the non-duplicate requests and in the same order as the input requests.
+      val requests = new mutable.ArrayBuffer[AccessRequest]()
+      val requestsSet = new mutable.HashSet[(AccessResource, AccessType)]()
+
+      def addAccessRequest(objects: Iterable[PrivilegeObject], isInput: Boolean): Unit = {
+        objects.foreach { obj =>
+          val resource = AccessResource(obj, opType)
+          val accessType = ranger.AccessType(obj, opType, isInput)
+          if (accessType != AccessType.NONE && !requestsSet.contains((resource, accessType))) {
+            requests += AccessRequest(resource, ugi, opType, accessType)
+            requestsSet.add(resource, accessType)
+          }
         }
       }
-    }
 
-    addAccessRequest(inputs, isInput = true)
-    addAccessRequest(outputs, isInput = false)
+      addAccessRequest(inputs, isInput = true)
+      addAccessRequest(outputs, isInput = false)
 
-    val requestArrays = requests.map { request =>
-      val resource = request.getResource.asInstanceOf[AccessResource]
-      resource.objectType match {
-        case ObjectType.COLUMN if resource.getColumns.nonEmpty =>
-          resource.getColumns.map { col =>
-            val dbOrSchema = Option(resource.getDatabase).orElse(Option(resource.getSchema))
-              .orNull
-            val cr =
-              AccessResource(
-                COLUMN,
-                dbOrSchema,
-                resource.getTable,
-                col,
-                Option(resource.getOwnerUser),
-                resource.catalog)
-            AccessRequest(cr, ugi, opType, request.accessType).asInstanceOf[RangerAccessRequest]
-          }
-        case _ => Seq(request)
+      val requestArrays = requests.map { request =>
+        val resource = request.getResource.asInstanceOf[AccessResource]
+        resource.objectType match {
+          case ObjectType.COLUMN if resource.getColumns.nonEmpty =>
+            resource.getColumns.map { col =>
+              val dbOrSchema = Option(resource.getDatabase).orElse(Option(resource.getSchema))
+                .orNull
+              val cr =
+                AccessResource(
+                  COLUMN,
+                  dbOrSchema,
+                  resource.getTable,
+                  col,
+                  Option(resource.getOwnerUser),
+                  resource.catalog)
+              AccessRequest(cr, ugi, opType, request.accessType).asInstanceOf[RangerAccessRequest]
+            }
+          case _ => Seq(request)
+        }
+      }.toSeq
+
+      if (authorizeInSingleCall) {
+        verify(requestArrays.flatten, auditHandler)
+      } else {
+        requestArrays.flatten.foreach { req =>
+          verify(Seq(req), auditHandler)
+        }
       }
-    }.toSeq
-
-    if (authorizeInSingleCall) {
-      verify(requestArrays.flatten, auditHandler)
-    } else {
-      requestArrays.flatten.foreach { req =>
-        verify(Seq(req), auditHandler)
-      }
+    } finally {
+      RangerPerfTracer.log(perf)
     }
   }
 }

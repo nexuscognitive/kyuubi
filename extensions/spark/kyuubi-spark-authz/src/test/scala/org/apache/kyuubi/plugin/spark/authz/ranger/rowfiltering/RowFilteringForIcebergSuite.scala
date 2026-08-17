@@ -18,10 +18,11 @@
 package org.apache.kyuubi.plugin.spark.authz.ranger.rowfiltering
 
 import org.apache.spark.SparkConf
-import org.scalatest.Outcome
 
 import org.apache.kyuubi.Utils
+import org.apache.kyuubi.tags.IcebergTest
 
+@IcebergTest
 class RowFilteringForIcebergSuite extends RowFilteringTestBase {
   override protected val extraSparkConf: SparkConf = {
     new SparkConf()
@@ -47,7 +48,4 @@ class RowFilteringForIcebergSuite extends RowFilteringTestBase {
     super.afterAll()
   }
 
-  override def withFixture(test: NoArgTest): Outcome = {
-    test()
-  }
 }

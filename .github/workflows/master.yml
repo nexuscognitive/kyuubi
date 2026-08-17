@@ -24,19 +24,21 @@ on:
       - branch-*
     paths-ignore:
       - 'docs/**'
+      - '.github/workflows/docs.yml'
   pull_request:
     branches:
       - master
       - branch-*
     paths-ignore:
       - 'docs/**'
+      - '.github/workflows/docs.yml'
 
 concurrency:
   group: test-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
 env:
-  MAVEN_ARGS: -Dmaven.javadoc.skip=true -Drat.skip=true -Dscalastyle.skip=true -Dspotless.check.skip -Dorg.slf4j.simpleLogger.defaultLogLevel=warn -Pjdbc-shaded,gen-policy -Dmaven.plugin.download.cache.path=/tmp/engine-archives
+  MAVEN_ARGS: -Dmaven.javadoc.skip=true -Drat.skip=true -Dscalastyle.skip=true -Dspotless.check.skip -Dorg.slf4j.simpleLogger.defaultLogLevel=warn -Pjdbc-shaded,gen-policy -Pflink-provided,hive-provided,spark-provided
   KUBERNETES_VERSION: v1.30.0
   MINIKUBE_VERSION: v1.33.1
 
@@ -49,8 +51,9 @@ jobs:
       max-parallel: 6
       matrix:
         java:
-          - 8
           - 17
+        python:
+          - '3.9'
         spark:
           - '3.3'
           - '3.4'
@@ -60,47 +63,95 @@ jobs:
         comment: ["normal"]
         include:
           - java: 21
+            python: '3.11'
             spark: '4.0'
             spark-archive: '-Pscala-2.13'
             exclude-tags: ''
             comment: 'normal'
+          - java: 21
+            python: '3.11'
+            spark: '4.1'
+            spark-archive: '-Pscala-2.13'
+            exclude-tags: ''
+            comment: 'normal'
+          - java: 21
+            python: '3.11'
+            spark: '4.2'
+            spark-archive: '-Pscala-2.13'
+            exclude-tags: '-Dmaven.plugin.scalatest.exclude.tags=org.scalatest.tags.Slow,org.apache.kyuubi.tags.DeltaTest,org.apache.kyuubi.tags.IcebergTest,org.apache.kyuubi.tags.PaimonTest,org.apache.kyuubi.tags.HudiTest'
+            comment: 'normal'
           - java: 8
+            python: '3.9'
             spark: '3.5'
             spark-archive: '-Dspark.archive.mirror=https://www.apache.org/dyn/closer.lua/spark/spark-3.3.3 -Dspark.archive.name=spark-3.3.3-bin-hadoop3.tgz -Pzookeeper-3.6'
             exclude-tags: '-Dmaven.plugin.scalatest.exclude.tags=org.scalatest.tags.Slow,org.apache.kyuubi.tags.DeltaTest,org.apache.kyuubi.tags.IcebergTest,org.apache.kyuubi.tags.PaimonTest,org.apache.kyuubi.tags.HudiTest,org.apache.kyuubi.tags.SparkLocalClusterTest'
             comment: 'verify-on-spark-3.3-binary'
           - java: 8
+            python: '3.9'
             spark: '3.5'
-            spark-archive: '-Dspark.archive.mirror=https://www.apache.org/dyn/closer.lua/spark/spark-3.4.3 -Dspark.archive.name=spark-3.4.3-bin-hadoop3.tgz -Pzookeeper-3.6'
+            spark-archive: '-Dspark.archive.mirror=https://www.apache.org/dyn/closer.lua/spark/spark-3.4.4 -Dspark.archive.name=spark-3.4.4-bin-hadoop3.tgz -Pzookeeper-3.6'
             exclude-tags: '-Dmaven.plugin.scalatest.exclude.tags=org.scalatest.tags.Slow,org.apache.kyuubi.tags.DeltaTest,org.apache.kyuubi.tags.IcebergTest,org.apache.kyuubi.tags.PaimonTest,org.apache.kyuubi.tags.SparkLocalClusterTest'
             comment: 'verify-on-spark-3.4-binary'
           - java: 17
+            python: '3.11'
             spark: '3.5'
-            spark-archive: '-Pscala-2.13 -Dspark.archive.mirror=https://www.apache.org/dyn/closer.lua/spark/spark-4.0.1 -Dspark.archive.name=spark-4.0.1-bin-hadoop3.tgz'
+            spark-archive: '-Pscala-2.13 -Dspark.archive.mirror=https://www.apache.org/dyn/closer.lua/spark/spark-4.0.3 -Dspark.archive.name=spark-4.0.3-bin-hadoop3.tgz'
             exclude-tags: '-Dmaven.plugin.scalatest.exclude.tags=org.scalatest.tags.Slow,org.apache.kyuubi.tags.DeltaTest,org.apache.kyuubi.tags.IcebergTest,org.apache.kyuubi.tags.PaimonTest,org.apache.kyuubi.tags.SparkLocalClusterTest'
             comment: 'verify-on-spark-4.0-binary'
+          - java: 17
+            python: '3.11'
+            spark: '3.5'
+            spark-archive: '-Pscala-2.13 -Dspark.archive.mirror=https://www.apache.org/dyn/closer.lua/spark/spark-4.1.2 -Dspark.archive.name=spark-4.1.2-bin-hadoop3.tgz'
+            exclude-tags: '-Dmaven.plugin.scalatest.exclude.tags=org.scalatest.tags.Slow,org.apache.kyuubi.tags.DeltaTest,org.apache.kyuubi.tags.IcebergTest,org.apache.kyuubi.tags.PaimonTest,org.apache.kyuubi.tags.HudiTest,org.apache.kyuubi.tags.SparkLocalClusterTest'
+            comment: 'verify-on-spark-4.1-binary'
+          - java: 17
+            python: '3.11'
+            spark: '3.5'
+            spark-archive: '-Pscala-2.13 -Dspark.archive.mirror=https://www.apache.org/dyn/closer.lua/spark/spark-4.2.0 -Dspark.archive.name=spark-4.2.0-bin-hadoop3.tgz'
+            exclude-tags: '-Dmaven.plugin.scalatest.exclude.tags=org.scalatest.tags.Slow,org.apache.kyuubi.tags.DeltaTest,org.apache.kyuubi.tags.IcebergTest,org.apache.kyuubi.tags.PaimonTest,org.apache.kyuubi.tags.HudiTest,org.apache.kyuubi.tags.SparkLocalClusterTest'
+            comment: 'verify-on-spark-4.2-binary'
     env:
       SPARK_LOCAL_IP: localhost
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Free up disk space
         run: ./.github/scripts/free_disk_space.sh
       - name: Tune Runner VM
         uses: ./.github/actions/tune-runner-vm
       - name: Setup JDK ${{ matrix.java }}
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: ${{ matrix.java }}
           cache: 'maven'
-      - name: Cache Engine Archives
-        uses: ./.github/actions/cache-engine-archives
       - name: Setup Maven
         uses: ./.github/actions/setup-maven
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
-          python-version: '3.9'
+          python-version: ${{ matrix.python }}
+      - name: Resolve engine archive download URLs
+        id: engine-archives
+        run: ./.github/scripts/resolve-engine-archive-urls.sh spark,hive,flink -Pspark-${{ matrix.spark }} ${{ matrix.spark-archive }}
+      - name: Make /opt writable for engine archives
+        run: sudo chown "$(id -un)" /opt
+      - name: Download Spark
+        uses: ./.github/actions/download-archive
+        with:
+          url: ${{ steps.engine-archives.outputs.spark-url }}
+          untar-dir: /opt
+      - name: Download Hive
+        uses: ./.github/actions/download-archive
+        with:
+          url: ${{ steps.engine-archives.outputs.hive-url }}
+          untar-dir: /opt
+      - name: Download Flink
+        uses: ./.github/actions/download-archive
+        with:
+          url: ${{ steps.engine-archives.outputs.flink-url }}
+          untar-dir: /opt
+      - name: Expose engine homes
+        run: ./.github/scripts/expose-engine-homes.sh spark,hive,flink
       - name: Build and test Kyuubi and Spark with maven w/o linters
         run: |
           if [[ "${{ matrix.java }}" == "8" && "${{ matrix.spark }}" == "3.5" && "${{ matrix.spark-archive }}" == "" ]]; then
@@ -114,12 +165,12 @@ jobs:
           matrix.java == 8 &&
           matrix.spark == '3.5' &&
           matrix.spark-archive == ''
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v7
         with:
           verbose: true
       - name: Upload test logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: unit-tests-log-java-${{ matrix.java }}-spark-${{ matrix.spark }}-${{ matrix.comment }}
           path: |
@@ -132,6 +183,7 @@ jobs:
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
+      max-parallel: 15
       matrix:
         scala:
           - '2.13'
@@ -140,21 +192,37 @@ jobs:
         spark:
           - '3.5'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Free up disk space
         run: ./.github/scripts/free_disk_space.sh
       - name: Tune Runner VM
         uses: ./.github/actions/tune-runner-vm
       - name: Setup JDK ${{ matrix.java }}
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: ${{ matrix.java }}
           cache: 'maven'
       - name: Setup Maven
         uses: ./.github/actions/setup-maven
-      - name: Cache Engine Archives
-        uses: ./.github/actions/cache-engine-archives
+      - name: Resolve engine archive download URLs
+        id: engine-archives
+        run: ./.github/scripts/resolve-engine-archive-urls.sh spark,hive -Pspark-${{ matrix.spark }} -Pscala-${{ matrix.scala }}
+      - name: Make /opt writable for engine archives
+        run: sudo chown "$(id -un)" /opt
+      - name: Download Spark
+        uses: ./.github/actions/download-archive
+        with:
+          url: ${{ steps.engine-archives.outputs.spark-url }}
+          untar-dir: /opt
+      - name: Download Hive
+        uses: ./.github/actions/download-archive
+        with:
+          url: ${{ steps.engine-archives.outputs.hive-url }}
+          untar-dir: /opt
+      # Flink modules are excluded from this job, so Flink is not downloaded.
+      - name: Expose engine homes
+        run: ./.github/scripts/expose-engine-homes.sh spark,hive
       - name: Build on Scala ${{ matrix.scala }}
         run: |
           TEST_MODULES="!externals/kyuubi-flink-sql-engine,!integration-tests/kyuubi-flink-it"
@@ -163,7 +231,7 @@ jobs:
           -Pscala-${{ matrix.scala }} -Pjava-${{ matrix.java }} -Pspark-${{ matrix.spark }}
       - name: Upload test logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: unit-tests-log-scala-${{ matrix.scala }}-java-${{ matrix.java }}-spark-${{ matrix.spark }}
           path: |
@@ -197,19 +265,29 @@ jobs:
             spark-compile: "3.5"
             spark-runtime: "4.0"
             comment: "normal"
+          - java: 21
+            scala: "2.13"
+            spark-compile: "3.5"
+            spark-runtime: "4.1"
+            comment: "normal"
+          - java: 21
+            scala: "2.13"
+            spark-compile: "3.5"
+            spark-runtime: "4.2"
+            comment: "normal"
     env:
       SPARK_LOCAL_IP: localhost
       TEST_MODULES: "extensions/spark/kyuubi-spark-connector-hive,\
         extensions/spark/kyuubi-spark-connector-tpcds,\
         extensions/spark/kyuubi-spark-connector-tpch"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Free up disk space
         run: ./.github/scripts/free_disk_space.sh
       - name: Tune Runner VM
         uses: ./.github/actions/tune-runner-vm
       - name: Setup JDK ${{ matrix.java }}
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: ${{ matrix.java }}
@@ -226,7 +304,7 @@ jobs:
           -Pscala-${{ matrix.scala }} -Pspark-${{ matrix.spark-runtime }} -Pcross-version-test
       - name: Upload test logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: "unit-tests-log-java-${{ matrix.java }}-scala-${{ matrix.scala }}\
             -spark-compile-${{ matrix.spark-compile }}-spark-runtime-${{ matrix.spark-runtime }}\
@@ -259,24 +337,34 @@ jobs:
             comment: 'verify-on-flink-1.18-binary'
           - java: 8
             flink: '1.20'
-            flink-archive: '-Dflink.archive.mirror=https://www.apache.org/dyn/closer.lua/flink/flink-1.19.1 -Dflink.archive.name=flink-1.19.1-bin-scala_2.12.tgz'
+            flink-archive: '-Dflink.archive.mirror=https://www.apache.org/dyn/closer.lua/flink/flink-1.19.3 -Dflink.archive.name=flink-1.19.3-bin-scala_2.12.tgz'
             comment: 'verify-on-flink-1.19-binary'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Free up disk space
         run: ./.github/scripts/free_disk_space.sh
       - name: Tune Runner VM
         uses: ./.github/actions/tune-runner-vm
       - name: Setup JDK ${{ matrix.java }}
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: ${{ matrix.java }}
           cache: 'maven'
       - name: Setup Maven
         uses: ./.github/actions/setup-maven
-      - name: Cache Engine Archives
-        uses: ./.github/actions/cache-engine-archives
+      - name: Resolve engine archive download URLs
+        id: engine-archives
+        run: ./.github/scripts/resolve-engine-archive-urls.sh flink -Pflink-${{ matrix.flink }} ${{ matrix.flink-archive }}
+      - name: Make /opt writable for engine archives
+        run: sudo chown "$(id -un)" /opt
+      - name: Download Flink
+        uses: ./.github/actions/download-archive
+        with:
+          url: ${{ steps.engine-archives.outputs.flink-url }}
+          untar-dir: /opt
+      - name: Expose engine homes
+        run: ./.github/scripts/expose-engine-homes.sh flink
       - name: Build Flink with maven w/o linters
         run: |
           TEST_MODULES="externals/kyuubi-flink-sql-engine,integration-tests/kyuubi-flink-it"
@@ -294,7 +382,7 @@ jobs:
           ./build/mvn -pl ${IT_MODULE} -Pflink-${IT_FLINK} ${{ matrix.flink-archive }} test
       - name: Upload test logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: unit-tests-log-java-${{ matrix.java }}-flink-${{ matrix.flink }}-${{ matrix.comment }}
           path: |
@@ -320,42 +408,43 @@ jobs:
             hive-archive: '-Dhive.archive.mirror=https://github.com/pan3793/cdh-hive/releases/download/cdh6.3.2-release -Dhive.archive.name=apache-hive-2.1.1-cdh6.3.2-bin.tar.gz -Dhive.archive.query='
             comment: 'verify-on-hive-2.1-cdh6-binary'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Free up disk space
         run: ./.github/scripts/free_disk_space.sh
       - name: Tune Runner VM
         uses: ./.github/actions/tune-runner-vm
       - name: Setup JDK ${{ matrix.java }}
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: ${{ matrix.java }}
           cache: 'maven'
       - name: Setup Maven
         uses: ./.github/actions/setup-maven
-      - name: Cache Engine Archives
-        uses: ./.github/actions/cache-engine-archives
+      - name: Resolve engine archive download URLs
+        id: engine-archives
+        run: ./.github/scripts/resolve-engine-archive-urls.sh hive ${{ matrix.hive-archive }}
+      - name: Make /opt writable for engine archives
+        run: sudo chown "$(id -un)" /opt
+      - name: Download Hive
+        uses: ./.github/actions/download-archive
+        with:
+          url: ${{ steps.engine-archives.outputs.hive-url }}
+          untar-dir: /opt
+      - name: Expose engine homes
+        run: ./.github/scripts/expose-engine-homes.sh hive
       - name: Build and test Hive with maven w/o linters
         run: |
           TEST_MODULES="externals/kyuubi-hive-sql-engine,integration-tests/kyuubi-hive-it"
           ./build/mvn ${{ matrix.hive-archive }} -pl ${TEST_MODULES} -am clean install -DskipTests
-          # unpack avatica-1.8.0.jar and delete Jackson classes to workaround CALCITE-1224
-          if [[ "${{ matrix.hive-archive }}" == *apache-hive-2.3.10-bin.tar.gz* ]]; then
-            HIVE_2310_LIB="$PWD/externals/kyuubi-download/target/apache-hive-2.3.10-bin/lib"
-            mkdir avatica-1.8.0-unpack
-            cd avatica-1.8.0-unpack
-            jar xf $HIVE_2310_LIB/avatica-1.8.0.jar
-            rm -rf com/fasterxml/jackson org/slf4j
-            jar cf avatica-1.8.0-patched.jar .
-            rm $HIVE_2310_LIB/avatica-1.8.0.jar
-            mv avatica-1.8.0-patched.jar $HIVE_2310_LIB/
-            cd ..
-            rm -rf avatica-1.8.0-unpack
+          # delete bundled Jackson/SLF4J classes from avatica-1.8.0.jar to workaround CALCITE-1224
+          if [[ "$(basename "$HIVE_HOME")" == "apache-hive-2.3.10-bin" ]]; then
+            zip -d "$HIVE_HOME/lib/avatica-1.8.0.jar" 'com/fasterxml/jackson/*' 'org/slf4j/*'
           fi
           ./build/mvn ${{ matrix.hive-archive }} -pl ${TEST_MODULES} test
       - name: Upload test logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: unit-tests-log-java-${{ matrix.java }}-hive-${{ matrix.comment }}
           path: |
@@ -367,25 +456,36 @@ jobs:
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
+      max-parallel: 15
       matrix:
         java: [ 8 ]
         comment: [ "normal" ]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Free up disk space
         run: ./.github/scripts/free_disk_space.sh
       - name: Tune Runner VM
         uses: ./.github/actions/tune-runner-vm
       - name: Setup JDK ${{ matrix.java }}
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: ${{ matrix.java }}
           cache: 'maven'
       - name: Setup Maven
         uses: ./.github/actions/setup-maven
-      - name: Cache Engine Archives
-        uses: ./.github/actions/cache-engine-archives
+      - name: Resolve engine archive download URLs
+        id: engine-archives
+        run: ./.github/scripts/resolve-engine-archive-urls.sh spark
+      - name: Make /opt writable for engine archives
+        run: sudo chown "$(id -un)" /opt
+      - name: Download Spark
+        uses: ./.github/actions/download-archive
+        with:
+          url: ${{ steps.engine-archives.outputs.spark-url }}
+          untar-dir: /opt
+      - name: Expose engine homes
+        run: ./.github/scripts/expose-engine-homes.sh spark
       - name: Build and test JDBC and Trino engines, TPC-H/TPC-DS with maven w/o linters
         run: |
           JDBC_TEST_MODULES="externals/kyuubi-jdbc-engine,integration-tests/kyuubi-jdbc-it"
@@ -399,7 +499,7 @@ jobs:
           -Dtest=none -DwildcardSuites=org.apache.kyuubi.operation.tpcds,org.apache.kyuubi.spark.connector.tpcds.TPCDSQuerySuite,org.apache.kyuubi.spark.connector.tpch.TPCHQuerySuite
       - name: Upload test logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: unit-tests-log-java-${{ matrix.java }}-hive-${{ matrix.comment }}
           path: |
@@ -411,31 +511,29 @@ jobs:
     name: Kyuubi Server On Kubernetes Integration Test
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Free up disk space
         run: ./.github/scripts/free_disk_space.sh
       # https://github.com/docker/build-push-action
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
         with:
           cache-binary: false
       - name: Pull Spark image
         run: |
-          docker pull apache/spark:3.5.5
+          docker pull apache/spark:3.5.8
       - name: Build Kyuubi Docker Image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           # passthrough CI into build container
           build-args: |
             CI=${CI}
-            BASE_IMAGE=apache/spark:3.5.5
+            BASE_IMAGE=apache/spark:3.5.8
             MVN_ARG=--spark-provided --flink-provided --hive-provided
           context: .
           file: build/Dockerfile.CI
           load: true
           tags: apache/kyuubi:ci
-      - name: Cache Engine Archives
-        uses: ./.github/actions/cache-engine-archives
       - name: Setup Minikube
         run: |
           # https://minikube.sigs.k8s.io/docs/start/
@@ -445,7 +543,7 @@ jobs:
           # https://minikube.sigs.k8s.io/docs/handbook/pushing/#7-loading-directly-to-in-cluster-container-runtime
           minikube image load apache/kyuubi:ci
           # pre-install spark into minikube
-          minikube image load apache/spark:3.5.5
+          minikube image load apache/spark:3.5.8
       - name: kubectl pre-check
         run: |
           kubectl get nodes
@@ -478,7 +576,7 @@ jobs:
           kubectl get pods | grep driver | awk -F " " '{print$1}' | xargs -I {} kubectl logs {}
       - name: Upload test logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: unit-tests-log-kyuubi-on-k8s-it
           path: |
@@ -489,17 +587,27 @@ jobs:
     name: Spark Engine On Kubernetes Integration Test
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Free up disk space
         run: ./.github/scripts/free_disk_space.sh
-      - name: Cache Engine Archives
-        uses: ./.github/actions/cache-engine-archives
       - name: Setup JDK 11
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 11
           cache: 'maven'
+      - name: Resolve engine archive download URLs
+        id: engine-archives
+        run: ./.github/scripts/resolve-engine-archive-urls.sh spark
+      - name: Make /opt writable for engine archives
+        run: sudo chown "$(id -un)" /opt
+      - name: Download Spark
+        uses: ./.github/actions/download-archive
+        with:
+          url: ${{ steps.engine-archives.outputs.spark-url }}
+          untar-dir: /opt
+      - name: Expose engine homes
+        run: ./.github/scripts/expose-engine-homes.sh spark
       - name: Setup Minikube
         run: |
           # https://minikube.sigs.k8s.io/docs/start/
@@ -526,7 +634,7 @@ jobs:
           kubectl get pods | grep driver | awk -F " " '{print$1}' | xargs -I {} kubectl logs {}
       - name: Upload test logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: unit-tests-log-spark-on-k8s-it
           path: |
@@ -545,19 +653,17 @@ jobs:
         zookeeper: ["3.4", "3.5", "3.6", "3.7" ]
         comment: [ "normal" ]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Tune Runner VM
         uses: ./.github/actions/tune-runner-vm
       - name: Setup JDK ${{ matrix.java }}
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: ${{ matrix.java }}
           cache: 'maven'
       - name: Setup Maven
         uses: ./.github/actions/setup-maven
-      - name: Cache Engine Archives
-        uses: ./.github/actions/cache-engine-archives
       - name: zookeeper integration tests
         run: |
           export KYUUBI_IT_ZOOKEEPER_VERSION=${{ matrix.zookeeper }}
@@ -566,7 +672,7 @@ jobs:
           ./build/mvn -pl ${TEST_MODULES} test
       - name: Upload test logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: unit-tests-log-java-${{ matrix.java }}-zookeeper-${{ matrix.comment }}
           path: |

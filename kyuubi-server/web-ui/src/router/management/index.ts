@@ -35,6 +35,11 @@ const router = [
     path: '/management/operation',
     name: 'operation',
     component: () => import('@/views/management/operation/index.vue')
+  },
+  {
+    path: '/management/batch',
+    name: 'batch',
+    component: () => import('@/views/management/batch/index.vue')
   }
 ]
 

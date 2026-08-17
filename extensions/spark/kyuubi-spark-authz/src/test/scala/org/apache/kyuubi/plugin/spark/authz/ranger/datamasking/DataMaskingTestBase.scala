@@ -21,12 +21,11 @@ import java.sql.Timestamp
 
 import scala.util.Try
 
-// scalastyle:off
 import org.apache.commons.codec.digest.DigestUtils.md5Hex
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.{Row, SparkSessionExtensions}
-import org.scalatest.BeforeAndAfterAll
-import org.scalatest.funsuite.AnyFunSuite
 
+import org.apache.kyuubi.KyuubiFunSuite
 import org.apache.kyuubi.plugin.spark.authz.RangerTestUsers._
 import org.apache.kyuubi.plugin.spark.authz.SparkSessionProvider
 import org.apache.kyuubi.plugin.spark.authz.ranger.RangerSparkExtension
@@ -35,9 +34,17 @@ import org.apache.kyuubi.plugin.spark.authz.ranger.RangerSparkExtension
  * Base trait for data masking tests, derivative classes shall name themselves following:
  *  DataMaskingFor CatalogImpl?  FileFormat? Additions? Suite
  */
-trait DataMaskingTestBase extends AnyFunSuite with SparkSessionProvider with BeforeAndAfterAll {
-// scalastyle:on
+trait DataMaskingTestBase extends KyuubiFunSuite with SparkSessionProvider {
   override protected val extension: SparkSessionExtensions => Unit = new RangerSparkExtension
+
+  // SPARK-44444 (Spark 4.0) enables ANSI SQL mode by default. Under ANSI mode,
+  // AnsiStringPromotionTypeCoercion resolves coalesce/union of a masked STRING column
+  // and an INT literal/column to LongType (casting the md5 string to bigint) instead of
+  // StringType, causing CAST_INVALID_INPUT at runtime for MASK_HASH'd columns.
+  // Disable ANSI mode here until the data masking rule is ANSI-compatible.
+  // TODO: support ANSI SQL mode in the data masking rule.
+  override protected def extraSparkConf: SparkConf =
+    super.extraSparkConf.set("spark.sql.ansi.enabled", "false")
 
   private def setup(): Unit = {
     sql(s"CREATE TABLE IF NOT EXISTS default.src" +
@@ -292,6 +299,70 @@ trait DataMaskingTestBase extends AnyFunSuite with SparkSessionProvider with Bef
         permViewUser,
         "SELECT value1, value2 FROM default.perm_view where key = 1",
         Seq(Row(md5Hex("1"), "hello")))
+    }
+  }
+
+  test("KYUUBI #7576: data masking survives a UNION-ALL view nested over a masked view") {
+    // A view-level MASK policy on perm_view_masked.value2, read through a view that UNION-ALLs
+    // the masked view twice. The two references share output exprIds until DeduplicateRelations
+    // re-instances one branch, so the Stage1 substitution maps collide across branches; without
+    // scoping the substitution, the outer view's schema compensation Project gets rewired to
+    // attributes the Union never outputs and analysis fails with MISSING_ATTRIBUTES. A
+    // single-level masked view (KYUUBI #3581) works; the union nesting is what used to break.
+    //
+    // value2's type-preserving MASK is used on purpose: value1's MASK_HASH would change INT to
+    // STRING and trip CANNOT_UP_CAST first, hiding this bug.
+    val supported = doAs(
+      permViewUser,
+      Try {
+        sql(
+          "CREATE OR REPLACE VIEW default.perm_view_masked AS SELECT key, value2 FROM default.src")
+        sql("CREATE OR REPLACE VIEW default.perm_view_union AS " +
+          "SELECT key, value2 FROM default.perm_view_masked WHERE key = 1 " +
+          "UNION ALL " +
+          "SELECT key, value2 FROM default.perm_view_masked WHERE key = 10")
+      }.isSuccess)
+    assume(supported, s"view support for '$format' has not been implemented yet")
+
+    withCleanTmpResources(Seq(
+      ("default.perm_view_union", "view"),
+      ("default.perm_view_masked", "view"))) {
+      // Single level: the view-level mask applies (baseline, mirrors #3581).
+      checkAnswer(
+        permViewUser,
+        "SELECT key, value2 FROM default.perm_view_masked where key = 1",
+        Seq(Row(1, "xxxxx")))
+      // UNION-ALL nesting: the outer view must still resolve and mask value2.
+      checkAnswer(
+        permViewUser,
+        "SELECT key, value2 FROM default.perm_view_union where key = 1",
+        Seq(Row(1, "xxxxx")))
+    }
+  }
+
+  test("KYUUBI #7576: UNION-ALL view over another view resolves fine without a masking policy") {
+    // Control for the regression test above: the same UNION-ALL view shape read by admin, who has
+    // no masking policy on value2. This documents that Spark handles the union/view shape itself
+    // and only the masking rewrite was at fault.
+    val supported = doAs(
+      admin,
+      Try {
+        sql("CREATE OR REPLACE VIEW default.plain_view AS SELECT key, value2 FROM default.src")
+        sql("CREATE OR REPLACE VIEW default.plain_view_union AS " +
+          "SELECT key, value2 FROM default.plain_view WHERE key = 1 " +
+          "UNION ALL " +
+          "SELECT key, value2 FROM default.plain_view WHERE key = 10")
+      }.isSuccess)
+    assume(supported, s"view support for '$format' has not been implemented yet")
+
+    withCleanTmpResources(Seq(
+      ("default.plain_view_union", "view"),
+      ("default.plain_view", "view"))) {
+      // admin sees the unmasked value; the query must resolve.
+      checkAnswer(
+        admin,
+        "SELECT key, value2 FROM default.plain_view_union where key = 1",
+        Seq(Row(1, "hello")))
     }
   }
 

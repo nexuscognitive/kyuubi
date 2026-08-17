@@ -10,15 +10,17 @@ Playground
 
 ### Play
 
-1. Connect using `beeline`
+1. Connect using `kyuubi-beeline`
 
-`docker exec -it kyuubi /opt/kyuubi/bin/beeline -u 'jdbc:hive2://0.0.0.0:10009/tpcds/tiny'`;
+```
+docker exec -it kyuubi /opt/kyuubi/bin/kyuubi-beeline -u 'jdbc:kyuubi://0.0.0.0:10009/tpcds/tiny'
+```
 
 2. Connect using DBeaver
 
 Add a Kyuubi datasource with
 
-- connection url `jdbc:hive2://0.0.0.0:10009/tpcds/tiny`
+- connection url `jdbc:kyuubi://0.0.0.0:10009/tpcds/tiny`
 - username: `anonymous`
 - password: `<empty>`
 
@@ -26,12 +28,21 @@ Add a Kyuubi datasource with
 
 Kyuubi supply some built-in dataset, after Kyuubi started, you can run the following command to load the different datasets:
 
-- For loading TPC-DS tiny dataset to `spark_catalog.tpcds_tiny`, run `docker exec -it kyuubi /opt/kyuubi/bin/beeline -u 'jdbc:hive2://0.0.0.0:10009/' -f /opt/load_data/load-dataset-tpcds-tiny.sql`
-- For loading TPC-H  tiny dataset to `spark_catalog.tpch_tiny`,  run `docker exec -it kyuubi /opt/kyuubi/bin/beeline -u 'jdbc:hive2://0.0.0.0:10009/' -f /opt/load_data/load-dataset-tpch-tiny.sql`
+- For loading TPC-DS tiny dataset to `spark_catalog.tpcds_tiny`, run
+
+```
+docker exec -it kyuubi /opt/kyuubi/bin/kyuubi-beeline -u 'jdbc:kyuubi://0.0.0.0:10009/' -f /opt/load_data/load-dataset-tpcds-tiny.sql
+```
+
+- For loading TPC-H tiny dataset to `spark_catalog.tpch_tiny`, run
+
+```
+docker exec -it kyuubi /opt/kyuubi/bin/kyuubi-beeline -u 'jdbc:kyuubi://0.0.0.0:10009/' -f /opt/load_data/load-dataset-tpch-tiny.sql
+```
 
 ### Access Service
 
-- MinIO: http://localhost:9001
+- RustFS: http://localhost:9001 (account: rustfsadmin, key: rustfsadmin)
 - PostgreSQL localhost:5432 (username: postgres, password: postgres)
 - Spark UI: http://localhost:4040 (available after Spark application launching by Kyuubi, port may be 4041, 4042... if you launch more than one Spark applications)
 - Prometheus: http://localhost:9090

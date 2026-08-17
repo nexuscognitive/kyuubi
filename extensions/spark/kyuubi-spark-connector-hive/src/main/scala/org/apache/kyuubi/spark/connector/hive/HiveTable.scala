@@ -27,6 +27,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.catalyst.util.quoteIfNeeded
 import org.apache.spark.sql.connector.catalog.{SupportsRead, SupportsWrite, Table, TableCapability}
 import org.apache.spark.sql.connector.catalog.TableCapability.{BATCH_READ, BATCH_WRITE, OVERWRITE_BY_FILTER, OVERWRITE_DYNAMIC}
 import org.apache.spark.sql.connector.expressions.Transform
@@ -45,7 +46,8 @@ import org.apache.kyuubi.spark.connector.hive.write.HiveWriteBuilder
 case class HiveTable(
     sparkSession: SparkSession,
     catalogTable: CatalogTable,
-    hiveTableCatalog: HiveTableCatalog)
+    hiveTableCatalog: HiveTableCatalog,
+    requestedSchema: Option[StructType] = None)
   extends Table with SupportsRead with SupportsWrite with Logging {
 
   lazy val dataSchema: StructType = catalogTable.dataSchema
@@ -77,9 +79,19 @@ case class HiveTable(
     }
   }
 
-  override def name(): String = catalogTable.identifier.unquotedString
+  override def name(): String = {
+    val ident = catalogTable.identifier
+    ident.database match {
+      case Some(db) => s"${quoteIfNeeded(db)}.${quoteIfNeeded(ident.table)}"
+      case None => quoteIfNeeded(ident.table)
+    }
+  }
 
-  override def schema(): StructType = catalogTable.schema
+  // The metastore reorders partition columns to the end, but Spark's ResolveOutputRelation
+  // resolves output columns by position, so a CTAS with a non-last partition column mis-casts
+  // (CANNOT_SAFELY_CAST). Expose the requested order only via the V2 Table.schema() that feeds
+  // output resolution, keeping catalogTable (partition columns trailing) untouched. KYUUBI #6403.
+  override def schema(): StructType = requestedSchema.getOrElse(catalogTable.schema)
 
   override def properties(): util.Map[String, String] = catalogTable.properties.asJava
 

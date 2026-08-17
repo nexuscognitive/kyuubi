@@ -38,27 +38,18 @@ jobs:
     name: Dependency check
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: setup java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 8
           cache: 'maven'
       - name: Setup Maven
         uses: ./.github/actions/setup-maven
-      - name: Install modules
-        env:
-          MAVEN_ARGS: -Dorg.slf4j.simpleLogger.defaultLogLevel=error
-        run: |
-          build/mvn clean install \
-            -Pflink-provided,spark-provided,hive-provided \
-            -Dmaven.javadoc.skip=true -Drat.skip=true -Dscalastyle.skip=true -Dspotless.check.skip \
-            -DskipTests \
-            -pl kyuubi-ctl,kyuubi-server,kyuubi-assembly -am
       - name: Check dependency list
         run: build/dependency.sh
       - name: Dependency Review
-        uses: actions/dependency-review-action@v4
+        uses: actions/dependency-review-action@v5
         with:
           fail-on-severity: moderate

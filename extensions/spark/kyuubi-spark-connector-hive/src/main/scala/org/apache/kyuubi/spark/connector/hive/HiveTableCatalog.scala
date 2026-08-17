@@ -46,8 +46,8 @@ import org.apache.spark.sql.internal.StaticSQLConf.{CATALOG_IMPLEMENTATION, GLOB
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
-import org.apache.kyuubi.spark.connector.hive.HiveConnectorUtils.withSparkSQLConf
-import org.apache.kyuubi.spark.connector.hive.HiveTableCatalog.{getStorageFormatAndProvider, toCatalogDatabase, CatalogDatabaseHelper, IdentifierHelper, NamespaceHelper}
+import org.apache.kyuubi.spark.connector.hive.HiveTableCatalog.{getStorageFormatAndProvider, toCatalogDatabase, CatalogDatabaseHelper, HIVE_TABLE_RESERVED_SERDE_PROPERTIES, IdentifierHelper, NamespaceHelper}
+import org.apache.kyuubi.spark.connector.hive.KyuubiHiveConnectorConf.DROP_TABLE_AS_PURGE_TABLE
 import org.apache.kyuubi.spark.connector.hive.KyuubiHiveConnectorDelegationTokenProvider.metastoreTokenSignature
 import org.apache.kyuubi.util.reflect.{DynClasses, DynConstructors}
 
@@ -60,8 +60,6 @@ class HiveTableCatalog(sparkSession: SparkSession)
   def this() = this(SparkSession.active)
 
   private val externalCatalogManager = ExternalCatalogManager.getOrCreate(sparkSession)
-
-  private val LEGACY_NON_IDENTIFIER_OUTPUT_CATALOG_NAME = "spark.sql.legacy.v1IdentifierNoCatalog"
 
   private val sc = sparkSession.sparkContext
 
@@ -164,24 +162,22 @@ class HiveTableCatalog(sparkSession: SparkSession)
 
   override val defaultNamespace: Array[String] = Array("default")
 
-  override def listTables(namespace: Array[String]): Array[Identifier] =
-    withSparkSQLConf(LEGACY_NON_IDENTIFIER_OUTPUT_CATALOG_NAME -> "true") {
-      namespace match {
-        case Array(db) =>
-          catalog
-            .listTables(db)
-            .map(ident =>
-              Identifier.of(ident.database.map(Array(_)).getOrElse(Array()), ident.table))
-            .toArray
-        case _ =>
-          throw new NoSuchNamespaceException(namespace)
-      }
+  override def listTables(namespace: Array[String]): Array[Identifier] = {
+    namespace match {
+      case Array(db) =>
+        catalog
+          .listTables(db)
+          .map(ident =>
+            Identifier.of(ident.database.map(Array(_)).getOrElse(Array()), ident.table))
+          .toArray
+      case _ =>
+        throw new NoSuchNamespaceException(namespace)
     }
+  }
 
-  override def loadTable(ident: Identifier): Table =
-    withSparkSQLConf(LEGACY_NON_IDENTIFIER_OUTPUT_CATALOG_NAME -> "true") {
-      HiveTable(sparkSession, catalog.getTableMetadata(ident.asTableIdentifier), this)
-    }
+  override def loadTable(ident: Identifier): Table = {
+    HiveTable(sparkSession, catalog.getTableMetadata(ident.asTableIdentifier(catalogName)), this)
+  }
 
   // scalastyle:off
   private def newCatalogTable(
@@ -207,7 +203,58 @@ class HiveTableCatalog(sparkSession: SparkSession)
       ignoredProperties: Map[String, String] = Map.empty,
       viewOriginalText: Option[String] = None): CatalogTable = {
     // scalastyle:on
-    Try { // SPARK-50675 (4.0.0)
+    Try { // SPARK-52729 (4.2.0)
+      DynConstructors.builder()
+        .impl(
+          classOf[CatalogTable],
+          classOf[TableIdentifier],
+          classOf[CatalogTableType],
+          classOf[CatalogStorageFormat],
+          classOf[StructType],
+          classOf[Option[String]],
+          classOf[Seq[String]],
+          classOf[Option[BucketSpec]],
+          classOf[String],
+          classOf[Long],
+          classOf[Long],
+          classOf[String],
+          classOf[Map[String, String]],
+          classOf[Option[CatalogStatistics]],
+          classOf[Option[String]],
+          classOf[Option[String]],
+          classOf[Option[String]],
+          classOf[Seq[String]],
+          classOf[Boolean],
+          classOf[Boolean],
+          classOf[Map[String, String]],
+          classOf[Option[String]],
+          classOf[Option[Seq[String]]])
+        .buildChecked()
+        .invokeChecked[CatalogTable](
+          null,
+          identifier,
+          tableType,
+          storage,
+          schema,
+          provider,
+          partitionColumnNames,
+          bucketSpec,
+          owner,
+          createTime,
+          lastAccessTime,
+          createVersion,
+          properties,
+          stats,
+          viewText,
+          comment,
+          collation,
+          unsupportedFeatures,
+          tracksPartitionsInCatalog,
+          schemaPreservesCase,
+          ignoredProperties,
+          viewOriginalText,
+          None)
+    }.recover { case _: Exception => // SPARK-50675 (4.0.0)
       DynConstructors.builder()
         .impl(
           classOf[CatalogTable],
@@ -310,195 +357,260 @@ class HiveTableCatalog(sparkSession: SparkSession)
       ident: Identifier,
       schema: StructType,
       partitions: Array[Transform],
-      properties: util.Map[String, String]): Table =
-    withSparkSQLConf(LEGACY_NON_IDENTIFIER_OUTPUT_CATALOG_NAME -> "true") {
-      import org.apache.spark.sql.hive.kyuubi.connector.HiveBridgeHelper.TransformHelper
-      val (partitionColumns, maybeBucketSpec) = partitions.toSeq.convertTransforms
-      val location = Option(properties.get(TableCatalog.PROP_LOCATION))
-      val maybeProvider = Option(properties.get(TableCatalog.PROP_PROVIDER))
-      val (storage, provider) =
-        getStorageFormatAndProvider(
-          maybeProvider,
-          location,
-          properties.asScala.toMap)
-      val tableProperties = properties.asScala
-      val isExternal = properties.containsKey(TableCatalog.PROP_EXTERNAL)
-      val tableType =
-        if (isExternal || location.isDefined) {
-          CatalogTableType.EXTERNAL
-        } else {
-          CatalogTableType.MANAGED
-        }
-
-      val tableDesc = newCatalogTable(
-        identifier = ident.asTableIdentifier,
-        tableType = tableType,
-        storage = storage,
-        schema = schema,
-        provider = Some(provider),
-        partitionColumnNames = partitionColumns,
-        bucketSpec = maybeBucketSpec,
-        properties = tableProperties.toMap,
-        tracksPartitionsInCatalog = conf.manageFilesourcePartitions,
-        comment = Option(properties.get(TableCatalog.PROP_COMMENT)))
-
-      try {
-        catalog.createTable(tableDesc, ignoreIfExists = false)
-      } catch {
-        case _: TableAlreadyExistsException =>
-          throw new TableAlreadyExistsException(ident)
+      properties: util.Map[String, String]): Table = {
+    import org.apache.spark.sql.hive.kyuubi.connector.HiveBridgeHelper.TransformHelper
+    val (partitionColumns, maybeBucketSpec) = partitions.toSeq.convertTransforms
+    val location = Option(properties.get(TableCatalog.PROP_LOCATION))
+    val maybeProvider = Option(properties.get(TableCatalog.PROP_PROVIDER))
+    val allProps = properties.asScala.toMap
+    val (optionsProps, serdeProps) = toOptionsAndSerdeProps(allProps)
+    val (storage, provider) =
+      getStorageFormatAndProvider(
+        maybeProvider,
+        location,
+        allProps,
+        optionsProps,
+        serdeProps)
+    val isExternal = properties.containsKey(TableCatalog.PROP_EXTERNAL)
+    val tableType =
+      if (isExternal || location.isDefined) {
+        CatalogTableType.EXTERNAL
+      } else {
+        CatalogTableType.MANAGED
       }
 
-      loadTable(ident)
+    val tableDesc = newCatalogTable(
+      identifier = ident.asTableIdentifier(catalogName),
+      tableType = tableType,
+      storage = storage,
+      schema = schema,
+      provider = Some(provider),
+      partitionColumnNames = partitionColumns,
+      bucketSpec = maybeBucketSpec,
+      properties = toTableProps(allProps, optionsProps ++ serdeProps),
+      tracksPartitionsInCatalog = conf.manageFilesourcePartitions,
+      comment = Option(properties.get(TableCatalog.PROP_COMMENT)))
+
+    try {
+      catalog.createTable(tableDesc, ignoreIfExists = false)
+    } catch {
+      case _: TableAlreadyExistsException =>
+        throw new TableAlreadyExistsException(ident)
     }
 
-  override def alterTable(ident: Identifier, changes: TableChange*): Table =
-    withSparkSQLConf(LEGACY_NON_IDENTIFIER_OUTPUT_CATALOG_NAME -> "true") {
-      val catalogTable =
-        try {
-          catalog.getTableMetadata(ident.asTableIdentifier)
-        } catch {
-          case _: NoSuchTableException =>
-            throw new NoSuchTableException(ident)
-        }
+    // Preserve the requested schema order so the subsequent CTAS write resolves output columns
+    // against the original order. Override only the V2 Table.schema() rather than rebuilding the
+    // CatalogTable, which would break the trailing-partition invariant and drop fields
+    // newCatalogTable does not forward. See KYUUBI #6403.
+    loadTable(ident).asInstanceOf[HiveTable].copy(requestedSchema = Some(schema))
+  }
 
-      val properties = CatalogV2Util.applyPropertiesChanges(catalogTable.properties, changes)
-      val schema = HiveConnectorUtils.applySchemaChanges(
-        catalogTable.schema,
-        changes)
-      val comment = properties.get(TableCatalog.PROP_COMMENT)
-      val owner = properties.getOrElse(TableCatalog.PROP_OWNER, catalogTable.owner)
-      val location = properties.get(TableCatalog.PROP_LOCATION).map(CatalogUtils.stringToURI)
-      val storage =
-        if (location.isDefined) {
-          catalogTable.storage.copy(locationUri = location)
-        } else {
-          catalogTable.storage
-        }
-
+  override def alterTable(ident: Identifier, changes: TableChange*): Table = {
+    val catalogTable =
       try {
-        catalog.alterTable(
-          catalogTable.copy(
-            properties = properties,
-            schema = schema,
-            owner = owner,
-            comment = comment,
-            storage = storage))
+        catalog.getTableMetadata(ident.asTableIdentifier(catalogName))
       } catch {
         case _: NoSuchTableException =>
           throw new NoSuchTableException(ident)
       }
 
-      loadTable(ident)
-    }
-
-  override def dropTable(ident: Identifier): Boolean =
-    withSparkSQLConf(LEGACY_NON_IDENTIFIER_OUTPUT_CATALOG_NAME -> "true") {
-      try {
-        if (loadTable(ident) != null) {
-          catalog.dropTable(
-            ident.asTableIdentifier,
-            ignoreIfNotExists = true,
-            purge = true /* skip HDFS trash */ )
-          true
-        } else {
-          false
-        }
-      } catch {
-        case _: NoSuchTableException =>
-          false
-      }
-    }
-
-  override def renameTable(oldIdent: Identifier, newIdent: Identifier): Unit =
-    withSparkSQLConf(LEGACY_NON_IDENTIFIER_OUTPUT_CATALOG_NAME -> "true") {
-      if (tableExists(newIdent)) {
-        throw new TableAlreadyExistsException(newIdent)
+    val properties = CatalogV2Util.applyPropertiesChanges(catalogTable.properties, changes)
+    val schema = HiveConnectorUtils.applySchemaChanges(
+      catalogTable.schema,
+      changes)
+    val comment = properties.get(TableCatalog.PROP_COMMENT)
+    val owner = properties.getOrElse(TableCatalog.PROP_OWNER, catalogTable.owner)
+    val location = properties.get(TableCatalog.PROP_LOCATION).map(CatalogUtils.stringToURI)
+    val storage =
+      if (location.isDefined) {
+        HiveConnectorUtils.copyStorageFormat(catalogTable.storage)(locationUri = location)
+      } else {
+        catalogTable.storage
       }
 
-      // Load table to make sure the table exists
-      loadTable(oldIdent)
-      catalog.renameTable(oldIdent.asTableIdentifier, newIdent.asTableIdentifier)
+    try {
+      catalog.alterTable(
+        HiveConnectorUtils.copyCatalogTable(catalogTable)(
+          properties = properties,
+          schema = schema,
+          owner = owner,
+          comment = comment,
+          storage = storage))
+    } catch {
+      case _: NoSuchTableException =>
+        throw new NoSuchTableException(ident)
     }
 
-  private def toOptions(properties: Map[String, String]): Map[String, String] = {
-    properties.filterKeys(_.startsWith(TableCatalog.OPTION_PREFIX)).map {
-      case (key, value) => key.drop(TableCatalog.OPTION_PREFIX.length) -> value
-    }.toMap
+    loadTable(ident)
   }
 
-  override def listNamespaces(): Array[Array[String]] =
-    withSparkSQLConf(LEGACY_NON_IDENTIFIER_OUTPUT_CATALOG_NAME -> "true") {
-      catalog.listDatabases().map(Array(_)).toArray
-    }
+  override def purgeTable(ident: Identifier): Boolean = {
+    dropTableInternal(ident, purge = true)
+  }
 
-  override def listNamespaces(namespace: Array[String]): Array[Array[String]] =
-    withSparkSQLConf(LEGACY_NON_IDENTIFIER_OUTPUT_CATALOG_NAME -> "true") {
-      namespace match {
-        case Array() =>
-          listNamespaces()
-        case Array(db) if catalog.databaseExists(db) =>
-          Array()
-        case _ =>
-          throw new NoSuchNamespaceException(namespace)
+  override def dropTable(ident: Identifier): Boolean = {
+    val purge = sessionState.conf.getConf(DROP_TABLE_AS_PURGE_TABLE)
+    dropTableInternal(ident, purge)
+  }
+
+  private def dropTableInternal(ident: Identifier, purge: Boolean): Boolean = {
+    try {
+      if (loadTable(ident) != null) {
+        catalog.dropTable(
+          ident.asTableIdentifier(catalogName),
+          ignoreIfNotExists = true,
+          purge /* whether to skip HDFS trash */ )
+        true
+      } else {
+        false
       }
+    } catch {
+      case _: NoSuchTableException =>
+        false
+    }
+  }
+
+  override def renameTable(oldIdent: Identifier, newIdent: Identifier): Unit = {
+    if (tableExists(newIdent)) {
+      throw new TableAlreadyExistsException(newIdent)
     }
 
-  override def loadNamespaceMetadata(namespace: Array[String]): util.Map[String, String] =
-    withSparkSQLConf(LEGACY_NON_IDENTIFIER_OUTPUT_CATALOG_NAME -> "true") {
-      namespace match {
-        case Array(db) =>
-          try {
-            catalog.getDatabaseMetadata(db).toMetadata
-          } catch {
-            case _: NoSuchDatabaseException =>
-              throw new NoSuchNamespaceException(namespace)
-          }
+    // Load table to make sure the table exists
+    loadTable(oldIdent)
+    catalog.renameTable(
+      oldIdent.asTableIdentifier(catalogName),
+      newIdent.asTableIdentifier(catalogName))
+  }
 
-        case _ =>
-          throw new NoSuchNamespaceException(namespace)
-      }
+  /**
+   * Splits properties into optionsProps and serdeProps based on the `options.` prefix.
+   *
+   * - optionsProps: keys with "options." prefix whose stripped key ALREADY exist in properties,
+   *   indicating they were originally specified via OPTIONS clause.
+   * - serdeProps: keys with "options." prefix whose stripped key does NOT exists in properties,
+   *   indicating they were originally specified via SERDEPROPERTIES clause.
+   *
+   * @param properties the full properties map
+   * @return a tuple of (optionsProps, serdeProps), both with the "options." prefix stripped
+   */
+  private[hive] def toOptionsAndSerdeProps(
+      properties: Map[String, String]): (Map[String, String], Map[String, String]) = {
+    val (optionsProps, serdeProps) = properties
+      .filterKeys(_.startsWith(TableCatalog.OPTION_PREFIX))
+      .map { case (key, value) => key.drop(TableCatalog.OPTION_PREFIX.length) -> value }
+      .toMap
+      .partition { case (strippedKey, _) => properties.contains(strippedKey) }
+    (optionsProps, serdeProps)
+  }
+
+  /**
+   * Return table properties to be stored in the Hive metastore after excluding the following:
+   *
+   * - Excludes `CatalogV2Util.TABLE_RESERVED_PROPERTIES`.
+   * - Excludes keys with the `options.` prefix.
+   * - Excludes stripped keys already extracted from OPTIONS or SERDEPROPERTIES.
+   * - Excludes Hive SerDe/storage keys such as `hive.serde` and `hive.stored-as`.
+   *
+   * @param properties the full properties map
+   * @param optionsAndSerdeProps stripped keys extracted from OPTIONS and SERDEPROPERTIES
+   * @return table properties to be stored in the Hive metastore
+   */
+  private[hive] def toTableProps(
+      properties: Map[String, String],
+      optionsAndSerdeProps: Map[String, String]): Map[String, String] = {
+    properties.filterKeys(key =>
+      !CatalogV2Util.TABLE_RESERVED_PROPERTIES.contains(key)
+        && !key.startsWith(TableCatalog.OPTION_PREFIX)
+        && !optionsAndSerdeProps.contains(key)
+        && !HIVE_TABLE_RESERVED_SERDE_PROPERTIES.contains(key)).toMap
+  }
+
+  override def listNamespaces(): Array[Array[String]] = {
+    catalog.listDatabases().map(Array(_)).toArray
+  }
+
+  override def listNamespaces(namespace: Array[String]): Array[Array[String]] = {
+    namespace match {
+      case Array() =>
+        listNamespaces()
+      case Array(db) if catalog.databaseExists(db) =>
+        Array()
+      case _ =>
+        throw new NoSuchNamespaceException(namespace)
     }
+  }
+
+  override def loadNamespaceMetadata(namespace: Array[String]): util.Map[String, String] = {
+    namespace match {
+      case Array(db) =>
+        try {
+          catalog.getDatabaseMetadata(db).toMetadata
+        } catch {
+          case _: NoSuchDatabaseException =>
+            throw new NoSuchNamespaceException(namespace)
+        }
+
+      case _ =>
+        throw new NoSuchNamespaceException(namespace)
+    }
+  }
 
   override def createNamespace(
       namespace: Array[String],
-      metadata: util.Map[String, String]): Unit =
-    withSparkSQLConf(LEGACY_NON_IDENTIFIER_OUTPUT_CATALOG_NAME -> "true") {
-      namespace match {
-        case Array(db) if !catalog.databaseExists(db) =>
-          catalog.createDatabase(
-            toCatalogDatabase(db, metadata, defaultLocation = Some(catalog.getDefaultDBPath(db))),
-            ignoreIfExists = false)
+      metadata: util.Map[String, String]): Unit = {
+    namespace match {
+      case Array(db) if !catalog.databaseExists(db) =>
+        catalog.createDatabase(
+          toCatalogDatabase(db, metadata, defaultLocation = Some(getCatalogDefaultDBPath(db))),
+          ignoreIfExists = false)
 
-        case Array(_) =>
-          throw new NamespaceAlreadyExistsException(namespace)
+      case Array(_) =>
+        throw new NamespaceAlreadyExistsException(namespace)
 
-        case _ =>
-          throw new IllegalArgumentException(s"Invalid namespace name: ${namespace.quoted}")
-      }
+      case _ =>
+        throw new IllegalArgumentException(s"Invalid namespace name: ${namespace.quoted}")
     }
+  }
 
-  override def alterNamespace(namespace: Array[String], changes: NamespaceChange*): Unit =
-    withSparkSQLConf(LEGACY_NON_IDENTIFIER_OUTPUT_CATALOG_NAME -> "true") {
-      namespace match {
-        case Array(db) =>
-          // validate that this catalog's reserved properties are not removed
-          changes.foreach {
-            case remove: RemoveProperty
-                if NAMESPACE_RESERVED_PROPERTIES.contains(remove.property) =>
-              throw new UnsupportedOperationException(
-                s"Cannot remove reserved property: ${remove.property}")
-            case _ =>
-          }
-
-          val metadata = catalog.getDatabaseMetadata(db).toMetadata
-          catalog.alterDatabase(
-            toCatalogDatabase(db, CatalogV2Util.applyNamespaceChanges(metadata, changes)))
-
-        case _ =>
-          throw new NoSuchNamespaceException(namespace)
-      }
+  /**
+   * Returns the default database path with catalog-level warehouse configuration precedence.
+   *
+   * This method resolves the database path using the following priority order:
+   *   1. Catalog-level `spark.sql.catalog.<catalog>.hive.metastore.warehouse.dir`
+   *   2. Global-level `spark.sql.warehouse.dir` (Underlying)
+   *
+   * @param db database name
+   * @return qualified URI path for the database
+   */
+  private def getCatalogDefaultDBPath(db: String): URI = {
+    Option(catalogOptions.get("hive.metastore.warehouse.dir")).filter(_.nonEmpty) match {
+      case Some(dir) =>
+        CatalogUtils.makeQualifiedDBObjectPath(catalog.getDefaultDBPath(db), dir, hadoopConf)
+      case None =>
+        catalog.getDefaultDBPath(db)
     }
+  }
+
+  override def alterNamespace(namespace: Array[String], changes: NamespaceChange*): Unit = {
+    namespace match {
+      case Array(db) =>
+        // validate that this catalog's reserved properties are not removed
+        changes.foreach {
+          case remove: RemoveProperty
+              if NAMESPACE_RESERVED_PROPERTIES.contains(remove.property) =>
+            throw new UnsupportedOperationException(
+              s"Cannot remove reserved property: ${remove.property}")
+          case _ =>
+        }
+
+        val metadata = catalog.getDatabaseMetadata(db).toMetadata
+        catalog.alterDatabase(
+          toCatalogDatabase(db, CatalogV2Util.applyNamespaceChanges(metadata, changes)))
+
+      case _ =>
+        throw new NoSuchNamespaceException(namespace)
+    }
+  }
 
   /**
    * List the metadata of partitions that belong to the specified table, assuming it exists, that
@@ -518,24 +630,64 @@ class HiveTableCatalog(sparkSession: SparkSession)
 
   override def dropNamespace(
       namespace: Array[String],
-      cascade: Boolean): Boolean =
-    withSparkSQLConf(LEGACY_NON_IDENTIFIER_OUTPUT_CATALOG_NAME -> "true") {
-      namespace match {
-        case Array(db) if catalog.databaseExists(db) =>
-          catalog.dropDatabase(db, ignoreIfNotExists = false, cascade)
-          true
+      cascade: Boolean): Boolean = {
+    namespace match {
+      case Array(db) if catalog.databaseExists(db) =>
+        catalog.dropDatabase(db, ignoreIfNotExists = false, cascade)
+        true
 
-        case Array(_) =>
-          // exists returned false
-          false
+      case Array(_) =>
+        // exists returned false
+        false
 
-        case _ =>
-          throw new NoSuchNamespaceException(namespace)
-      }
+      case _ =>
+        throw new NoSuchNamespaceException(namespace)
     }
+  }
 }
 
 private object HiveTableCatalog extends Logging {
+  private val HIVE_SERDE = "hive.serde"
+  private val HIVE_STORED_AS = "hive.stored-as"
+  private val HIVE_OUTPUT_FORMAT = "hive.output-format"
+  private val HIVE_INPUT_FORMAT = "hive.input-format"
+
+  private val HIVE_TABLE_RESERVED_SERDE_PROPERTIES = Set(
+    HIVE_SERDE,
+    HIVE_STORED_AS,
+    HIVE_OUTPUT_FORMAT,
+    HIVE_INPUT_FORMAT)
+
+  /**
+   * Attaches the KSHC catalog name to a V1 [[TableIdentifier]].
+   *
+   * Since Spark 3.4 (SPARK-46283), [[TableIdentifier]] carries a `catalog` field. Spark 4.1's
+   * `SessionCatalog.requireTableExists` reads it via `name.catalog.get`, which throws
+   * `NoSuchElementException` when it is `None`. KSHC deliberately avoids the wrong default
+   * catalog name (`spark_catalog`) by attaching its *own* catalog name here instead of relying
+   * on the `spark.sql.legacy.v1IdentifierNoCatalog` workaround, so `TableIdentifier.catalog` is
+   * never `None` on Spark 3.4+. On Spark 3.3 (no `catalog` field) the 3-arg constructor is
+   * absent and the identifier is returned unchanged.
+   */
+  private def attachCatalogName(
+      identifier: TableIdentifier,
+      catalogName: String): TableIdentifier = {
+    Try { // Spark 3.4+ (SPARK-46283): TableIdentifier(table, database, catalog)
+      DynConstructors.builder()
+        .impl(
+          classOf[TableIdentifier],
+          classOf[String],
+          classOf[Option[String]],
+          classOf[Option[String]])
+        .buildChecked()
+        .invokeChecked[TableIdentifier](
+          null,
+          identifier.table,
+          identifier.database,
+          Some(catalogName))
+    }.recover { case _: Exception => identifier }.get
+  }
+
   private def toCatalogDatabase(
       db: String,
       metadata: util.Map[String, String],
@@ -554,43 +706,46 @@ private object HiveTableCatalog extends Logging {
   private def getStorageFormatAndProvider(
       provider: Option[String],
       location: Option[String],
-      options: Map[String, String]): (CatalogStorageFormat, String) = {
-    val nonHiveStorageFormat = CatalogStorageFormat.empty.copy(
+      allProps: Map[String, String],
+      optionsProps: Map[String, String],
+      serdeProps: Map[String, String]): (CatalogStorageFormat, String) = {
+    val nonHiveStorageFormat = HiveConnectorUtils.newStorageFormat(
       locationUri = location.map(CatalogUtils.stringToURI),
-      properties = options)
+      properties = optionsProps)
 
     val conf = SQLConf.get
-    val defaultHiveStorage = HiveSerDe.getDefaultStorage(conf).copy(
-      locationUri = location.map(CatalogUtils.stringToURI),
-      properties = options)
+    val defaultHiveStorage =
+      HiveConnectorUtils.copyStorageFormat(HiveSerDe.getDefaultStorage(conf))(
+        locationUri = location.map(CatalogUtils.stringToURI),
+        properties = optionsProps)
 
     if (provider.isDefined) {
       (nonHiveStorageFormat, provider.get)
-    } else if (serdeIsDefined(options)) {
-      val maybeSerde = options.get("hive.serde")
-      val maybeStoredAs = options.get("hive.stored-as")
-      val maybeInputFormat = options.get("hive.input-format")
-      val maybeOutputFormat = options.get("hive.output-format")
+    } else if (serdeIsDefined(allProps)) {
+      val maybeSerde = allProps.get(HIVE_SERDE)
+      val maybeStoredAs = allProps.get(HIVE_STORED_AS)
+      val maybeInputFormat = allProps.get(HIVE_INPUT_FORMAT)
+      val maybeOutputFormat = allProps.get(HIVE_OUTPUT_FORMAT)
       val storageFormat = if (maybeStoredAs.isDefined) {
         // If `STORED AS fileFormat` is used, infer inputFormat, outputFormat and serde from it.
         HiveSerDe.sourceToSerDe(maybeStoredAs.get) match {
           case Some(hiveSerde) =>
-            defaultHiveStorage.copy(
+            HiveConnectorUtils.copyStorageFormat(defaultHiveStorage)(
               inputFormat = hiveSerde.inputFormat.orElse(defaultHiveStorage.inputFormat),
               outputFormat = hiveSerde.outputFormat.orElse(defaultHiveStorage.outputFormat),
               // User specified serde takes precedence over the one inferred from file format.
               serde = maybeSerde.orElse(hiveSerde.serde).orElse(defaultHiveStorage.serde),
-              properties = options ++ defaultHiveStorage.properties)
+              properties = serdeProps ++ defaultHiveStorage.properties)
           case _ => throw KyuubiHiveConnectorException(s"Unsupported serde ${maybeSerde.get}.")
         }
       } else {
-        defaultHiveStorage.copy(
+        HiveConnectorUtils.copyStorageFormat(defaultHiveStorage)(
           inputFormat =
             maybeInputFormat.orElse(defaultHiveStorage.inputFormat),
           outputFormat =
             maybeOutputFormat.orElse(defaultHiveStorage.outputFormat),
           serde = maybeSerde.orElse(defaultHiveStorage.serde),
-          properties = options ++ defaultHiveStorage.properties)
+          properties = serdeProps ++ defaultHiveStorage.properties)
       }
       (storageFormat, DDLUtils.HIVE_PROVIDER)
     } else {
@@ -607,10 +762,10 @@ private object HiveTableCatalog extends Logging {
   }
 
   private def serdeIsDefined(options: Map[String, String]): Boolean = {
-    val maybeStoredAs = options.get("hive.stored-as")
-    val maybeInputFormat = options.get("hive.input-format")
-    val maybeOutputFormat = options.get("hive.output-format")
-    val maybeSerde = options.get("hive.serde")
+    val maybeStoredAs = options.get(HIVE_STORED_AS)
+    val maybeInputFormat = options.get(HIVE_INPUT_FORMAT)
+    val maybeOutputFormat = options.get(HIVE_OUTPUT_FORMAT)
+    val maybeSerde = options.get(HIVE_SERDE)
     maybeStoredAs.isDefined || maybeInputFormat.isDefined ||
     maybeOutputFormat.isDefined || maybeSerde.isDefined
   }
@@ -630,12 +785,15 @@ private object HiveTableCatalog extends Logging {
 
     def asMultipartIdentifier: Seq[String] = ident.namespace :+ ident.name
 
-    def asTableIdentifier: TableIdentifier = ident.namespace match {
-      case ns if ns.isEmpty => TableIdentifier(ident.name)
-      case Array(dbName) => TableIdentifier(ident.name, Some(dbName))
-      case _ =>
-        throw KyuubiHiveConnectorException(
-          s"$quoted is not a valid TableIdentifier as it has more than 2 name parts.")
+    def asTableIdentifier(catalogName: String): TableIdentifier = {
+      val base = ident.namespace match {
+        case ns if ns.isEmpty => TableIdentifier(ident.name)
+        case Array(dbName) => TableIdentifier(ident.name, Some(dbName))
+        case _ =>
+          throw KyuubiHiveConnectorException(
+            s"$quoted is not a valid TableIdentifier as it has more than 2 name parts.")
+      }
+      attachCatalogName(base, catalogName)
     }
   }
 

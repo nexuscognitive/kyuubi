@@ -18,8 +18,6 @@ package org.apache.kyuubi.plugin.spark.authz.ranger
 
 import java.nio.file.Path
 
-import org.scalatest.Outcome
-
 import org.apache.kyuubi.Utils
 import org.apache.kyuubi.plugin.spark.authz.AccessControlException
 import org.apache.kyuubi.plugin.spark.authz.RangerTestNamespace._
@@ -35,6 +33,7 @@ import org.apache.kyuubi.util.AssertionUtils._
 @DeltaTest
 class DeltaCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
   override protected val catalogImpl: String = "hive"
+  override protected val supportPurge: Boolean = false
   override protected val sqlExtensions: String = "io.delta.sql.DeltaSparkSessionExtension"
 
   val namespace1 = deltaNamespace
@@ -73,10 +72,6 @@ class DeltaCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
        |PARTITIONED BY (gender)
        |${propString(props)}
        |""".stripMargin
-
-  override def withFixture(test: NoArgTest): Outcome = {
-    test()
-  }
 
   override def beforeAll(): Unit = {
     spark.conf.set(s"spark.sql.catalog.$sparkCatalog", deltaCatalogClassName)

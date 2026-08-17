@@ -32,24 +32,25 @@ jobs:
     name: Style check
     runs-on: ubuntu-24.04
     strategy:
+      max-parallel: 15
       matrix:
         profiles:
           - '-Pflink-provided,hive-provided,spark-provided,spark-3.5,spark-3.4,spark-3.3,tpcds,kubernetes-it'
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - name: Setup JDK 8
-        uses: actions/setup-java@v4
+      - name: Setup JDK 17
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: 8
+          java-version: 17
           cache: 'maven'
       - name: Setup Maven
         uses: ./.github/actions/setup-maven
       - name: Setup Python 3
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.9'
           cache: 'pip'
@@ -63,12 +64,14 @@ jobs:
         # for more details, please visit: https://github.com/actions/toolkit/issues/399#issuecomment-666147717
         if: steps.modules-check.conclusion == 'success' && steps.modules-check.outcome == 'failure'
         run: |
-          export MAVEN_ARGS="-DskipTests -Dorg.slf4j.simpleLogger.defaultLogLevel=warn -Drat.skip=true -Dmaven.scalastyle.skip=true -Dspotless.check.skip=true"
-          build/mvn clean install -Pflink-provided,hive-provided,spark-provided,tpcds
-          build/mvn clean install -pl extensions/spark/kyuubi-extension-spark-3-3 -Pspark-3.3
-          build/mvn clean install -pl extensions/spark/kyuubi-extension-spark-3-4 -Pspark-3.4
-          build/mvn clean install -pl extensions/spark/kyuubi-extension-spark-3-5,extensions/spark/kyuubi-spark-connector-hive -Pspark-3.5
-          build/mvn clean install -pl extensions/spark/kyuubi-extension-spark-4-0 -Pspark-4.0 -Pscala-2.13
+          export MAVEN_ARGS="-DskipTests -Dorg.slf4j.simpleLogger.defaultLogLevel=warn -Drat.skip=true -Dmaven.scalastyle.skip=true -Dspotless.check.skip=true -Pflink-provided,hive-provided,spark-provided"
+          build/mvn clean install -Ptpcds
+          build/mvn clean install -pl extensions/spark/kyuubi-extension-spark-3-3 -am -Pspark-3.3
+          build/mvn clean install -pl extensions/spark/kyuubi-extension-spark-3-4 -am -Pspark-3.4
+          build/mvn clean install -pl extensions/spark/kyuubi-extension-spark-3-5,extensions/spark/kyuubi-spark-connector-hive -am -Pspark-3.5
+          build/mvn clean install -pl extensions/spark/kyuubi-extension-spark-4-0 -am -Pspark-4.0 -Pscala-2.13
+          build/mvn clean install -pl extensions/spark/kyuubi-extension-spark-4-1 -am -Pspark-4.1 -Pscala-2.13
+          build/mvn clean install -pl extensions/spark/kyuubi-extension-spark-4-2 -am -Pspark-4.2 -Pscala-2.13
 
       - name: Scalastyle with maven
         id: scalastyle-check
@@ -95,7 +98,7 @@ jobs:
           echo "NODEJS_VERSION=${NODEJS_VERSION}" >> "$GITHUB_ENV"
           echo "PNPM_VERSION=${PNPM_VERSION}" >> "$GITHUB_ENV"
       - name: setup npm
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{env.NODEJS_VERSION}}
       - name: Web UI Style with node
@@ -129,7 +132,7 @@ jobs:
           VALIDATE_XML: true
       - name: Upload Super Linter logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: super-linter-log
           path: super-linter.log

@@ -62,8 +62,8 @@ else
 fi
 
 JAVA_VERSION=$($JAVA -version 2>&1 | awk -F '"' '/version/ {print $2}')
-if [[ $JAVA_VERSION != 1.8.* ]]; then
-  echo "Unexpected Java version: $JAVA_VERSION. Java 8 is required for release."
+if [[ $JAVA_VERSION != 17.* && $JAVA_VERSION != 21.* ]]; then
+  echo "Unexpected Java version: $JAVA_VERSION. Java 17 or 21 is required for release."
   exit 1
 fi
 
@@ -110,15 +110,30 @@ upload_svn_staging() {
 }
 
 upload_nexus_staging() {
-  # Spark Extension Plugin for Spark 3.3
+  # Spark Extension Plugin for Spark 3.3 and Scala 2.12
   ${KYUUBI_DIR}/build/mvn clean deploy -DskipTests -Papache-release,flink-provided,spark-provided,hive-provided,spark-3.3 \
     -s "${KYUUBI_DIR}/build/release/asf-settings.xml" \
     -pl extensions/spark/kyuubi-extension-spark-3-3 -am
 
-  # Spark Extension Plugin for Spark 3.4
+  # Spark Extension Plugin for Spark 3.4 and Scala 2.12
   ${KYUUBI_DIR}/build/mvn clean deploy -DskipTests -Papache-release,flink-provided,spark-provided,hive-provided,spark-3.4 \
     -s "${KYUUBI_DIR}/build/release/asf-settings.xml" \
     -pl extensions/spark/kyuubi-extension-spark-3-4 -am
+
+  # Spark Extension Plugin for Spark 4.0 and Scala 2.13
+  ${KYUUBI_DIR}/build/mvn clean deploy -DskipTests -Papache-release,flink-provided,spark-provided,hive-provided,spark-4.0,scala-2.13 \
+    -s "${KYUUBI_DIR}/build/release/asf-settings.xml" \
+    -pl extensions/spark/kyuubi-extension-spark-4-0 -am
+
+  # Spark Extension Plugin for Spark 4.1 and Scala 2.13
+  ${KYUUBI_DIR}/build/mvn clean deploy -DskipTests -Papache-release,flink-provided,spark-provided,hive-provided,spark-4.1,scala-2.13 \
+    -s "${KYUUBI_DIR}/build/release/asf-settings.xml" \
+    -pl extensions/spark/kyuubi-extension-spark-4-1 -am
+
+  # Spark Extension Plugin for Spark 4.2 and Scala 2.13
+  ${KYUUBI_DIR}/build/mvn clean deploy -DskipTests -Papache-release,flink-provided,spark-provided,hive-provided,spark-4.2,scala-2.13 \
+    -s "${KYUUBI_DIR}/build/release/asf-settings.xml" \
+    -pl extensions/spark/kyuubi-extension-spark-4-2 -am
 
   # Spark Hive/TPC-DS/TPC-H Connector built with default Spark version (3.5) and Scala 2.13
   ${KYUUBI_DIR}/build/mvn clean deploy -DskipTests -Papache-release,flink-provided,spark-provided,hive-provided,spark-3.5,scala-2.13 \

@@ -34,7 +34,7 @@ import org.apache.hadoop.security.UserGroupInformation
 import org.apache.kyuubi._
 import org.apache.kyuubi.config.KyuubiConf
 import org.apache.kyuubi.config.KyuubiConf._
-import org.apache.kyuubi.engine.{ApplicationManagerInfo, KyuubiApplicationManager, ProcBuilder}
+import org.apache.kyuubi.engine.{ApplicationManagerInfo, EngineType, KyuubiApplicationManager, ProcBuilder}
 import org.apache.kyuubi.engine.KubernetesApplicationOperation.{KUBERNETES_SERVICE_HOST, KUBERNETES_SERVICE_PORT}
 import org.apache.kyuubi.engine.ProcBuilder.KYUUBI_ENGINE_LOG_PATH_KEY
 import org.apache.kyuubi.ha.HighAvailabilityConf
@@ -115,23 +115,24 @@ class SparkProcessBuilder(
    * - Otherwise, the key will be added a `spark.` prefix
    */
   protected def convertConfigKey(key: String): String = {
-    if (key.startsWith("spark.")) {
-      key
-    } else if (key.startsWith("hadoop.")) {
-      "spark.hadoop." + key
-    } else {
-      "spark." + key
-    }
+    SparkProcessBuilder.convertConfigKey(key)
   }
 
   private[kyuubi] def extractSparkCoreScalaVersion(fileNames: Iterable[String]): String = {
-    fileNames.collectFirst { case SPARK_CORE_SCALA_VERSION_REGEX(scalaVersion) => scalaVersion }
+    Option(fileNames).getOrElse(Iterable.empty)
+      .collectFirst { case SPARK_CORE_SCALA_VERSION_REGEX(scalaVersion) => scalaVersion }
       .getOrElse(throw new KyuubiException("Failed to extract Scala version from spark-core jar"))
   }
 
   override protected val engineScalaBinaryVersion: String = {
     env.get("SPARK_SCALA_VERSION").filter(StringUtils.isNotBlank).getOrElse {
-      extractSparkCoreScalaVersion(Paths.get(sparkHome, "jars").toFile.list())
+      val jarsDir = Paths.get(sparkHome, "jars").toFile
+      val fileNames = Option(jarsDir.list()).getOrElse {
+        throw new KyuubiException(
+          s"Failed to list jars under $sparkHome, please check if SPARK_HOME is configured " +
+            "correctly and the jars directory exists")
+      }
+      extractSparkCoreScalaVersion(fileNames)
     }
   }
 
@@ -153,7 +154,7 @@ class SparkProcessBuilder(
     buffer += CLASS
     buffer += mainClass
 
-    var allConf = conf.getAll
+    var allConf = conf.getEngineConf(EngineType.SPARK_SQL)
 
     // if enable sasl kerberos authentication for zookeeper, need to upload the server keytab file
     if (AuthTypes.withName(conf.get(HA_ZK_ENGINE_AUTH_TYPE)) == AuthTypes.KERBEROS) {
@@ -224,7 +225,7 @@ class SparkProcessBuilder(
   }
 
   private def zkAuthKeytabFileConf(sparkConf: Map[String, String]): Map[String, String] = {
-    val zkAuthKeytab = conf.get(HighAvailabilityConf.HA_ZK_AUTH_KEYTAB)
+    val zkAuthKeytab = conf.get(HighAvailabilityConf.HA_ZK_ENGINE_AUTH_KEYTAB)
     if (zkAuthKeytab.isDefined) {
       sparkConf.get(SPARK_FILES) match {
         case Some(files) =>
@@ -269,12 +270,16 @@ class SparkProcessBuilder(
 
   def appendPodNameConf(conf: Map[String, String]): Map[String, String] = {
     val appName = conf.getOrElse(APP_KEY, "spark")
+    val namespace = conf.get(KUBERNETES_NAMESPACE_KEY)
+      .orElse(kubernetesNamespace())
+      .getOrElse(KUBERNETES_NAMESPACE.defaultValStr)
     val map = mutable.Map.newBuilder[String, String]
     if (clusterManager().exists(cm => cm.toLowerCase(Locale.ROOT).startsWith("k8s"))) {
       if (!conf.contains(KUBERNETES_EXECUTOR_POD_NAME_PREFIX)) {
         val prefix = KubernetesUtils.generateExecutorPodNamePrefix(
           appName,
           engineRefId,
+          namespace,
           forciblyRewriteExecPodNamePrefix)
         map += (KUBERNETES_EXECUTOR_POD_NAME_PREFIX -> prefix)
       }
@@ -283,6 +288,7 @@ class SparkProcessBuilder(
           val name = KubernetesUtils.generateDriverPodName(
             appName,
             engineRefId,
+            namespace,
             forciblyRewriteDriverPodName)
           map += (KUBERNETES_DRIVER_POD_NAME -> name)
         }
@@ -430,6 +436,16 @@ class SparkProcessBuilder(
 }
 
 object SparkProcessBuilder {
+  private[kyuubi] def convertConfigKey(key: String): String = {
+    if (key.startsWith("spark.")) {
+      key
+    } else if (key.startsWith("hadoop.")) {
+      "spark.hadoop." + key
+    } else {
+      "spark." + key
+    }
+  }
+
   final val APP_KEY = "spark.app.name"
   final val TAG_KEY = "spark.yarn.tags"
   final val MASTER_KEY = "spark.master"

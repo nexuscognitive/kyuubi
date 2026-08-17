@@ -273,7 +273,7 @@ class JDBCMetadataStore(conf: KyuubiConf) extends MetadataStore with Logging {
       s"UPDATE $METADATA_TABLE SET state = ?, version = version + 1" +
         s" WHERE identifier = ? AND state = ?"
     JdbcUtils.withConnection { connection =>
-      withUpdateCount(connection, query, fromState, identifier, targetState) { updateCount =>
+      withUpdateCount(connection, query, targetState, identifier, fromState) { updateCount =>
         updateCount == 1
       }
     }
@@ -332,7 +332,7 @@ class JDBCMetadataStore(conf: KyuubiConf) extends MetadataStore with Logging {
     queryBuilder.append(s" ${assembleWhereClause(filter, params)}")
     val query = queryBuilder.toString
     JdbcUtils.executeQueryWithRowMapper(query) { stmt =>
-      setStatementParams(stmt, params: _*)
+      setStatementParams(stmt, params.toSeq: _*)
     } { resultSet =>
       resultSet.getInt(1)
     }.head

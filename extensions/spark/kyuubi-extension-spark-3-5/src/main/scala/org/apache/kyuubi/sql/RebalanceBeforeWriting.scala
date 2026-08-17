@@ -68,23 +68,36 @@ trait RebalanceBeforeWritingBase extends Rule[LogicalPlan] {
   def buildRebalance(
       dynamicPartitionColumns: Seq[Attribute],
       query: LogicalPlan): LogicalPlan = {
+    val advisoryPartitionSize = KyuubiSQLConf.getAdvisoryPartitionSize(conf)
     if (!conf.getConf(KyuubiSQLConf.INFER_REBALANCE_AND_SORT_ORDERS) ||
       dynamicPartitionColumns.nonEmpty) {
-      RebalancePartitions(dynamicPartitionColumns, query)
+      RebalancePartitions(
+        dynamicPartitionColumns,
+        query,
+        optAdvisoryPartitionSize = advisoryPartitionSize)
     } else {
       val maxColumns = conf.getConf(KyuubiSQLConf.INFER_REBALANCE_AND_SORT_ORDERS_MAX_COLUMNS)
-      val inferred = InferRebalanceAndSortOrders.infer(query)
+      val onlyInferWithCheapColumns = conf.getConf(
+        KyuubiSQLConf.INFER_REBALANCE_AND_SORT_ORDERS_WITH_CHEAP_COLUMNS)
+      val inferred = InferRebalanceAndSortOrders.infer(query, onlyInferWithCheapColumns)
       if (inferred.isDefined) {
         val (partitioning, ordering) = inferred.get
-        val rebalance = RebalancePartitions(partitioning.take(maxColumns), query)
-        if (ordering.nonEmpty) {
+        val rebalance = RebalancePartitions(
+          partitioning.take(maxColumns),
+          query,
+          optAdvisoryPartitionSize = advisoryPartitionSize)
+        val skipInferOrder = conf.getConf(KyuubiSQLConf.SKIP_INFER_SORT_ORDERS)
+        if (!skipInferOrder && ordering.nonEmpty) {
           val sortOrders = ordering.take(maxColumns).map(o => SortOrder(o, Ascending))
           Sort(sortOrders, false, rebalance)
         } else {
           rebalance
         }
       } else {
-        RebalancePartitions(dynamicPartitionColumns, query)
+        RebalancePartitions(
+          dynamicPartitionColumns,
+          query,
+          optAdvisoryPartitionSize = advisoryPartitionSize)
       }
     }
   }

@@ -18,16 +18,12 @@
 package org.apache.kyuubi.plugin.spark.authz
 
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach}
-// scalastyle:off
-import org.scalatest.funsuite.AnyFunSuite
 
+import org.apache.kyuubi.KyuubiFunSuite
 import org.apache.kyuubi.plugin.spark.authz.OperationType.QUERY
 import org.apache.kyuubi.plugin.spark.authz.ranger.AccessType
 
-abstract class FunctionPrivilegesBuilderSuite extends AnyFunSuite
-  with SparkSessionProvider with BeforeAndAfterAll with BeforeAndAfterEach {
-  // scalastyle:on
+abstract class FunctionPrivilegesBuilderSuite extends KyuubiFunSuite with SparkSessionProvider {
 
   protected def withTable(t: String)(f: String => Unit): Unit = {
     try {
@@ -193,4 +189,89 @@ class HiveFunctionPrivilegesBuilderSuite extends FunctionPrivilegesBuilderSuite 
     }
   }
 
+  test("Built in and UDF Function Call Query") {
+    val plan = sql(
+      s"""
+         |SELECT
+         |  kyuubi_fun_0('TESTSTRING') AS col1,
+         |  kyuubi_fun_0(value) AS col2,
+         |  abs(key) AS col3, abs(-100) AS col4,
+         |  lower(value) AS col5,lower('TESTSTRING') AS col6
+         |FROM $reusedTable
+         |""".stripMargin).queryExecution.analyzed
+    val (inputs, _, _) = PrivilegesBuilder.buildFunctions(plan, spark)
+    assert(inputs.size === 2)
+    inputs.foreach { po =>
+      assert(po.actionType === PrivilegeObjectActionType.OTHER)
+      assert(po.privilegeObjectType === PrivilegeObjectType.FUNCTION)
+      assert(po.dbname startsWith reusedDb.toLowerCase)
+      assert(po.objectName startsWith functionNamePrefix.toLowerCase)
+      val accessType = ranger.AccessType(po, QUERY, isInput = true)
+      assert(accessType === AccessType.SELECT)
+    }
+  }
+
+  test("Function Call in Create Table/View") {
+    val plan1 = sql(
+      s"""
+         |CREATE TABLE table1 AS
+         |SELECT
+         |  kyuubi_fun_0('KYUUBI_TESTSTRING'),
+         |  kyuubi_fun_0(value)
+         |FROM $reusedTable
+         |""".stripMargin).queryExecution.analyzed
+    val (inputs1, _, _) = PrivilegesBuilder.buildFunctions(plan1, spark)
+    assert(inputs1.size === 2)
+    inputs1.foreach { po =>
+      assert(po.actionType === PrivilegeObjectActionType.OTHER)
+      assert(po.privilegeObjectType === PrivilegeObjectType.FUNCTION)
+      assert(po.dbname startsWith reusedDb.toLowerCase)
+      assert(po.objectName startsWith functionNamePrefix.toLowerCase)
+      val accessType = ranger.AccessType(po, QUERY, isInput = true)
+      assert(accessType === AccessType.SELECT)
+    }
+    val plan2 = sql("DROP TABLE IF EXISTS table1").queryExecution.analyzed
+    val (inputs2, _, _) = PrivilegesBuilder.buildFunctions(plan2, spark)
+    assert(inputs2.size === 0)
+
+    val plan3 = sql(
+      s"""
+         |CREATE VIEW view1 AS SELECT
+         |  kyuubi_fun_0('KYUUBI_TESTSTRING') AS fun1,
+         |  kyuubi_fun_0(value) AS fun2
+         |FROM $reusedTable
+         |""".stripMargin).queryExecution.analyzed
+    val (inputs3, _, _) = PrivilegesBuilder.buildFunctions(plan3, spark)
+    assert(inputs3.size === 2)
+    inputs3.foreach { po =>
+      assert(po.actionType === PrivilegeObjectActionType.OTHER)
+      assert(po.privilegeObjectType === PrivilegeObjectType.FUNCTION)
+      assert(po.dbname startsWith reusedDb.toLowerCase)
+      assert(po.objectName startsWith functionNamePrefix.toLowerCase)
+      val accessType = ranger.AccessType(po, QUERY, isInput = true)
+      assert(accessType === AccessType.SELECT)
+    }
+    val plan4 = sql("DROP VIEW IF EXISTS view1").queryExecution.analyzed
+    val (inputs4, _, _) = PrivilegesBuilder.buildFunctions(plan4, spark)
+    assert(inputs4.size === 0)
+  }
+
+  test("Function Call in INSERT OVERWRITE") {
+    val plan = sql(
+      s"""
+         |INSERT OVERWRITE TABLE $reusedTable
+         |SELECT key, kyuubi_fun_0(value)
+         |FROM $reusedPartTable
+         |""".stripMargin).queryExecution.analyzed
+    val (inputsUpdate, _, _) = PrivilegesBuilder.buildFunctions(plan, spark)
+    assert(inputsUpdate.size === 1)
+    inputsUpdate.foreach { po =>
+      assert(po.actionType === PrivilegeObjectActionType.OTHER)
+      assert(po.privilegeObjectType === PrivilegeObjectType.FUNCTION)
+      assert(po.dbname startsWith reusedDb.toLowerCase)
+      assert(po.objectName startsWith functionNamePrefix.toLowerCase)
+      val accessType = ranger.AccessType(po, QUERY, isInput = true)
+      assert(accessType === AccessType.SELECT)
+    }
+  }
 }

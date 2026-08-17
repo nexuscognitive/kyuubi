@@ -23,6 +23,8 @@ import java.nio.file.Path
 import scala.util.Try
 
 import org.apache.hadoop.security.UserGroupInformation
+import org.apache.logging.log4j.Level
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.{DataFrame, Row, SparkSessionExtensions}
 import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
 import org.apache.spark.sql.catalyst.catalog.HiveTableRelation
@@ -32,11 +34,8 @@ import org.apache.spark.sql.execution.columnar.InMemoryRelation
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
-import org.scalatest.BeforeAndAfterAll
-// scalastyle:off
-import org.scalatest.funsuite.AnyFunSuite
 
-import org.apache.kyuubi.Utils
+import org.apache.kyuubi.{KyuubiFunSuite, Utils}
 import org.apache.kyuubi.plugin.lineage.Lineage
 import org.apache.kyuubi.plugin.lineage.helper.SparkSQLLineageParseHelper
 import org.apache.kyuubi.plugin.spark.authz.{AccessControlException, SparkSessionProvider}
@@ -47,9 +46,9 @@ import org.apache.kyuubi.plugin.spark.authz.rule.Authorization.KYUUBI_AUTHZ_TAG
 import org.apache.kyuubi.plugin.spark.authz.util.AuthZUtils._
 import org.apache.kyuubi.util.AssertionUtils._
 import org.apache.kyuubi.util.reflect.ReflectUtils._
-abstract class RangerSparkExtensionSuite extends AnyFunSuite
-  with SparkSessionProvider with BeforeAndAfterAll with MysqlContainerEnv {
-  // scalastyle:on
+
+abstract class RangerSparkExtensionSuite extends KyuubiFunSuite
+  with SparkSessionProvider with MysqlContainerEnv {
   override protected val extension: SparkSessionExtensions => Unit = new RangerSparkExtension
 
   var mysqlJdbcUrl = ""
@@ -166,6 +165,31 @@ abstract class RangerSparkExtensionSuite extends AnyFunSuite
     assert(logicalPlan.getTagValue(KYUUBI_AUTHZ_TAG).nonEmpty)
   }
 
+  test("[KYUUBI #2470] RuleAuthorization: trace successful and failed privilege checks") {
+    def assertPrivilegeCheckTraced(f: => Unit): Unit = {
+      val appender = new LogAppender
+      appender.setThreshold(Level.DEBUG)
+      withLogAppender(
+        appender,
+        Seq("org.apache.ranger.perf.sparkauth.request"),
+        Some(Level.DEBUG)) {
+        f
+        assert(appender.loggingEvents.exists(
+          _.getMessage.getFormattedMessage.contains("RuleAuthorization.checkPrivileges()")))
+      }
+    }
+
+    val successPlan = spark.sessionState.sqlParser.parsePlan("SHOW TABLES")
+    assertPrivilegeCheckTraced {
+      doAs(admin, new RuleAuthorization(spark).apply(successPlan))
+    }
+
+    assertPrivilegeCheckTraced {
+      intercept[AccessControlException](
+        doAs(denyUser, sql("CREATE DATABASE kyuubi_2470")))
+    }
+  }
+
   test("[KYUUBI #3226]: Another session should also check even if the plan is cached.") {
     val testTable = "mytable"
     val create =
@@ -272,13 +296,19 @@ abstract class RangerSparkExtensionSuite extends AnyFunSuite
   test("auth: functions") {
     val db = defaultDb
     val func = "func"
-    val create0 = s"CREATE FUNCTION IF NOT EXISTS $db.$func AS 'abc.mnl.xyz'"
-    doAs(
-      kent, {
+    withCleanTmpResources(Seq(
+      (func, "function"))) {
+      val create0 = s"CREATE FUNCTION IF NOT EXISTS $db.$func AS 'abc.mnl.xyz'"
+      doAs(bob) {
         val e = intercept[AccessControlException](sql(create0))
-        assert(e.getMessage === errorMessage("create", "default/func"))
-      })
-    doAs(admin, assert(Try(sql(create0)).isSuccess))
+        assert(e.getMessage === errorMessage("create", s"$db/$func"))
+      }
+      doAs(kent) {
+        val e = intercept[AccessControlException](sql(create0))
+        assert(e.getMessage === errorMessage("create", s"$db/$func"))
+      }
+      doAs(admin, assert(Try(sql(create0)).isSuccess))
+    }
   }
 
   test("show tables") {
@@ -521,10 +551,13 @@ class InMemoryCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite
 
 class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
   override protected val catalogImpl: String = "hive"
+  override protected val extraSparkConf: SparkConf = new SparkConf()
+    .set("spark.kyuubi.authz.udf.enabled", "true")
+
   test("table stats must be specified") {
     val table = "hive_src"
     withCleanTmpResources(Seq((table, "table"))) {
-      doAs(admin, sql(s"CREATE TABLE IF NOT EXISTS $table (id int)"))
+      doAs(admin, sql(s"CREATE TABLE IF NOT EXISTS $table (id int) STORED AS TEXTFILE"))
       doAs(
         admin, {
           val hiveTableRelation = sql(s"SELECT * FROM $table")
@@ -1171,12 +1204,17 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
   }
 
   test("LoadDataCommand") {
+    // Spark 4.0 rejects `LOAD DATA` for datasource tables, so make the table Hive-native
+    // (STORED AS TEXTFILE); the CommandResult unwrap then lets RuleAuthorization authorize
+    // LoadDataCommand before eager execution.
     val db1 = defaultDb
     val table1 = "table1"
     withSingleCallEnabled {
       withTempDir { path =>
         withCleanTmpResources(Seq((s"$db1.$table1", "table"))) {
-          doAs(admin, sql(s"CREATE TABLE IF NOT EXISTS $db1.$table1 (id int, scope int)"))
+          doAs(
+            admin,
+            sql(s"CREATE TABLE IF NOT EXISTS $db1.$table1 (id int, scope int) STORED AS TEXTFILE"))
           val loadDataSql =
             s"""
                |LOAD DATA LOCAL INPATH '$path'
@@ -1325,6 +1363,11 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
               s"iceberg/$db1/$table1/scope], " +
                 s"[create] privilege on [iceberg/$db1/$table2/id,iceberg/$db1/$table2/scope], " +
                 s"[write] privilege on [[$path, $path/]]"
+            } else if (isSparkV40OrGreater) {
+              // Spark 4.0 no longer propagates CTAS output columns into the create privilege
+              s"does not have [select] privilege on [$db1/$table1/id,$db1/$table1/scope], " +
+                s"[create] privilege on [$db1/$table2], " +
+                s"[write] privilege on [[file://$path, file://$path/]]"
             } else {
               s"does not have [select] privilege on [iceberg/$db1/$table1/id," +
               s"iceberg/$db1/$table1/scope], " +
@@ -1376,6 +1419,58 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
              |typeof(substring(day, 1, 3))
              |FROM $db1.$table1""".stripMargin,
           Seq(Row("int", "string", "string", "string")))
+      }
+    }
+  }
+
+  test("[KYUUBI #7568][AUTHZ] Typeof expression is eliminated below the root plan node") {
+    // RuleEliminateTypeOf must walk the whole plan, mirroring RuleApplyTypeOfMarker which
+    // marks with transformAllExpressions. When only the root node is visited, a TypeOfPlaceHolder
+    // living under Sort/Union/Aggregate survives into execution and fails with
+    // CLASS_NOT_OVERRIDE_EXPECTED_METHOD, since the placeholder implements no eval.
+    val db1 = defaultDb
+    val table1 = "table1"
+    withSingleCallEnabled {
+      withCleanTmpResources(Seq((s"$db1.$table1", "table"))) {
+        doAs(
+          admin,
+          sql(
+            s"""
+               |CREATE TABLE IF NOT EXISTS $db1.$table1(
+               |id int,
+               |scope int,
+               |day string)
+               |""".stripMargin))
+        doAs(admin, sql(s"INSERT INTO $db1.$table1 SELECT 1, 2, 'TONY'"))
+
+        // root is Sort
+        checkAnswer(
+          admin,
+          s"SELECT typeof(id) AS t FROM $db1.$table1 ORDER BY t",
+          Seq(Row("int")))
+
+        // root is Union. UNION ALL has no order guarantee, and an ORDER BY would put a Sort
+        // above the Union, so sort the collected rows instead to keep Union as the root node.
+        doAs(
+          admin,
+          assert(sql(
+            s"""
+               |SELECT typeof(id) FROM $db1.$table1
+               |UNION ALL
+               |SELECT typeof(day) FROM $db1.$table1""".stripMargin)
+            .collect().sortBy(_.getString(0)) === Seq(Row("int"), Row("string"))))
+
+        // root is Aggregate
+        checkAnswer(
+          admin,
+          s"SELECT typeof(id), count(*) FROM $db1.$table1 GROUP BY typeof(id)",
+          Seq(Row("int", 1)))
+
+        // typeof inside a subquery
+        checkAnswer(
+          admin,
+          s"SELECT t FROM (SELECT typeof(scope) AS t FROM $db1.$table1) x WHERE t = 'int'",
+          Seq(Row("int")))
       }
     }
   }
@@ -1547,6 +1642,37 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
         assert(lineage.columnLineage.size == 1)
         assert(lineage.columnLineage.head.originalColumns.head === s"spark_catalog.$db1.$table1.id")
       }
+    }
+  }
+
+  test("[KYUUBI #7186] Introduce RuleFunctionAuthorization") {
+    val db = defaultDb
+    val kyuubiFunc = "kyuubi_func1"
+    withCleanTmpResources(Seq(
+      (kyuubiFunc, "function"))) {
+      val createKyuubiFunc =
+        s"""
+           |CREATE FUNCTION IF NOT EXISTS
+           |  $db.$kyuubiFunc
+           |  AS 'org.apache.hadoop.hive.ql.udf.generic.GenericUDFMaskHash'
+           |""".stripMargin
+      doAs(kent) {
+        val e = intercept[AccessControlException](sql(createKyuubiFunc))
+        assert(e.getMessage === errorMessage("create", s"$db/$kyuubiFunc"))
+      }
+      doAs(bob, assert(Try(sql(createKyuubiFunc)).isSuccess))
+      doAs(admin, assert(Try(sql(createKyuubiFunc)).isSuccess))
+
+      val selectKyuubiFunc =
+        s"""
+           |SELECT $db.$kyuubiFunc("KYUUBUI_TEST_STRING")""".stripMargin
+      doAs(alice) {
+        val e = intercept[AccessControlException](sql(selectKyuubiFunc))
+        assert(e.getMessage === errorMessage("select", s"$db/$kyuubiFunc"))
+      }
+      doAs(kent, assert(Try(sql(selectKyuubiFunc)).isSuccess))
+      doAs(bob, assert(Try(sql(selectKyuubiFunc)).isSuccess))
+      doAs(admin, assert(Try(sql(selectKyuubiFunc)).isSuccess))
     }
   }
 }

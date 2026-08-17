@@ -72,6 +72,19 @@ object TableExtractor {
       case _: Exception => None
     }
   }
+
+  /**
+   * Get owner from a `org.apache.spark.sql.execution.datasources.LogicalRelation`
+   * that wraps a Spark `CatalogTable`.
+   */
+  def getLogicalRelationOwner(v: AnyRef): Option[String] = {
+    try {
+      val maybeCatalogTable = invokeAs[Option[CatalogTable]](v, "catalogTable")
+      maybeCatalogTable.flatMap(ct => Option(ct.owner).filter(_.nonEmpty))
+    } catch {
+      case _: Exception => None
+    }
+  }
 }
 
 /**
@@ -223,6 +236,16 @@ class DataSourceV2RelationTableExtractor extends TableExtractor {
   override def apply(spark: SparkSession, v1: AnyRef): Option[Table] = {
     val plan = v1.asInstanceOf[LogicalPlan]
     plan.find(_.getClass.getSimpleName == "DataSourceV2Relation").get match {
+      // A relation from a TableProvider without SupportsCatalogOptions, e.g.
+      // spark.read.format("mongodb"), carries neither catalog nor identifier,
+      // and its table.name() is connector-defined — usually not a resolvable
+      // identifier, so the extracted resource can never match a Ranger policy.
+      // Skipping is opt-in because credentials for the external system may be
+      // ambient to the shared Spark principal rather than supplied per query.
+      case v2Relation: DataSourceV2Relation
+          if v2Relation.identifier.isEmpty && v2Relation.catalog.isEmpty &&
+            isSkipCataloglessV2RelationEnabled(spark) =>
+        None
       case v2Relation: DataSourceV2Relation
           if v2Relation.identifier.isEmpty ||
             !isPathIdentifier(v2Relation.identifier.get.name(), spark) =>
@@ -327,13 +350,28 @@ class HudiDataSourceV2RelationTableExtractor extends TableExtractor {
   override def apply(spark: SparkSession, v1: AnyRef): Option[Table] = {
     invokeAs[LogicalPlan](v1, "table") match {
       // Match multipartIdentifier with tableAlias
-      case SubqueryAlias(_, SubqueryAlias(identifier, _)) =>
+      case SubqueryAlias(_, SubqueryAlias(identifier, relation)) =>
         lookupExtractor[StringTableExtractor].apply(spark, identifier.toString())
+          .map(_.copy(owner = TableExtractor.getLogicalRelationOwner(relation)))
       // Match multipartIdentifier without tableAlias
-      case SubqueryAlias(identifier, _) =>
+      case SubqueryAlias(identifier, relation) =>
         lookupExtractor[StringTableExtractor].apply(spark, identifier.toString())
+          .map(_.copy(owner = TableExtractor.getLogicalRelationOwner(relation)))
       case _ => None
     }
+  }
+}
+
+/**
+ * Extracts a [[Table]] from a Hudi `HoodieCatalogTable` via its `table` field
+ * (a Spark `CatalogTable`). Used as a fallback for Hudi commands whose plan
+ * field was renamed across versions (e.g. `DeleteHoodieTableCommand.dft` in
+ * Hudi 1.0.x vs `query` in 1.2.0); the `catalogTable` field is stable.
+ */
+class HoodieCatalogTableTableExtractor extends TableExtractor {
+  override def apply(spark: SparkSession, v1: AnyRef): Option[Table] = {
+    val catalogTable = invokeAs[CatalogTable](v1, "table")
+    lookupExtractor[CatalogTableTableExtractor].apply(spark, catalogTable)
   }
 }
 
@@ -343,9 +381,11 @@ class HudiMergeIntoTargetTableExtractor extends TableExtractor {
       // Match multipartIdentifier with tableAlias
       case SubqueryAlias(_, SubqueryAlias(identifier, relation)) =>
         lookupExtractor[StringTableExtractor].apply(spark, identifier.toString())
+          .map(_.copy(owner = TableExtractor.getLogicalRelationOwner(relation)))
       // Match multipartIdentifier without tableAlias
-      case SubqueryAlias(identifier, _) =>
+      case SubqueryAlias(identifier, relation) =>
         lookupExtractor[StringTableExtractor].apply(spark, identifier.toString())
+          .map(_.copy(owner = TableExtractor.getLogicalRelationOwner(relation)))
       case _ => None
     }
   }

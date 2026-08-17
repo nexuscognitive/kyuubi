@@ -16,7 +16,8 @@
  */
 package org.apache.kyuubi.plugin.spark.authz.ranger
 
-import org.scalatest.Outcome
+import org.scalactic.source
+import org.scalatest.Tag
 
 import org.apache.kyuubi.Utils
 import org.apache.kyuubi.plugin.spark.authz.AccessControlException
@@ -31,7 +32,8 @@ import org.apache.kyuubi.util.AssertionUtils._
 @PaimonTest
 class PaimonCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
   override protected val catalogImpl: String = "hive"
-  private def isSupportedVersion = isScalaV212
+  override protected val supportPurge: Boolean = false
+  private def isSupportedVersion = isScalaV212 || isSparkV40OrGreater
   override protected val sqlExtensions: String =
     if (isSupportedVersion) "org.apache.paimon.spark.extensions.PaimonSparkSessionExtensions"
     else ""
@@ -40,9 +42,11 @@ class PaimonCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
   val namespace1 = "paimon_ns"
   val table1 = "table1"
 
-  override def withFixture(test: NoArgTest): Outcome = {
-    assume(isSupportedVersion)
-    test()
+  override protected def test(testName: String, testTags: Tag*)(
+      testFun: => Any)(implicit pos: source.Position): Unit = {
+    if (isSupportedVersion) {
+      super.test(testName, testTags: _*)(testFun)(pos)
+    }
   }
 
   override def beforeAll(): Unit = {
@@ -59,7 +63,6 @@ class PaimonCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
   override def afterAll(): Unit = {
     if (isSupportedVersion) {
       doAs(admin, sql(s"DROP DATABASE IF EXISTS $catalogV2.$namespace1"))
-
       super.afterAll()
       spark.sessionState.catalog.reset()
       spark.sessionState.conf.clear()
@@ -445,7 +448,7 @@ class PaimonCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
         doAs(
           admin,
           sql(s"SELECT commit_time FROM $catalogV2.$namespace1.`$table1$$snapshots`" +
-            s" ORDER BY commit_time ASC LIMIT 1").collect()(0).getTimestamp(0))
+            s" ORDER BY commit_time ASC LIMIT 1").collect()(0).get(0))
 
       val queryWithTimestamp =
         s"""
@@ -550,12 +553,21 @@ class PaimonCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
   test("Changing Column Type") {
     withCleanTmpResources(Seq(
       (s"$catalogV2.$namespace1.$table1", "table"))) {
-      val createTable = createTableSql(namespace1, table1)
-      doAs(admin, sql(createTable))
+      doAs(admin) {
+        sql(
+          s"""
+             |CREATE TABLE IF NOT EXISTS $catalogV2.$namespace1.$table1
+             |(id int, age int)
+             |USING paimon
+             |OPTIONS (
+             | 'primary-key' = 'id'
+             |)
+             |""".stripMargin)
+      }
       val changingColumnTypeSql =
         s"""
            |ALTER TABLE $catalogV2.$namespace1.$table1
-           |ALTER COLUMN id TYPE DOUBLE
+           |ALTER COLUMN age TYPE BIGINT
            |""".stripMargin
 
       interceptEndsWith[AccessControlException] {

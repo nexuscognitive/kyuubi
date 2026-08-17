@@ -1139,6 +1139,35 @@ abstract class SparkSQLLineageParserHelperSuite extends KyuubiFunSuite
         List(
           ("a", Set(s"$DEFAULT_CATALOG.default.table1.a")),
           ("b", Set(s"$DEFAULT_CATALOG.default.table1.b")))))
+
+      val sql12 =
+        """
+          |select (select sum(a) from table0 where table1.b = table0.b) as aa, b from table1
+          |""".stripMargin
+      val ret12 = extractLineage(sql12)
+      assert(ret12 == Lineage(
+        List(s"$DEFAULT_CATALOG.default.table0", s"$DEFAULT_CATALOG.default.table1"),
+        List(),
+        List(
+          ("aa", Set(s"$DEFAULT_CATALOG.default.table0.a", s"$DEFAULT_CATALOG.default.table1.b")),
+          ("b", Set(s"$DEFAULT_CATALOG.default.table1.b")))))
+
+      val sql13 =
+        """
+          |select if((select sum(a) from table0 where table1.b = table0.b) > 100, b, c) as aa,
+          | b from table1 """.stripMargin
+      val ret13 = extractLineage(sql13)
+      assert(ret13 == Lineage(
+        List(s"$DEFAULT_CATALOG.default.table0", s"$DEFAULT_CATALOG.default.table1"),
+        List(),
+        List(
+          (
+            "aa",
+            Set(
+              s"$DEFAULT_CATALOG.default.table0.a",
+              s"$DEFAULT_CATALOG.default.table1.b",
+              s"$DEFAULT_CATALOG.default.table1.c")),
+          ("b", Set(s"$DEFAULT_CATALOG.default.table1.b")))))
     }
   }
 
@@ -1473,9 +1502,15 @@ abstract class SparkSQLLineageParserHelperSuite extends KyuubiFunSuite
   }
 
   private def extractLineage(sql: String): Lineage = {
+    // Avoid going through QueryExecution.analyzed: SPARK-55855 (4.2.0) made `.analyzed`
+    // lazily begin a transaction on transactional catalogs (QueryExecution.lazyTransactionOpt).
+    // Since this helper only inspects the analyzed plan and never executes the query, that
+    // transaction would be left in the Active state and the next call would trip
+    // InMemoryRowLevelOperationTableCatalog.beginTransaction's "no nested active transaction"
+    // assertion. Analyzing directly produces the same plan.
     val parsed = spark.sessionState.sqlParser.parsePlan(sql)
-    val qe = spark.sessionState.executePlan(parsed)
-    val analyzed = qe.analyzed
+    val analyzed = spark.sessionState.analyzer.execute(parsed)
+    spark.sessionState.analyzer.checkAnalysis(analyzed)
     SparkSQLLineageParseHelper(spark).transformToLineage(0, analyzed).get
   }
 

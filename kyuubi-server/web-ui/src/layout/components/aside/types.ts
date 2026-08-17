@@ -34,6 +34,10 @@ export const MENUS = [
         router: '/management/operation'
       },
       {
+        label: 'Batch',
+        router: '/management/batch'
+      },
+      {
         label: 'Engine',
         router: '/management/engine'
       },
@@ -52,5 +56,10 @@ export const MENUS = [
     label: 'SQL Editor',
     icon: 'Cpu',
     router: '/editor'
+  },
+  {
+    label: 'Data Agent',
+    icon: 'ChatDotRound',
+    router: '/data-agent'
   }
 ]

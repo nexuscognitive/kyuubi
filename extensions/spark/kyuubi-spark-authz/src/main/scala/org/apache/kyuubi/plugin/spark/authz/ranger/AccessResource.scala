@@ -48,6 +48,7 @@ class AccessResource private (
   implicit def asString(obj: Object): String = if (obj != null) obj.asInstanceOf[String] else null
 
   def getDatabase: String = getValue("database")
+  def getUdf: String = getValue("udf")
   def getTable: String = getValue("table")
   def getColumn: String = getValue("column")
   def getSchema: String = getValue("schema")

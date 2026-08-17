@@ -20,6 +20,8 @@ package org.apache.kyuubi.server.api.v1
 import javax.ws.rs.{GET, Path, Produces}
 import javax.ws.rs.core.{MediaType, Response}
 
+import scala.collection.JavaConverters._
+
 import com.google.common.annotations.VisibleForTesting
 import io.swagger.v3.oas.annotations.media.Content
 import io.swagger.v3.oas.annotations.responses.ApiResponse
@@ -50,6 +52,16 @@ private[v1] class ApiRootResource extends ApiRequestContext {
   @Produces(Array(MediaType.TEXT_PLAIN))
   def ping(): String = "pong"
 
+  @GET
+  @Path("webui/config")
+  @Produces(Array(MediaType.APPLICATION_JSON))
+  def webUIConfig(): java.util.Map[String, AnyRef] = {
+    Map[String, AnyRef](
+      "engineUIProxyEnabled" -> Boolean.box(
+        fe.getConf.get(FRONTEND_REST_ENGINE_UI_PROXY_ENABLED)))
+      .asJava
+  }
+
   @Path("sessions")
   def sessions: Class[SessionsResource] = classOf[SessionsResource]
 
@@ -61,6 +73,9 @@ private[v1] class ApiRootResource extends ApiRequestContext {
 
   @Path("admin")
   def admin: Class[AdminResource] = classOf[AdminResource]
+
+  @Path("data-agent")
+  def dataAgent: Class[DataAgentResource] = classOf[DataAgentResource]
 
   @GET
   @Path("exception")
@@ -85,7 +100,7 @@ private[server] object ApiRootResource {
   }
 
   def getEngineUIProxyHandler(fe: KyuubiRestFrontendService): ServletContextHandler = {
-    val proxyServlet = new EngineUIProxyServlet()
+    val proxyServlet = EngineUIProxyServlet(fe)
     val holder = new ServletHolder(proxyServlet)
     val conf = fe.getConf
     holder.setInitParameter(
@@ -108,6 +123,7 @@ private[server] object ApiRootResource {
       conf.get(FRONTEND_REST_PROXY_JETTY_CLIENT_TIMEOUT).toString)
     val proxyHandler = new ServletContextHandler(ServletContextHandler.NO_SESSIONS)
     proxyHandler.setContextPath("/engine-ui")
+    FrontendServiceContext.set(proxyHandler, fe)
     proxyHandler.addServlet(holder, "/*")
     proxyHandler
   }

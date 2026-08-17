@@ -25,7 +25,7 @@ import org.apache.spark.sql.execution.datasources.InsertIntoHadoopFsRelationComm
 import org.apache.spark.sql.hive.HiveUtils
 import org.apache.spark.sql.hive.execution.{InsertIntoHiveDirCommand, InsertIntoHiveTable}
 
-import org.apache.kyuubi.sql.KyuubiSQLConf
+import org.apache.kyuubi.sql.{InferRebalanceAndSortOrders, KyuubiSQLConf}
 
 class RebalanceBeforeWritingSuite extends KyuubiSparkSQLExtensionTest {
 
@@ -305,6 +305,91 @@ class RebalanceBeforeWritingSuite extends KyuubiSparkSQLExtensionTest {
     }
   }
 
+  test("Skip inferring sort orders") {
+    def checkShuffleAndSort(dataWritingCommand: LogicalPlan, sSize: Int, rSize: Int): Unit = {
+      assert(dataWritingCommand.isInstanceOf[DataWritingCommand])
+      val plan = dataWritingCommand.asInstanceOf[DataWritingCommand].query
+      assert(plan.collect { case s: Sort => s }.size == sSize)
+      assert(plan.collect {
+        case r: RebalancePartitions if r.partitionExpressions.size == rSize => r
+      }.nonEmpty || rSize == 0)
+    }
+
+    withTable("t", "input1", "input2") {
+      sql(s"CREATE TABLE t (c1 int, c2 long) USING PARQUET PARTITIONED BY (p string)")
+      sql(s"CREATE TABLE input1 USING PARQUET AS SELECT * FROM VALUES(1,2),(1,3)")
+      sql(s"CREATE TABLE input2 USING PARQUET AS SELECT * FROM VALUES(1,3),(1,3)")
+
+      val insert =
+        s"""
+           |INSERT INTO TABLE t PARTITION(p='a')
+           |SELECT /*+ broadcast(input2) */ input1.col1, input2.col1
+           |FROM input1
+           |JOIN input2
+           |ON input1.col1 = input2.col1
+           |""".stripMargin
+
+      // when skip is disabled (default), both rebalance and sort orders are inferred
+      withSQLConf(
+        KyuubiSQLConf.INFER_REBALANCE_AND_SORT_ORDERS.key -> "true",
+        KyuubiSQLConf.SKIP_INFER_SORT_ORDERS.key -> "false") {
+        checkShuffleAndSort(sql(insert).queryExecution.analyzed, 1, 1)
+      }
+
+      // when skip is enabled, only the rebalance is inferred and the sort is skipped
+      withSQLConf(
+        KyuubiSQLConf.INFER_REBALANCE_AND_SORT_ORDERS.key -> "true",
+        KyuubiSQLConf.SKIP_INFER_SORT_ORDERS.key -> "true") {
+        checkShuffleAndSort(sql(insert).queryExecution.analyzed, 0, 1)
+      }
+    }
+  }
+
+  test("Infer rebalance and sort orders only with cheap columns") {
+    withTable("input1", "input2") {
+      sql(s"CREATE TABLE input1 USING PARQUET AS SELECT * FROM VALUES(1,2),(1,3)")
+      sql(s"CREATE TABLE input2 USING PARQUET AS SELECT * FROM VALUES(1,3),(1,3)")
+
+      // the join keys `input1.col1 + 1` / `input2.col1 + 1` are not cheap expressions
+      val expensivePlan = sql(
+        s"""
+           |SELECT input1.col1, input2.col1
+           |FROM input1
+           |JOIN input2
+           |ON input1.col1 + 1 = input2.col1 + 1
+           |""".stripMargin).queryExecution.analyzed
+
+      // when only cheap columns are allowed, the expensive keys are not inferred
+      assert(InferRebalanceAndSortOrders.infer(expensivePlan, true).isEmpty)
+      // when the cheap-column restriction is disabled, the expensive keys are inferred
+      InferRebalanceAndSortOrders.infer(expensivePlan, false) match {
+        case Some((partitioning, ordering)) =>
+          assert(partitioning.nonEmpty)
+          assert(ordering.nonEmpty)
+        case None => fail("expected inferred columns when cheap-column restriction is disabled")
+      }
+
+      // the join keys `input1.col1` / `input2.col1` are cheap attributes
+      val cheapPlan = sql(
+        s"""
+           |SELECT input1.col1, input2.col1
+           |FROM input1
+           |JOIN input2
+           |ON input1.col1 = input2.col1
+           |""".stripMargin).queryExecution.analyzed
+
+      // cheap columns are inferred regardless of the restriction
+      Seq(true, false).foreach { onlyCheap =>
+        InferRebalanceAndSortOrders.infer(cheapPlan, onlyCheap) match {
+          case Some((partitioning, ordering)) =>
+            assert(partitioning.nonEmpty)
+            assert(ordering.nonEmpty)
+          case None => fail(s"expected inferred columns when onlyCheap=$onlyCheap")
+        }
+      }
+    }
+  }
+
   test("Test rebalance in InsertIntoHiveDirCommand") {
     withSQLConf(
       HiveUtils.CONVERT_METASTORE_PARQUET.key -> "false",
@@ -340,6 +425,102 @@ class RebalanceBeforeWritingSuite extends KyuubiSparkSQLExtensionTest {
           }
         assert(repartition.size == 1)
       })
+    }
+  }
+
+  test("advisory partition size - finalStage config takes precedence") {
+    withSQLConf(
+      KyuubiSQLConf.INSERT_REPARTITION_BEFORE_WRITE.key -> "true",
+      KyuubiSQLConf.INSERT_REPARTITION_BEFORE_WRITE_IF_NO_SHUFFLE.key -> "true",
+      KyuubiSQLConf.FINAL_STAGE_ADVISORY_PARTITION_SIZE_KEY -> "100MB") {
+      withTable("tmp1") {
+        sql("CREATE TABLE tmp1 (c1 int) USING PARQUET")
+        val df = sql("INSERT INTO TABLE tmp1 SELECT * FROM VALUES(1),(2),(3) AS t(c1)")
+        withListener(df) { write =>
+          val rebalances = write.collect { case r: RebalancePartitions => r }
+          assert(rebalances.size === 1)
+          assert(rebalances.head.optAdvisoryPartitionSize.isDefined)
+          assert(rebalances.head.optAdvisoryPartitionSize.get === 104857600L) // 100MB
+        }
+      }
+    }
+  }
+
+  test("advisory partition size - fallback to kyuubi config") {
+    withSQLConf(
+      KyuubiSQLConf.INSERT_REPARTITION_BEFORE_WRITE.key -> "true",
+      KyuubiSQLConf.INSERT_REPARTITION_BEFORE_WRITE_IF_NO_SHUFFLE.key -> "true",
+      KyuubiSQLConf.REBALANCE_PARTITIONS_ADVISORY_PARTITION_SIZE.key -> "200MB") {
+      withTable("tmp1") {
+        sql("CREATE TABLE tmp1 (c1 int) USING PARQUET")
+        val df = sql("INSERT INTO TABLE tmp1 SELECT * FROM VALUES(1),(2),(3) AS t(c1)")
+        withListener(df) { write =>
+          val rebalances = write.collect { case r: RebalancePartitions => r }
+          assert(rebalances.size === 1)
+          assert(rebalances.head.optAdvisoryPartitionSize.isDefined)
+          assert(rebalances.head.optAdvisoryPartitionSize.get === 209715200L) // 200MB
+        }
+      }
+    }
+  }
+
+  test("advisory partition size - kyuubi config takes precedence over finalStage") {
+    withSQLConf(
+      KyuubiSQLConf.INSERT_REPARTITION_BEFORE_WRITE.key -> "true",
+      KyuubiSQLConf.INSERT_REPARTITION_BEFORE_WRITE_IF_NO_SHUFFLE.key -> "true",
+      KyuubiSQLConf.REBALANCE_PARTITIONS_ADVISORY_PARTITION_SIZE.key -> "200MB",
+      KyuubiSQLConf.FINAL_STAGE_ADVISORY_PARTITION_SIZE_KEY -> "300MB") {
+      withTable("tmp1") {
+        sql("CREATE TABLE tmp1 (c1 int) USING PARQUET")
+        val df = sql("INSERT INTO TABLE tmp1 SELECT * FROM VALUES(1),(2),(3) AS t(c1)")
+        withListener(df) { write =>
+          val rebalances = write.collect { case r: RebalancePartitions => r }
+          assert(rebalances.size === 1)
+          assert(rebalances.head.optAdvisoryPartitionSize.isDefined)
+          // kyuubi config takes precedence over finalStage
+          assert(rebalances.head.optAdvisoryPartitionSize.get === 209715200L) // 200MB
+        }
+      }
+    }
+  }
+
+  test("advisory partition size - none when neither config is set") {
+    withSQLConf(
+      KyuubiSQLConf.INSERT_REPARTITION_BEFORE_WRITE.key -> "true",
+      KyuubiSQLConf.INSERT_REPARTITION_BEFORE_WRITE_IF_NO_SHUFFLE.key -> "true") {
+      withTable("tmp1") {
+        sql("CREATE TABLE tmp1 (c1 int) USING PARQUET")
+        val df = sql("INSERT INTO TABLE tmp1 SELECT * FROM VALUES(1),(2),(3) AS t(c1)")
+        withListener(df) { write =>
+          val rebalances = write.collect { case r: RebalancePartitions => r }
+          assert(rebalances.size === 1)
+          assert(rebalances.head.optAdvisoryPartitionSize.isEmpty)
+        }
+      }
+    }
+  }
+
+  test("getAdvisoryPartitionSize - raw config resolution") {
+    val conf = spark.sessionState.conf
+
+    // Neither config set
+    assert(KyuubiSQLConf.getAdvisoryPartitionSize(conf).isEmpty)
+
+    // Only finalStage config set
+    withSQLConf(KyuubiSQLConf.FINAL_STAGE_ADVISORY_PARTITION_SIZE_KEY -> "50m") {
+      assert(KyuubiSQLConf.getAdvisoryPartitionSize(conf).get === 52428800L) // 50MB
+    }
+
+    // Only kyuubi config set
+    withSQLConf(KyuubiSQLConf.REBALANCE_PARTITIONS_ADVISORY_PARTITION_SIZE.key -> "1gb") {
+      assert(KyuubiSQLConf.getAdvisoryPartitionSize(conf).get === 1073741824L) // 1GB
+    }
+
+    // Both set: kyuubi config takes precedence
+    withSQLConf(
+      KyuubiSQLConf.REBALANCE_PARTITIONS_ADVISORY_PARTITION_SIZE.key -> "1gb",
+      KyuubiSQLConf.FINAL_STAGE_ADVISORY_PARTITION_SIZE_KEY -> "500MB") {
+      assert(KyuubiSQLConf.getAdvisoryPartitionSize(conf).get === 1073741824L) // 1GB
     }
   }
 }

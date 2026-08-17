@@ -101,7 +101,7 @@
               :content="
                 $t('engine_ui') +
                 ': ' +
-                scope.row.attributes['kyuubi.engine.url']
+                getEngineUI(scope.row.attributes['kyuubi.engine.url'])
               "
               placement="top">
               <el-button
@@ -148,10 +148,13 @@
   import { reactive } from 'vue'
   import { getAllEngines, deleteEngine } from '@/api/engine'
   import { IEngineSearch } from '@/api/engine/types'
+  import { getWebUIConfig } from '@/api/server'
+  import { IWebUIConfig } from '@/api/server/types'
   import { useTable } from '@/utils/use-table'
   import { ElMessage } from 'element-plus'
   import { useI18n } from 'vue-i18n'
   import { getEngineType, getShareLevel } from '@/utils/engine'
+  import { getEngineUIUrl, getProxyEngineUIUrl } from '@/utils/engine-ui'
 
   const { t } = useI18n()
   const {
@@ -171,11 +174,19 @@
     sharelevel: 'USER',
     'hive.server2.proxy.user': 'anonymous'
   })
+  const engineUIProxyConfig: IWebUIConfig = reactive({
+    engineUIProxyEnabled: false
+  })
   const getList = () => {
     _getList(getAllEngines, searchParam)
   }
   const init = () => {
     getList()
+    getWebUIConfig()
+      .then((config) => {
+        engineUIProxyConfig.engineUIProxyEnabled = config.engineUIProxyEnabled
+      })
+      .catch(() => {})
   }
 
   function handleDeleteEngine(row: any) {
@@ -203,18 +214,23 @@
   }
 
   function getProxyEngineUI(url: string): string {
-    url = (url || '').replaceAll(/http:|https:/gi, '')
-    return `${import.meta.env.VITE_APP_DEV_WEB_URL}engine-ui/${url}/`
+    return getProxyEngineUIUrl(url)
+  }
+
+  function getEngineUI(url: string): string {
+    return getEngineUIUrl(url, engineUIProxyConfig.engineUIProxyEnabled)
   }
 
   function openEngineUI(url: string) {
-    window.open(getProxyEngineUI(url))
+    window.open(getEngineUI(url))
   }
 
   init()
   // export for test
   defineExpose({
-    getProxyEngineUI
+    getEngineUI,
+    getProxyEngineUI,
+    engineUIProxyConfig
   })
 </script>
 

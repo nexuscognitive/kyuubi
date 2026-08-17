@@ -20,8 +20,9 @@ package org.apache.kyuubi.server.api.v1
 import java.util.Base64
 
 import scala.collection.JavaConverters._
-import scala.util.Try
+import scala.util.{Failure, Success, Try}
 
+import org.apache.kyuubi.Logging
 import org.apache.kyuubi.client.{AdminRestApi, BaseRestApi, BatchRestApi, KyuubiRestClient}
 import org.apache.kyuubi.client.api.v1.dto.{Batch, CloseBatchResponse, OperationData, OperationLog, SessionData}
 import org.apache.kyuubi.client.auth.AuthHeaderGenerator
@@ -46,7 +47,7 @@ class InternalRestClient(
     connectTimeout: Int,
     securityEnabled: Boolean,
     requestMaxAttempts: Int,
-    requestAttemptWait: Int) {
+    requestAttemptWait: Int) extends Logging {
   if (securityEnabled) {
     require(
       InternalSecurityAccessor.get() != null,
@@ -57,7 +58,16 @@ class InternalRestClient(
   private val internalBaseRestApi = new BaseRestApi(initKyuubiRestClient())
   private val internalAdminRestApi = new AdminRestApi(initKyuubiRestClient())
 
-  def pingAble(): Boolean = Try(internalBaseRestApi.ping()).isSuccess
+  def pingAble(user: String, clientIp: String): Boolean = withAuthUser(user) {
+    Try {
+      internalBaseRestApi.ping(Map(proxyClientIpHeader -> clientIp).asJava)
+    } match {
+      case Success(_) => true
+      case Failure(e) =>
+        error(s"Ping to Kyuubi instance $kyuubiInstance failed", e)
+        false
+    }
+  }
 
   /**
    * List the sessions held in the peer instance's local memory only.

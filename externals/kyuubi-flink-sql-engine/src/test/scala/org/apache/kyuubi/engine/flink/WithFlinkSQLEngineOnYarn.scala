@@ -32,7 +32,7 @@ import org.apache.hadoop.yarn.server.MiniYARNCluster
 
 import org.apache.kyuubi.{KYUUBI_VERSION, KyuubiFunSuite, SCALA_COMPILE_VERSION, Utils}
 import org.apache.kyuubi.config.KyuubiConf
-import org.apache.kyuubi.config.KyuubiConf.{ENGINE_FLINK_APPLICATION_JARS, KYUUBI_HOME}
+import org.apache.kyuubi.config.KyuubiConf.{ENGINE_FLINK_APPLICATION_JARS, KYUUBI_HOME_ENV_VAR_NAME}
 import org.apache.kyuubi.ha.HighAvailabilityConf.HA_ADDRESSES
 import org.apache.kyuubi.util.JavaUtils
 import org.apache.kyuubi.util.command.CommandLineUtils._
@@ -141,7 +141,7 @@ trait WithFlinkSQLEngineOnYarn extends KyuubiFunSuite with WithFlinkTestResource
     val envs = scala.collection.mutable.Map[String, String]()
     val kyuubiExternals = JavaUtils.getCodeSourceLocation(getClass)
       .split("externals").head
-    val flinkHome = {
+    val flinkHome = sys.env.get("FLINK_HOME").filter(_.nonEmpty).map(Paths.get(_)).orElse {
       val candidates = Paths.get(kyuubiExternals, "externals", "kyuubi-download", "target")
         .toFile.listFiles(f => f.getName.contains("flink"))
       if (candidates == null) None else candidates.map(_.toPath).headOption
@@ -238,7 +238,7 @@ trait WithFlinkSQLEngineOnYarn extends KyuubiFunSuite with WithFlinkTestResource
       }
     }.orElse {
       // 2. get the main resource jar from system build default
-      env.get(KYUUBI_HOME).toSeq
+      env.get(KYUUBI_HOME_ENV_VAR_NAME).toSeq
         .flatMap { p =>
           Seq(
             Paths.get(p, "externals", "engines", shortName, jarName),

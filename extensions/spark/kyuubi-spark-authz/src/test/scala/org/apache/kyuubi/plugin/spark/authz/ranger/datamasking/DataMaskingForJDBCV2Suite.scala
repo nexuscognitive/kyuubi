@@ -21,14 +21,13 @@ import java.sql.DriverManager
 import scala.util.Try
 
 import org.apache.spark.SparkConf
-import org.scalatest.Outcome
 
 import org.apache.kyuubi.plugin.spark.authz.V2JdbcTableCatalogPrivilegesBuilderSuite._
 import org.apache.kyuubi.plugin.spark.authz.util.AuthZUtils._
 
 class DataMaskingForJDBCV2Suite extends DataMaskingTestBase {
-  override protected val extraSparkConf: SparkConf = {
-    new SparkConf()
+  override protected def extraSparkConf: SparkConf = {
+    super.extraSparkConf
       .set("spark.sql.defaultCatalog", "testcat")
       .set("spark.sql.catalog.testcat", v2JdbcTableCatalogClassName)
       .set("spark.sql.catalog.testcat.url", "jdbc:derby:memory:testcat;create=true")
@@ -36,6 +35,8 @@ class DataMaskingForJDBCV2Suite extends DataMaskingTestBase {
   }
 
   override protected val catalogImpl: String = "in-memory"
+
+  override protected val supportPurge: Boolean = false
 
   override protected def format: String = ""
 
@@ -51,7 +52,4 @@ class DataMaskingForJDBCV2Suite extends DataMaskingTestBase {
     }
   }
 
-  override def withFixture(test: NoArgTest): Outcome = {
-    test()
-  }
 }

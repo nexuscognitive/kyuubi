@@ -75,7 +75,7 @@ trait WithFlinkSQLEngineLocal extends KyuubiFunSuite with WithFlinkTestResources
     val envs = scala.collection.mutable.Map[String, String]()
     val kyuubiExternals = JavaUtils.getCodeSourceLocation(getClass)
       .split("externals").head
-    val flinkHome = {
+    val flinkHome = sys.env.get("FLINK_HOME").filter(_.nonEmpty).map(Paths.get(_)).orElse {
       val candidates = Paths.get(kyuubiExternals, "externals", "kyuubi-download", "target")
         .toFile.listFiles(f => f.getName.contains("flink"))
       if (candidates == null) None else candidates.map(_.toPath).headOption
@@ -209,7 +209,7 @@ trait WithFlinkSQLEngineLocal extends KyuubiFunSuite with WithFlinkTestResources
         }
     }.orElse {
       // 2. get the main resource jar from system build default
-      env.get(KYUUBI_HOME).toSeq
+      env.get(KYUUBI_HOME_ENV_VAR_NAME).toSeq
         .flatMap { p =>
           Seq(
             Paths.get(p, "externals", "engines", shortName, jarName),

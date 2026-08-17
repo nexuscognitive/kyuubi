@@ -17,10 +17,14 @@
 
 package org.apache.kyuubi.sql
 
-import org.apache.spark.network.util.ByteUnit
+import org.apache.spark.network.util.{ByteUnit, JavaUtils}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf._
 
 object KyuubiSQLConf {
+
+  final val FINAL_STAGE_ADVISORY_PARTITION_SIZE_KEY =
+    "spark.sql.finalStage.adaptive.advisoryPartitionSizeInBytes"
 
   val INSERT_REPARTITION_BEFORE_WRITE =
     buildConf("spark.sql.optimizer.insertRepartitionBeforeWrite.enabled")
@@ -139,6 +143,25 @@ object KyuubiSQLConf {
       .booleanConf
       .createWithDefault(false)
 
+  val SKIP_INFER_SORT_ORDERS =
+    buildConf("spark.sql.optimizer.inferRebalanceAndSortOrders.skipSort")
+      .doc(s"When true and `${INFER_REBALANCE_AND_SORT_ORDERS.key}` is true, only infer the " +
+        s"rebalance partition columns and skip inferring the sort orders. Skipping the sort " +
+        s"avoids a local sort before writing when only the file layout from rebalance is wanted.")
+      .version("1.12.0")
+      .booleanConf
+      .createWithDefault(false)
+
+  val INFER_REBALANCE_AND_SORT_ORDERS_WITH_CHEAP_COLUMNS =
+    buildConf("spark.sql.optimizer.inferRebalanceAndSortOrders.cheapColumnsOnly")
+      .doc(s"When true and `${INFER_REBALANCE_AND_SORT_ORDERS.key}` is true, only infer the " +
+        s"rebalance and sort columns when all inferred columns are cheap expressions, i.e. " +
+        s"attributes, foldable values, or field extractions over cheap expressions. This avoids " +
+        s"evaluating expensive expressions during the inferred shuffle and sort.")
+      .version("1.12.0")
+      .booleanConf
+      .createWithDefault(true)
+
   val INFER_REBALANCE_AND_SORT_ORDERS_MAX_COLUMNS =
     buildConf("spark.sql.optimizer.inferRebalanceAndSortOrdersMaxColumns")
       .doc("The max columns of inferred columns.")
@@ -232,6 +255,46 @@ object KyuubiSQLConf {
       .stringConf
       .createOptional
 
+  val REBALANCE_PARTITIONS_ADVISORY_PARTITION_SIZE =
+    buildConf("spark.sql.adaptive.rebalancePartitionsAdvisoryPartitionSizeInBytes")
+      .doc("The advisory partition size for RebalancePartitions operator. When set, it will be " +
+        "passed to `optAdvisoryPartitionSize` of the RebalancePartitions node. " +
+        "It takes precedence over `spark.sql.finalStage.adaptive.advisoryPartitionSizeInBytes`.")
+      .version("1.12.0")
+      .bytesConf(ByteUnit.BYTE)
+      .createOptional
+
+  val REMOVE_REBALANCE_SHUFFLE_ENABLED =
+    buildConf("spark.sql.adaptive.removeRebalanceShuffle.enabled")
+      .doc("When true, the rebalance shuffle injected before writing can be removed at AQE time " +
+        "if the materialized upstream data size makes the shuffle not worthwhile. Only takes " +
+        "effect on a `RebalancePartitions` shuffle that has no partition expressions and whose " +
+        "advisory partition size is larger than " +
+        s"`${SQLConf.ADVISORY_PARTITION_SIZE_IN_BYTES.key}`.")
+      .version("1.12.0")
+      .booleanConf
+      .createWithDefault(false)
+
+  val REMOVE_REBALANCE_SHUFFLE_SMALL_PARTITION_SIZE =
+    buildConf("spark.sql.adaptive.removeRebalanceShuffle.smallPartitionSize")
+      .doc("The advisory partition size below which a partition is considered small. In the " +
+        "large-data scenario, the rebalance shuffle is removed when the rebalance input has no " +
+        s"data-reducing operator and its stage size is larger than " +
+        s"`${SQLConf.SHUFFLE_PARTITIONS.key}` * this value.")
+      .version("1.12.0")
+      .bytesConf(ByteUnit.BYTE)
+      .createWithDefault(128L * 1024 * 1024)
+
+  val REMOVE_REBALANCE_SHUFFLE_TOLERABLE_SMALL_FILE_NUM =
+    buildConf("spark.sql.adaptive.removeRebalanceShuffle.tolerableSmallFileNum")
+      .doc("The tolerable number of small output files for the small-data scenario. When the " +
+        "rebalance input has no data-expanding operator and its stage size is smaller than " +
+        s"`${SQLConf.ADVISORY_PARTITION_SIZE_IN_BYTES.key}` * this value, the rebalance shuffle " +
+        "is removed.")
+      .version("1.12.0")
+      .intConf
+      .createWithDefault(3)
+
   val DYNAMIC_SHUFFLE_PARTITIONS =
     buildConf("spark.sql.optimizer.dynamicShufflePartitions")
       .doc("If true, adjust the number of shuffle partitions dynamically based on the job" +
@@ -254,4 +317,16 @@ object KyuubiSQLConf {
       .version("1.9.0")
       .booleanConf
       .createWithDefault(true)
+
+  def getAdvisoryPartitionSize(conf: SQLConf): Option[Long] = {
+    conf.getConf(REBALANCE_PARTITIONS_ADVISORY_PARTITION_SIZE).orElse {
+      if (conf.contains(FINAL_STAGE_ADVISORY_PARTITION_SIZE_KEY)) {
+        Some(JavaUtils.byteStringAs(
+          conf.getConfString(FINAL_STAGE_ADVISORY_PARTITION_SIZE_KEY),
+          ByteUnit.BYTE))
+      } else {
+        None
+      }
+    }
+  }
 }

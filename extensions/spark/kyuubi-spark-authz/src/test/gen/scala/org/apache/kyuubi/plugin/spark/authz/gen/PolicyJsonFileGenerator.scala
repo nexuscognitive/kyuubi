@@ -27,9 +27,8 @@ import com.fasterxml.jackson.databind.json.JsonMapper
 import com.fasterxml.jackson.databind.node.ObjectNode
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
 import org.apache.ranger.plugin.model.RangerPolicy
-// scalastyle:off
-import org.scalatest.funsuite.AnyFunSuite
 
+import org.apache.kyuubi.KyuubiFunSuite
 import org.apache.kyuubi.plugin.spark.authz.RangerTestNamespace._
 import org.apache.kyuubi.plugin.spark.authz.RangerTestUsers._
 import org.apache.kyuubi.plugin.spark.authz.gen.KRangerPolicyItemAccess.allowTypes
@@ -52,8 +51,7 @@ import org.apache.kyuubi.util.GoldenFileUtils._
  *   dev/gen/gen_ranger_policy_json.sh
  * }}}
  */
-class PolicyJsonFileGenerator extends AnyFunSuite {
-  // scalastyle:on
+class PolicyJsonFileGenerator extends KyuubiFunSuite {
   final private val mapper: ObjectMapper = JsonMapper.builder()
     .addModule(DefaultScalaModule)
     .serializationInclusion(Include.NON_NULL)
@@ -110,6 +108,7 @@ class PolicyJsonFileGenerator extends AnyFunSuite {
       policyAccessForPermViewAccessOnly,
       policyAccessForTable2AccessOnly,
       policyAccessForPaimonNsTable1SelectOnly,
+      policyAccessForDefaultDbUDF,
       // row filter
       policyFilterForSrcTableKeyLessThan20,
       policyFilterForPermViewKeyLessThan20,
@@ -119,7 +118,8 @@ class PolicyJsonFileGenerator extends AnyFunSuite {
       policyMaskNullifyForValue2,
       policyMaskShowFirst4ForValue3,
       policyMaskDateShowYearForValue4,
-      policyMaskShowFirst4ForValue5)
+      policyMaskShowFirst4ForValue5,
+      policyMaskForPermViewMaskedValue2)
       // catalog mode: every schema/table/udf-scoped policy is rooted at the
       // `iceberg` catalog (test catalogs are all mapped to it). url-only
       // policies have no catalog resource.
@@ -192,7 +192,13 @@ class PolicyJsonFileGenerator extends AnyFunSuite {
     name = "all - database, udf",
     description = "Policy for all - database, udf",
     resources = Map(
-      databaseRes(defaultDb, sparkCatalog, icebergNamespace, namespace1, paimonNamespace),
+      databaseRes(
+        defaultDb,
+        sparkCatalog,
+        icebergNamespace,
+        namespace1,
+        paimonNamespace,
+        hudiNamespace),
       allTableRes,
       allColumnRes),
     policyItems = List(
@@ -353,6 +359,20 @@ class PolicyJsonFileGenerator extends AnyFunSuite {
         accesses = allowTypes(select),
         delegateAdmin = true)))
 
+  private val policyMaskForPermViewMaskedValue2 = KRangerPolicy(
+    name = "perm_view_nested_value2_mask",
+    policyType = POLICY_TYPE_DATAMASK,
+    resources = Map(
+      databaseRes(defaultDb, sparkCatalog),
+      tableRes("perm_view_masked"),
+      columnRes("value2")),
+    dataMaskPolicyItems = List(
+      KRangerDataMaskPolicyItem(
+        dataMaskInfo = KRangerPolicyItemDataMaskInfo(dataMaskType = "MASK"),
+        users = List(permViewUser),
+        accesses = allowTypes(select),
+        delegateAdmin = true)))
+
   private val policyAccessForPermViewAccessOnly = KRangerPolicy(
     name = "someone_access_perm_view",
     resources = Map(
@@ -386,6 +406,22 @@ class PolicyJsonFileGenerator extends AnyFunSuite {
     policyItems = List(
       KRangerPolicyItem(
         users = List(table1OnlyUserForNs),
+        accesses = allowTypes(select),
+        delegateAdmin = true)))
+
+  private val policyAccessForDefaultDbUDF = KRangerPolicy(
+    name = "defaultdb_udf",
+    description = "Policy for default db udf",
+    resources = Map(
+      databaseRes(defaultDb),
+      "udf" -> KRangerPolicyResource(values = List("kyuubi_func*"))),
+    policyItems = List(
+      KRangerPolicyItem(
+        users = List(bob),
+        accesses = allowTypes(select, update, create, drop, alter, index, lock, all, read, write),
+        delegateAdmin = true),
+      KRangerPolicyItem(
+        users = List(kent),
         accesses = allowTypes(select),
         delegateAdmin = true)))
 }

@@ -62,12 +62,12 @@ abstract class JdbcOperation(session: Session) extends AbstractOperation(session
     resp
   }
 
-  override def cancel(): Unit = {
-    cleanup(OperationState.CANCELED)
-  }
-
   override def close(): Unit = {
     cleanup(OperationState.CLOSED)
+  }
+
+  override def cancel(): Unit = {
+    cleanup(OperationState.CANCELED)
   }
 
   protected def onError(cancel: Boolean = false): PartialFunction[Throwable, Unit] = {

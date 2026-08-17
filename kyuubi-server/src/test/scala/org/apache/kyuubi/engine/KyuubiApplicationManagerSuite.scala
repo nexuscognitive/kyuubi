@@ -20,6 +20,7 @@ package org.apache.kyuubi.engine
 import org.apache.kyuubi.{KyuubiException, KyuubiFunSuite}
 import org.apache.kyuubi.config.KyuubiConf
 import org.apache.kyuubi.engine.KubernetesApplicationOperation.LABEL_KYUUBI_UNIQUE_KEY
+import org.apache.kyuubi.engine.spark.SparkProcessBuilder
 
 class KyuubiApplicationManagerSuite extends KyuubiFunSuite {
   test("application access path") {
@@ -33,6 +34,13 @@ class KyuubiApplicationManagerSuite extends KyuubiFunSuite {
 
     path = "/apache/kyuubijar"
     var e = intercept[KyuubiException] {
+      KyuubiApplicationManager.checkApplicationAccessPath(path, localDirLimitConf)
+    }
+    assert(e.getMessage.contains("is not in the local dir allow list"))
+    KyuubiApplicationManager.checkApplicationAccessPath(path, noLocalDirLimitConf)
+
+    path = "/apache/kyuubi/../a.jar"
+    e = intercept[KyuubiException] {
       KyuubiApplicationManager.checkApplicationAccessPath(path, localDirLimitConf)
     }
     assert(e.getMessage.contains("is not in the local dir allow list"))
@@ -68,6 +76,73 @@ class KyuubiApplicationManagerSuite extends KyuubiFunSuite {
       KyuubiApplicationManager.checkApplicationAccessPaths(
         "SPARK",
         appConf,
+        localDirLimitConf)
+    }
+
+    appConf = Map("spark.new.access.local" -> "/apache/kyuubi/jars/a.jar")
+    KyuubiApplicationManager.checkApplicationAccessPaths(
+      "SPARK",
+      appConf,
+      localDirLimitConf)
+    KyuubiApplicationManager.checkApplicationAccessPaths(
+      "SPARK",
+      appConf,
+      noLocalDirLimitConf)
+
+    appConf = Map("spark.new.access.local" -> "/apache/jars/a.jar")
+    KyuubiApplicationManager.checkApplicationAccessPaths(
+      "SPARK",
+      appConf,
+      localDirLimitConf)
+    KyuubiApplicationManager.checkApplicationAccessPaths(
+      "SPARK",
+      appConf,
+      noLocalDirLimitConf)
+
+    localDirLimitConf.set(KyuubiConf.SERVER_SPARK_FILE_CONFIG_LIST, Set("spark.new.access.local"))
+    appConf = Map("spark.new.access.local" -> "/apache/kyuubi/jars/a.jar")
+    KyuubiApplicationManager.checkApplicationAccessPaths(
+      "SPARK",
+      appConf,
+      localDirLimitConf)
+
+    appConf = Map("spark.new.access.local" -> "/apache/jars/a.jar")
+    intercept[KyuubiException] {
+      KyuubiApplicationManager.checkApplicationAccessPaths(
+        "SPARK",
+        appConf,
+        localDirLimitConf)
+    }
+    localDirLimitConf.unset(KyuubiConf.SERVER_SPARK_FILE_CONFIG_LIST)
+  }
+
+  test("application access path checks unprefixed spark file conf aliases") {
+    val localDirLimitConf = KyuubiConf()
+      .set(KyuubiConf.SESSION_LOCAL_DIR_ALLOW_LIST, Set("/apache/kyuubi"))
+
+    SparkProcessBuilder.PATH_CONFIGS.foreach { canonicalKey =>
+      Seq(canonicalKey, canonicalKey.stripPrefix("spark.")).foreach { key =>
+        val e = intercept[KyuubiException] {
+          KyuubiApplicationManager.checkApplicationAccessPaths(
+            "SPARK",
+            Map(key -> "/etc/passwd"),
+            localDirLimitConf)
+        }
+        assert(e.getMessage.contains("is not in the local dir allow list"), s"key=$key")
+      }
+    }
+
+    Seq("spark.files", "files").foreach { key =>
+      KyuubiApplicationManager.checkApplicationAccessPaths(
+        "SPARK",
+        Map(key -> "/apache/kyuubi/a.jar"),
+        localDirLimitConf)
+    }
+
+    intercept[KyuubiException] {
+      KyuubiApplicationManager.checkApplicationAccessPaths(
+        "SPARK",
+        Map("spark.files" -> "/apache/kyuubi/a.jar", "files" -> "/etc/passwd"),
         localDirLimitConf)
     }
   }

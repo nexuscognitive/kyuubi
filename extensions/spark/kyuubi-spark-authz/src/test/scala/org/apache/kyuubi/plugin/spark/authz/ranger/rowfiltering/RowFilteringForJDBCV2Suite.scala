@@ -22,7 +22,6 @@ import java.sql.DriverManager
 import scala.util.Try
 
 import org.apache.spark.SparkConf
-import org.scalatest.Outcome
 
 import org.apache.kyuubi.plugin.spark.authz.V2JdbcTableCatalogPrivilegesBuilderSuite._
 import org.apache.kyuubi.plugin.spark.authz.util.AuthZUtils._
@@ -38,6 +37,8 @@ class RowFilteringForJDBCV2Suite extends RowFilteringTestBase {
 
   override protected val catalogImpl: String = "in-memory"
 
+  override protected val supportPurge: Boolean = false
+
   override protected def format: String = ""
 
   override def beforeAll(): Unit = {
@@ -52,7 +53,4 @@ class RowFilteringForJDBCV2Suite extends RowFilteringTestBase {
     }
   }
 
-  override def withFixture(test: NoArgTest): Outcome = {
-    test()
-  }
 }

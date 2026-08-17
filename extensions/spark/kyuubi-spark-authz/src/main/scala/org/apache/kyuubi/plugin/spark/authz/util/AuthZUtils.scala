@@ -69,6 +69,13 @@ private[authz] object AuthZUtils {
     }
   }
 
+  final val SKIP_CATALOGLESS_V2_RELATION_ENABLED_KEY =
+    "spark.kyuubi.authz.skipCataloglessV2Relation.enabled"
+
+  def isSkipCataloglessV2RelationEnabled(spark: SparkSession): Boolean =
+    spark.conf.getOption(SKIP_CATALOGLESS_V2_RELATION_ENABLED_KEY)
+      .exists(_.equalsIgnoreCase("true"))
+
   lazy val isRanger21orGreater: Boolean = {
     try {
       DynConstructors.builder().impl(

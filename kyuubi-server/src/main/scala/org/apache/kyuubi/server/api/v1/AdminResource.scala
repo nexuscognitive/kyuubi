@@ -398,10 +398,10 @@ private[v1] class AdminResource extends ApiRequestContext with Logging {
       return Response.ok(s"Session $sessionHandleStr closed on $kyuubiInstance.").build()
     }
 
-    val handle = SessionHandle.fromUUID(sessionHandleStr)
-    fe.be.sessionManager.getSessionOption(handle) match {
+    val sessionHandle = SessionHandle.fromUUID(sessionHandleStr)
+    fe.be.sessionManager.getSessionOption(sessionHandle) match {
       case Some(_) =>
-        fe.be.closeSession(handle)
+        fe.be.closeSession(sessionHandle)
         Response.ok(s"Session $sessionHandleStr is closed successfully.").build()
       case None =>
         throw new NotFoundException(s"Invalid session handle: $sessionHandleStr")

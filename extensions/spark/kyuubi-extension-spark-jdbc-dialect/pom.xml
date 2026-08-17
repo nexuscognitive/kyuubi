@@ -21,7 +21,7 @@
     <parent>
         <groupId>org.apache.kyuubi</groupId>
         <artifactId>kyuubi-parent</artifactId>
-        <version>1.11.0</version>
+        <version>1.12.1-SNAPSHOT</version>
         <relativePath>../../../pom.xml</relativePath>
 
     </parent>
@@ -58,8 +58,8 @@
                 <directory>${project.basedir}/src/test/resources</directory>
             </testResource>
         </testResources>
-        <outputDirectory>target/scala-${scala.binary.verison}/classes</outputDirectory>
-        <testOutputDirectory>target/scala-${scala.binary.verison}/test-classes</testOutputDirectory>
+        <outputDirectory>target/scala-${scala.binary.version}/classes</outputDirectory>
+        <testOutputDirectory>target/scala-${scala.binary.version}/test-classes</testOutputDirectory>
     </build>
 
 </project>

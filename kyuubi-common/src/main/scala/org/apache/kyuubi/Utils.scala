@@ -36,7 +36,7 @@ import org.apache.hadoop.util.ShutdownHookManager
 
 import org.apache.kyuubi.config.KyuubiConf
 import org.apache.kyuubi.config.internal.Tests.IS_TESTING
-import org.apache.kyuubi.util.TempFileCleanupUtils
+import org.apache.kyuubi.util.{JavaUtils, TempFileCleanupUtils}
 import org.apache.kyuubi.util.command.CommandLineUtils._
 
 object Utils extends Logging {
@@ -63,7 +63,7 @@ object Utils extends Logging {
 
   def getPropertiesFile(fileName: String, env: Map[String, String] = sys.env): Option[File] = {
     env.get(KYUUBI_CONF_DIR)
-      .orElse(env.get(KYUUBI_HOME).map(_ + File.separator + "conf"))
+      .orElse(env.get(KYUUBI_HOME_ENV_VAR_NAME).map(_ + File.separator + "conf"))
       .map(d => new File(d + File.separator + fileName))
       .filter(_.exists())
       .orElse {
@@ -132,6 +132,24 @@ object Utils extends Logging {
     }
   }
 
+  def substituteKyuubiEnvVars(original: String, env: Map[String, String] = sys.env): String = {
+    lazy val KYUUBI_HOME = env.getOrElse(
+      KYUUBI_HOME_ENV_VAR_NAME,
+      JavaUtils.getCodeSourceLocation(this.getClass).split("kyuubi-common").head)
+    lazy val KYUUBI_WORK_DIR_ROOT = env.getOrElse(
+      "KYUUBI_WORK_DIR_ROOT",
+      Paths.get(KYUUBI_HOME, "work").toAbsolutePath.toString)
+    // save cost of evaluating replacement when pattern not found
+    def substitute(input: String, pattern: String, replacement: => String): String = {
+      if (input.contains(pattern)) input.replace(pattern, replacement) else input
+    }
+    var substituted = original
+    substituted = substitute(original, "<KYUUBI_HOME>", KYUUBI_HOME) // deprecated since 1.12.0
+    substituted = substitute(substituted, "{{KYUUBI_HOME}}", KYUUBI_HOME)
+    substituted = substitute(substituted, "{{KYUUBI_WORK_DIR_ROOT}}", KYUUBI_WORK_DIR_ROOT)
+    substituted
+  }
+
   /**
    * Delete a directory recursively.
    */
@@ -198,12 +216,16 @@ object Utils extends Logging {
       if (source == null) {
         throw new IOException("the source inputstream is null")
       }
-      if (!dir.toFile.exists()) {
-        dir.toFile.mkdirs()
-      }
       // Preserve original filename - collision avoidance is handled by batch-specific directory
       val filePath = Paths.get(dir.toString, fileName)
       try {
+        if (!filePath.normalize().startsWith(dir.normalize())) {
+          throw new IOException(
+            s"Resolved path $filePath is outside the target directory $dir")
+        }
+        if (!dir.toFile.exists()) {
+          dir.toFile.mkdirs()
+        }
         Files.copy(source, filePath, StandardCopyOption.REPLACE_EXISTING)
       } finally {
         source.close()
@@ -297,17 +319,10 @@ object Utils extends Logging {
   def redactCommandLineArgs(conf: KyuubiConf, commands: Iterable[String]): Iterable[String] = {
     conf.get(SERVER_SECRET_REDACTION_PATTERN) match {
       case Some(redactionPattern) =>
-        var nextKV = false
         commands.map {
-          case PATTERN_FOR_KEY_VALUE_ARG(key, value) if nextKV =>
+          case PATTERN_FOR_KEY_VALUE_ARG(key, value) =>
             val (_, newValue) = redact(redactionPattern, Seq((key, value))).head
-            nextKV = false
             genKeyValuePair(key, newValue)
-
-          case cmd if cmd == CONF =>
-            nextKV = true
-            cmd
-
           case cmd =>
             cmd
         }
