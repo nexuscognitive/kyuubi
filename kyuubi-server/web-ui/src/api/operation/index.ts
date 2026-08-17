@@ -20,7 +20,8 @@ import request from '@/utils/request'
 export function getAllOperations() {
   return request({
     url: 'api/v1/admin/operations',
-    method: 'get'
+    method: 'get',
+    params: { clusterWide: true }
   })
 }
 
@@ -34,5 +35,14 @@ export function actionOnOperation(
     url: `api/v1/operations/${operationId}`,
     method: 'put',
     data
+  })
+}
+
+// Admin close of an operation, routed to the owning instance (cancels a RUNNING query).
+export function deleteOperation(operationId: string, kyuubiInstance?: string) {
+  return request({
+    url: `api/v1/admin/operations/${operationId}`,
+    method: 'delete',
+    params: kyuubiInstance ? { kyuubiInstance } : {}
   })
 }

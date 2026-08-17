@@ -86,8 +86,13 @@ case class KRangerPolicyResource(
 }
 
 object KRangerPolicyResource {
+  def catalogRes(values: String*): (String, RangerPolicyResource) =
+    "catalog" -> KRangerPolicyResource(values.toList)
+
+  // Catalog-mode resource: the (multi-level) namespace is modeled as `schema`.
+  // Kept named `databaseRes` so the policy definitions read naturally.
   def databaseRes(values: String*): (String, RangerPolicyResource) =
-    "database" -> KRangerPolicyResource(values.toList)
+    "schema" -> KRangerPolicyResource(values.toList)
 
   def tableRes(values: String*): (String, RangerPolicyResource) =
     "table" -> KRangerPolicyResource(values.toList)

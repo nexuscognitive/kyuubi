@@ -17,6 +17,7 @@
 
 package org.apache.kyuubi.plugin.spark.authz.serde
 
+import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable}
@@ -44,6 +45,16 @@ class StringURIExtractor extends URIExtractor {
     v1 match {
       case uriPath: String => Seq(Uri(uriPath))
       case Some(uriPath: String) => Seq(Uri(uriPath))
+      case _ => Nil
+    }
+  }
+}
+
+class PathURIExtractor extends URIExtractor {
+  override def apply(spark: SparkSession, v1: AnyRef): Seq[Uri] = {
+    v1 match {
+      case path: Path => Seq(Uri(path.toString))
+      case Some(path: Path) => Seq(Uri(path.toString))
       case _ => Nil
     }
   }

@@ -24,7 +24,7 @@ import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
 import com.google.common.cache.{Cache, CacheBuilder, RemovalNotification}
-import io.fabric8.kubernetes.api.model.{ContainerState, Pod, Service}
+import io.fabric8.kubernetes.api.model.{ContainerState, Event, Pod, Service}
 import io.fabric8.kubernetes.client.KubernetesClient
 import io.fabric8.kubernetes.client.informers.{ResourceEventHandler, SharedIndexInformer}
 
@@ -341,6 +341,139 @@ class KubernetesApplicationOperation extends ApplicationOperation with Logging {
     }
   }
 
+  /**
+   * Fetch the tail of the Spark driver pod's log for a batch, located by the kyuubi unique tag.
+   * Read directly from the driver pod via the Kubernetes API, so any Kyuubi instance can serve it
+   * regardless of which one owns the batch session. Only available while the driver pod exists.
+   */
+  private[kyuubi] def getDriverLogByTag(tag: String, size: Int): Seq[String] = {
+    val maxLines = if (size <= 0) 1000 else size
+    val result = kubernetesClients.values().asScala.iterator.flatMap { client =>
+      try {
+        client.pods()
+          .withLabel(LABEL_KYUUBI_UNIQUE_KEY, tag)
+          .withLabel(SPARK_ROLE_LABEL, SPARK_ROLE_DRIVER)
+          .list().getItems.asScala.headOption.map { pod =>
+          val ns = pod.getMetadata.getNamespace
+          val name = pod.getMetadata.getName
+          val log = client.pods().inNamespace(ns).withName(name)
+            .tailingLines(maxLines).getLog()
+          if (log == null || log.isEmpty) {
+            Seq(s"Driver pod $name has not produced any logs yet.")
+          } else {
+            log.split("\n").toSeq
+          }
+        }
+      } catch {
+        case NonFatal(e) =>
+          warn(s"Failed to fetch driver log for ${toLabel(tag)}: ${e.getMessage}")
+          None
+      }
+    }
+    if (result.hasNext) {
+      result.next()
+    } else {
+      Seq(s"Driver pod for ${toLabel(tag)} was not found " +
+        "(it may not be scheduled yet, or has already been cleaned up).")
+    }
+  }
+
+  /**
+   * Fetch recent Kubernetes events for the Spark driver pod of a batch, located by the kyuubi
+   * unique tag. Like the driver log, this reads directly from the Kubernetes API, so any Kyuubi
+   * instance can serve it regardless of which one owns the batch session. Only available while the
+   * driver pod exists.
+   */
+  private[kyuubi] def getDriverPodEventsByTag(tag: String, size: Int): Seq[String] = {
+    val maxLines = if (size <= 0) 500 else size
+    val result = kubernetesClients.values().asScala.iterator.flatMap { client =>
+      try {
+        client.pods()
+          .withLabel(LABEL_KYUUBI_UNIQUE_KEY, tag)
+          .withLabel(SPARK_ROLE_LABEL, SPARK_ROLE_DRIVER)
+          .list().getItems.asScala.headOption.map { pod =>
+          val name = pod.getMetadata.getName
+          val ns = pod.getMetadata.getNamespace
+          val uid = pod.getMetadata.getUid
+          val events = client.v1().events().inNamespace(ns)
+            .withField("involvedObject.uid", uid)
+            .list().getItems.asScala.toSeq
+          if (events.isEmpty) {
+            Seq(s"No events found for driver pod $name.")
+          } else {
+            events.sortBy(driverPodEventTimestamp).takeRight(maxLines).map(formatDriverPodEvent)
+          }
+        }
+      } catch {
+        case NonFatal(e) =>
+          warn(s"Failed to fetch driver pod events for ${toLabel(tag)}: ${e.getMessage}")
+          None
+      }
+    }
+    if (result.hasNext) {
+      result.next()
+    } else {
+      Seq(s"Driver pod for ${toLabel(tag)} was not found " +
+        "(it may not be scheduled yet, or has already been cleaned up).")
+    }
+  }
+
+  // Best available timestamp for ordering an event: lastTimestamp, then firstTimestamp, then the
+  // newer eventTime (MicroTime). Kubernetes emits RFC3339 UTC strings, which sort chronologically.
+  private def driverPodEventTimestamp(event: Event): String = {
+    Option(event.getLastTimestamp)
+      .orElse(Option(event.getFirstTimestamp))
+      .orElse(Option(event.getEventTime).map(_.getTime))
+      .getOrElse("")
+  }
+
+  // e.g. "[2026-07-23T18:20:01Z] Warning  FailedScheduling (x3): 0/5 nodes are available: ..."
+  private def formatDriverPodEvent(event: Event): String = {
+    val ts = driverPodEventTimestamp(event)
+    val level = Option(event.getType).getOrElse("Normal")
+    val reason = Option(event.getReason).getOrElse("")
+    val count = Option(event.getCount).map(_.intValue).filter(_ > 1).map(c => s" (x$c)").getOrElse("")
+    val message = Option(event.getMessage).getOrElse("").trim
+    s"[$ts] $level  $reason$count: $message"
+  }
+
+  /**
+   * Current state of every Spark driver pod, keyed by its kyuubi unique tag (== batch id). One
+   * bulk list call per Kubernetes client, so it can enrich a whole batch listing cheaply. Best
+   * effort: returns what it can and never throws.
+   */
+  private[kyuubi] def getDriverPodStates(): Map[String, String] = {
+    kubernetesClients.values().asScala.flatMap { client =>
+      try {
+        client.pods()
+          .withLabel(SPARK_ROLE_LABEL, SPARK_ROLE_DRIVER)
+          .list().getItems.asScala.flatMap { pod =>
+          Option(pod.getMetadata.getLabels.get(LABEL_KYUUBI_UNIQUE_KEY))
+            .map(tag => tag -> driverPodState(pod))
+        }
+      } catch {
+        case NonFatal(e) =>
+          warn(s"Failed to list driver pod states: ${e.getMessage}")
+          Nil
+      }
+    }.toMap
+  }
+
+  // Pod phase (Pending/Running/Succeeded/Failed/Unknown), enriched with the container's
+  // waiting/terminated reason when present, e.g. "Pending (ContainerCreating)", "Failed (Error)".
+  private def driverPodState(pod: Pod): String = {
+    val status = Option(pod.getStatus)
+    val phase = status.map(_.getPhase).filter(_ != null).getOrElse("Unknown")
+    val reason = status
+      .flatMap(s => Option(s.getContainerStatuses).flatMap(_.asScala.headOption))
+      .flatMap { cs =>
+        Option(cs.getState.getWaiting).map(_.getReason)
+          .orElse(Option(cs.getState.getTerminated).map(_.getReason))
+      }
+      .filter(r => r != null && r.nonEmpty && r != phase)
+    reason.map(r => s"$phase ($r)").getOrElse(phase)
+  }
+
   override def supportPersistedAppState: Boolean = true
 
   override def stop(): Unit = {
@@ -599,6 +732,8 @@ object KubernetesApplicationOperation extends Logging {
   val LABEL_KYUUBI_UNIQUE_KEY = "kyuubi-unique-tag"
   private val SPARK_APP_ID_LABEL = "spark-app-selector"
   private val SPARK_APP_NAME_LABEL = "spark-app-name"
+  private val SPARK_ROLE_LABEL = "spark-role"
+  private val SPARK_ROLE_DRIVER = "driver"
   val KUBERNETES_SERVICE_HOST = "KUBERNETES_SERVICE_HOST"
   val KUBERNETES_SERVICE_PORT = "KUBERNETES_SERVICE_PORT"
   val SPARK_UI_PORT_NAME = "spark-ui"

@@ -21,7 +21,7 @@
     <parent>
         <groupId>org.apache.kyuubi</groupId>
         <artifactId>kyuubi-parent</artifactId>
-        <version>1.11.0-SNAPSHOT</version>
+        <version>1.11.0</version>
     </parent>
 
     <artifactId>kyuubi-server_${scala.binary.version}</artifactId>
@@ -475,4 +475,25 @@
         <outputDirectory>target/scala-${scala.binary.version}/classes</outputDirectory>
         <testOutputDirectory>target/scala-${scala.binary.version}/test-classes</testOutputDirectory>
     </build>
+
+    <profiles>
+        <!-- When -Pweb-ui is active, the frontend-maven-plugin builds web-ui/dist;
+             bundle that output onto the classpath under dist/ so the REST frontend
+             (KyuubiRestFrontendService -> createStaticHandler("dist", "/ui")) serves it.
+             web-ui/dist is already covered by .rat-excludes, so RAT stays green. -->
+        <profile>
+            <id>web-ui</id>
+            <build>
+                <resources>
+                    <resource>
+                        <directory>${project.basedir}/src/main/resources</directory>
+                    </resource>
+                    <resource>
+                        <targetPath>dist</targetPath>
+                        <directory>${project.basedir}/web-ui/dist</directory>
+                    </resource>
+                </resources>
+            </build>
+        </profile>
+    </profiles>
 </project>

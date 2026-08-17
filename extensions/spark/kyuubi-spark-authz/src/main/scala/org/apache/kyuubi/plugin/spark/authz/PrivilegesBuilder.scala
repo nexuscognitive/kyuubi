@@ -84,13 +84,32 @@ object PrivilegesBuilder {
       case p if p.getTagValue(KYUUBI_AUTHZ_TAG).nonEmpty =>
 
       case scan if isKnownScan(scan) && scan.resolved =>
-        val tables = getScanSpec(scan).tables(scan, spark)
+        val spec = getScanSpec(scan)
+        // A known scan IS a privilege-bearing table access. If we recognize it
+        // but cannot extract its identity, fail closed (deny) rather than skip
+        // the check. A descriptor that legitimately finds no table returns None
+        // (no exception) and simply falls through to the uri check below.
+        val tables =
+          try {
+            spec.tablesStrict(scan, spark)
+          } catch {
+            case e: Exception if authzExtractionFailClosed(spark) =>
+              throw new AccessControlException(
+                s"Denying access (fail-closed): could not resolve the table for " +
+                  s"authorization from scan [${scan.nodeName}]: ${e.getMessage}")
+            case e: Exception =>
+              LOG.warn(
+                s"Failed to extract table from scan [${scan.nodeName}], " +
+                  "skipping its privilege check",
+                e)
+              Nil
+          }
         // If the the scan is table-based, we check privileges on the table we found
         // otherwise, we check privileges on the uri we found
         if (tables.nonEmpty) {
           tables.foreach(mergeProjection(_, scan))
         } else {
-          getScanSpec(scan).uris(scan).foreach(privilegeObjects += PrivilegeObject(_))
+          spec.uris(scan).foreach(privilegeObjects += PrivilegeObject(_))
         }
 
       case u if u.nodeName == "UnresolvedRelation" =>
@@ -144,29 +163,35 @@ object PrivilegesBuilder {
       outputObjs: ArrayBuffer[PrivilegeObject],
       spark: SparkSession): OperationType = {
 
-    def getTablePriv(tableDesc: TableDesc): Seq[PrivilegeObject] = {
+    // Returns whether the descriptor RESOLVED a table (even if the resulting
+    // object is then skipped), plus the privilege objects. A table command
+    // often carries several descriptors as alternatives for different plan
+    // shapes/Spark versions - the non-matching ones throw and are swallowed
+    // here; the command-level check below fails closed only when NONE resolve.
+    def getTablePriv(tableDesc: TableDesc): (Boolean, Seq[PrivilegeObject]) = {
       try {
-        val maybeTable = tableDesc.extract(plan, spark)
-        maybeTable match {
+        tableDesc.extract(plan, spark) match {
           case Some(table) =>
-            val newTable = if (tableDesc.setCurrentDatabaseIfMissing) {
-              setCurrentDBIfNecessary(table, spark)
-            } else {
-              table
-            }
-            if (tableDesc.tableTypeDesc.exists(_.skip(plan))) {
-              Nil
-            } else {
-              val actionType = tableDesc.actionTypeDesc.map(_.extract(plan)).getOrElse(OTHER)
-              val columnNames = tableDesc.columnDesc.map(_.extract(plan)).getOrElse(Nil)
-              Seq(PrivilegeObject(newTable, columnNames, actionType))
-            }
-          case None => Nil
+            val objs =
+              if (tableDesc.tableTypeDesc.exists(_.skip(plan))) {
+                Nil
+              } else {
+                val newTable = if (tableDesc.setCurrentDatabaseIfMissing) {
+                  setCurrentDBIfNecessary(table, spark)
+                } else {
+                  table
+                }
+                val actionType = tableDesc.actionTypeDesc.map(_.extract(plan)).getOrElse(OTHER)
+                val columnNames = tableDesc.columnDesc.map(_.extract(plan)).getOrElse(Nil)
+                Seq(PrivilegeObject(newTable, columnNames, actionType))
+              }
+            (true, objs)
+          case None => (false, Nil)
         }
       } catch {
         case e: Exception =>
           LOG.debug(tableDesc.error(plan, e))
-          Nil
+          (false, Nil)
       }
     }
 
@@ -203,12 +228,25 @@ object PrivilegesBuilder {
 
       case classname if TABLE_COMMAND_SPECS.contains(classname) =>
         val spec = TABLE_COMMAND_SPECS(classname)
+        var tableResolved = false
         spec.tableDescs.foreach { td =>
+          val (resolved, objs) = getTablePriv(td)
+          tableResolved ||= resolved
           if (td.isInput) {
-            inputObjs ++= getTablePriv(td)
+            inputObjs ++= objs
           } else {
-            outputObjs ++= getTablePriv(td)
+            outputObjs ++= objs
           }
+        }
+        // Fail closed: the command is a recognized table access whose only
+        // source of privileges is its table descriptors, yet none of them could
+        // resolve a table. Skip the check for commands that also carry uri/query
+        // descriptors (those provide privileges through other means).
+        if (authzExtractionFailClosed(spark) && spec.tableDescs.nonEmpty && !tableResolved &&
+          spec.uriDescs.isEmpty && spec.queryDescs.isEmpty) {
+          throw new AccessControlException(
+            s"Denying access (fail-closed): could not resolve any table for " +
+              s"authorization from command [${plan.nodeName}]")
         }
         spec.uriDescs.foreach { ud =>
           try {

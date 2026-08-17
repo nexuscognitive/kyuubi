@@ -120,6 +120,10 @@ class PolicyJsonFileGenerator extends AnyFunSuite {
       policyMaskShowFirst4ForValue3,
       policyMaskDateShowYearForValue4,
       policyMaskShowFirst4ForValue5)
+      // catalog mode: every schema/table/udf-scoped policy is rooted at the
+      // `iceberg` catalog (test catalogs are all mapped to it). url-only
+      // policies have no catalog resource.
+      .map(withIcebergCatalog)
       // fill the id and guid with auto-increased index
       .zipWithIndex
       .map {
@@ -128,6 +132,19 @@ class PolicyJsonFileGenerator extends AnyFunSuite {
           p.setGuid(UUID.nameUUIDFromBytes(index.toString.getBytes()).toString)
           p
       }
+  }
+
+  private val icebergCatalog = "iceberg"
+
+  private def withIcebergCatalog(p: RangerPolicy): RangerPolicy = {
+    val resources = p.getResources
+    if (resources.containsKey("schema") || resources.containsKey("table") ||
+      resources.containsKey("udf")) {
+      val catalog = new org.apache.ranger.plugin.model.RangerPolicy.RangerPolicyResource()
+      catalog.setValues(java.util.Collections.singletonList(icebergCatalog))
+      resources.put("catalog", catalog)
+    }
+    p
   }
 
   // resources

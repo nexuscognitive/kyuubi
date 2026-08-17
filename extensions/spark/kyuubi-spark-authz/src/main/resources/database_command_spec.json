@@ -3,7 +3,11 @@
   "databaseDescs" : [ {
     "fieldName" : "child",
     "fieldExtractor" : "ResolvedNamespaceDatabaseExtractor",
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "child",
+      "fieldExtractor" : "ResolvedNamespaceCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "comment" : ""
   } ],
@@ -14,7 +18,11 @@
   "databaseDescs" : [ {
     "fieldName" : "name",
     "fieldExtractor" : "ResolvedDBObjectNameDatabaseExtractor",
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "name",
+      "fieldExtractor" : "ResolvedDbObjectNameCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "comment" : ""
   }, {
@@ -30,7 +38,11 @@
   }, {
     "fieldName" : "name",
     "fieldExtractor" : "ResolvedNamespaceDatabaseExtractor",
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "name",
+      "fieldExtractor" : "ResolvedNamespaceCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "comment" : ""
   } ],
@@ -46,7 +58,11 @@
   "databaseDescs" : [ {
     "fieldName" : "namespace",
     "fieldExtractor" : "ResolvedNamespaceDatabaseExtractor",
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "namespace",
+      "fieldExtractor" : "ResolvedNamespaceCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : true,
     "comment" : ""
   } ],
@@ -57,7 +73,11 @@
   "databaseDescs" : [ {
     "fieldName" : "namespace",
     "fieldExtractor" : "ResolvedNamespaceDatabaseExtractor",
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "namespace",
+      "fieldExtractor" : "ResolvedNamespaceCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "comment" : ""
   } ],
@@ -68,13 +88,21 @@
   "databaseDescs" : [ {
     "fieldName" : "child",
     "fieldExtractor" : "ResolvedNamespaceDatabaseExtractor",
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "child",
+      "fieldExtractor" : "ResolvedNamespaceCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : true,
     "comment" : ""
   }, {
     "fieldName" : "child",
     "fieldExtractor" : "ResolvedDBObjectNameDatabaseExtractor",
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "child",
+      "fieldExtractor" : "ResolvedDbObjectNameCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : true,
     "comment" : ""
   }, {
@@ -95,7 +123,11 @@
   "databaseDescs" : [ {
     "fieldName" : "namespace",
     "fieldExtractor" : "ResolvedNamespaceDatabaseExtractor",
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "namespace",
+      "fieldExtractor" : "ResolvedNamespaceCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "comment" : ""
   } ],
@@ -111,7 +143,11 @@
   "databaseDescs" : [ {
     "fieldName" : "namespace",
     "fieldExtractor" : "ResolvedNamespaceDatabaseExtractor",
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "namespace",
+      "fieldExtractor" : "ResolvedNamespaceCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "comment" : ""
   } ],

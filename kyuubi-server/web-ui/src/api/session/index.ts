@@ -20,14 +20,16 @@ import request from '@/utils/request'
 export function getAllSessions() {
   return request({
     url: 'api/v1/admin/sessions',
-    method: 'get'
+    method: 'get',
+    params: { clusterWide: true }
   })
 }
 
-export function deleteSession(sessionId: string) {
+export function deleteSession(sessionId: string, kyuubiInstance?: string) {
   return request({
     url: `api/v1/admin/sessions/${sessionId}`,
-    method: 'delete'
+    method: 'delete',
+    params: kyuubiInstance ? { kyuubiInstance } : {}
   })
 }
 
@@ -42,5 +44,23 @@ export function getAllTypeOperation(sessionId: string) {
   return request({
     url: `api/v1/sessions/${sessionId}/operations`,
     method: 'get'
+  })
+}
+
+// Tail of the Spark driver pod log for a batch (batchId == the batch session identifier).
+export function getBatchDriverLog(batchId: string, size = 500) {
+  return request({
+    url: `api/v1/batches/${batchId}/driverLog`,
+    method: 'get',
+    params: { size }
+  })
+}
+
+// Recent Kubernetes events for the Spark driver pod of a batch (batchId == the batch session id).
+export function getBatchDriverPodEvents(batchId: string, size = 500) {
+  return request({
+    url: `api/v1/batches/${batchId}/driverPodEvents`,
+    method: 'get',
+    params: { size }
   })
 }

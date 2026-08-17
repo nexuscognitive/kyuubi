@@ -25,6 +25,7 @@ import java.util.stream.Collectors
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ListBuffer
+import scala.util.Try
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
@@ -86,6 +87,41 @@ class JDBCMetadataStore(conf: KyuubiConf) extends MetadataStore with Logging {
 
   if (conf.get(METADATA_STORE_JDBC_DATABASE_SCHEMA_INIT)) {
     initSchema()
+    migrateSchema()
+  }
+
+  /**
+   * Apply additive, idempotent schema migrations for databases created by an older Kyuubi. Unlike
+   * [[initSchema]] (which only does CREATE TABLE IF NOT EXISTS and so never alters an existing
+   * table), this brings an existing `metadata` table up to date -- e.g. adding the optimistic-lock
+   * `version` column -- with no operator action. Each step is a no-op when already applied, so it
+   * is safe to run on every startup and on fresh installs.
+   */
+  private def migrateSchema(): Unit = {
+    ensureColumn(METADATA_TABLE, "version", "int NOT NULL DEFAULT 0")
+  }
+
+  /** Add `column` to `table` if the table exists and the column does not. Idempotent; never fatal. */
+  private def ensureColumn(table: String, column: String, columnDef: String): Unit = {
+    JdbcUtils.withConnection { connection =>
+      Utils.tryLogNonFatalError {
+        if (tableExists(connection, table) && !columnExists(connection, table, column)) {
+          val ddl = s"ALTER TABLE $table ADD COLUMN $column $columnDef"
+          execute(connection, ddl)
+          info(s"Applied schema migration: $ddl")
+        }
+      }
+    }
+  }
+
+  private def tableExists(connection: Connection, table: String): Boolean = {
+    val rs = connection.getMetaData.getTables(null, null, table, Array("TABLE"))
+    try rs.next() finally rs.close()
+  }
+
+  private def columnExists(connection: Connection, table: String, column: String): Boolean = {
+    val rs = connection.getMetaData.getColumns(null, null, table, column)
+    try rs.next() finally rs.close()
   }
 
   private def initSchema(): Unit = {
@@ -216,7 +252,7 @@ class JDBCMetadataStore(conf: KyuubiConf) extends MetadataStore with Logging {
     }.headOption.filter { preSelectedBatchId =>
       JdbcUtils.executeUpdate(
         s"""UPDATE $METADATA_TABLE
-           |SET kyuubi_instance=?, state=?
+           |SET kyuubi_instance=?, state=?, version=version+1
            |WHERE identifier=? AND state=?
            |""".stripMargin) { stmt =>
         stmt.setString(1, kyuubiInstance)
@@ -233,10 +269,26 @@ class JDBCMetadataStore(conf: KyuubiConf) extends MetadataStore with Logging {
       identifier: String,
       fromState: String,
       targetState: String): Boolean = {
-    val query = s"UPDATE $METADATA_TABLE SET state = ? WHERE identifier = ? AND state = ?"
+    val query =
+      s"UPDATE $METADATA_TABLE SET state = ?, version = version + 1" +
+        s" WHERE identifier = ? AND state = ?"
     JdbcUtils.withConnection { connection =>
       withUpdateCount(connection, query, fromState, identifier, targetState) { updateCount =>
         updateCount == 1
+      }
+    }
+  }
+
+  override def transferMetadataOwnership(
+      identifier: String,
+      fromKyuubiInstance: String,
+      toKyuubiInstance: String): Boolean = {
+    val query =
+      s"UPDATE $METADATA_TABLE SET kyuubi_instance = ?, version = version + 1" +
+        s" WHERE identifier = ? AND kyuubi_instance = ?"
+    JdbcUtils.withConnection { connection =>
+      withUpdateCount(connection, query, toKyuubiInstance, identifier, fromKyuubiInstance) {
+        updateCount => updateCount == 1
       }
     }
   }
@@ -331,75 +383,131 @@ class JDBCMetadataStore(conf: KyuubiConf) extends MetadataStore with Logging {
   }
 
   override def updateMetadata(metadata: Metadata): Unit = {
-    val queryBuilder = new StringBuilder
-    val params = ListBuffer[Any]()
-
-    queryBuilder.append(s"UPDATE $METADATA_TABLE")
     val setClauses = ListBuffer[String]()
+    val setParams = ListBuffer[Any]()
     Option(metadata.kyuubiInstance).foreach { _ =>
       setClauses += "kyuubi_instance = ?"
-      params += metadata.kyuubiInstance
+      setParams += metadata.kyuubiInstance
     }
     Option(metadata.state).foreach { _ =>
       setClauses += "state = ?"
-      params += metadata.state
+      setParams += metadata.state
     }
     Option(metadata.requestConf).filter(_.nonEmpty).foreach { _ =>
       setClauses += "request_conf =?"
-      params += valueAsString(metadata.requestConf)
+      setParams += valueAsString(metadata.requestConf)
     }
     metadata.clusterManager.foreach { cm =>
       setClauses += "cluster_manager = ?"
-      params += cm
+      setParams += cm
     }
     if (metadata.endTime > 0) {
       setClauses += "end_time = ?"
-      params += metadata.endTime
+      setParams += metadata.endTime
     }
     if (metadata.engineOpenTime > 0) {
       setClauses += "engine_open_time = ?"
-      params += metadata.engineOpenTime
+      setParams += metadata.engineOpenTime
     }
     Option(metadata.engineId).foreach { _ =>
       setClauses += "engine_id = ?"
-      params += metadata.engineId
+      setParams += metadata.engineId
     }
     Option(metadata.engineName).foreach { _ =>
       setClauses += "engine_name = ?"
-      params += metadata.engineName
+      setParams += metadata.engineName
     }
     Option(metadata.engineUrl).foreach { _ =>
       setClauses += "engine_url = ?"
-      params += metadata.engineUrl
+      setParams += metadata.engineUrl
     }
     Option(metadata.engineState).foreach { _ =>
       setClauses += "engine_state = ?"
-      params += metadata.engineState
+      setParams += metadata.engineState
     }
     metadata.engineError.foreach { error =>
       setClauses += "engine_error = ?"
-      params += error
+      setParams += error
     }
     if (metadata.peerInstanceClosed) {
       setClauses += "peer_instance_closed = ?"
-      params += metadata.peerInstanceClosed
+      setParams += metadata.peerInstanceClosed
     }
-    if (setClauses.nonEmpty) {
-      queryBuilder.append(setClauses.mkString(" SET ", ", ", ""))
-    }
-    queryBuilder.append(" WHERE identifier = ?")
-    params += metadata.identifier
 
-    val query = queryBuilder.toString()
-    JdbcUtils.withConnection { connection =>
-      withUpdateCount(connection, query, params.toSeq: _*) { updateCount =>
-        if (updateCount == 0) {
+    // Nothing concrete to change; don't churn the version for a no-op update.
+    if (setClauses.isEmpty) return
+
+    // Apply as an optimistic compare-and-set: read the current (state, version), reject a
+    // regressive state change, then UPDATE ... version = version + 1 WHERE version = <observed>.
+    // This makes concurrent multi-instance writes safe without row locks (HMS-style intent):
+    //   - a version race (another writer won) => re-read and retry;
+    //   - a stale/regressive update (late async-retry replay, or a post-takeover zombie write from
+    //     a former owner) => dropped, so a batch never moves backward or resurrects a terminal
+    //     state.
+    val query =
+      s"UPDATE $METADATA_TABLE SET ${setClauses.mkString(", ")}, version = version + 1" +
+        s" WHERE identifier = ? AND version = ?"
+    val maxAttempts = 5
+    var attempt = 0
+    var applied = false
+    while (!applied) {
+      attempt += 1
+      getStateAndVersion(metadata.identifier) match {
+        case None =>
+          // Row not found. It may not have been inserted yet (the insert is async-retrying), so
+          // throw to preserve the existing contract: the caller re-queues and retries until the
+          // insert lands. (Matches the old updateCount == 0 behavior.)
           throw new KyuubiException(
-            s"Error updating metadata for ${metadata.identifier} by SQL: $query, " +
-              s"with params: ${params.mkString(", ")}")
-        }
+            s"No metadata found for ${metadata.identifier} to update (not yet inserted or already" +
+              s" cleaned up).")
+        case Some((currentState, _)) if isRegressiveStateChange(currentState, metadata.state) =>
+          debug(s"Skip regressive metadata update for ${metadata.identifier}:" +
+            s" $currentState -> ${metadata.state}")
+          applied = true
+        case Some((_, currentVersion)) =>
+          val params = setParams.toSeq ++ Seq(metadata.identifier, currentVersion)
+          val updated = JdbcUtils.withConnection { connection =>
+            withUpdateCount(connection, query, params: _*) { updateCount => updateCount }
+          }
+          if (updated == 1) {
+            applied = true
+          } else if (attempt >= maxAttempts) {
+            throw new KyuubiException(
+              s"Failed to update metadata for ${metadata.identifier} after $maxAttempts attempts" +
+                s" due to concurrent modification (version conflict). SQL: $query")
+          }
+          // else: another writer bumped the version between our read and write; re-read and retry.
       }
     }
+  }
+
+  /** Current (state, version) of a metadata row, or None if it no longer exists. */
+  private def getStateAndVersion(identifier: String): Option[(String, Long)] = {
+    val query = s"SELECT state, version FROM $METADATA_TABLE WHERE identifier = ?"
+    JdbcUtils.withConnection { connection =>
+      withResultSet(connection, query, identifier) { rs =>
+        if (rs.next()) Some((rs.getString(1), rs.getLong(2))) else None
+      }
+    }
+  }
+
+  /**
+   * Whether changing `currentState` to `newState` would move a batch backward or overwrite a
+   * terminal state. Non-state updates (newState null or unchanged) are never regressive. Terminal
+   * states are frozen (only the bookkeeping transition to CLOSED is allowed); among active states
+   * only forward transitions are allowed. Unparseable states are not blocked.
+   */
+  private def isRegressiveStateChange(currentState: String, newState: String): Boolean = {
+    if (newState == null || newState == currentState) return false
+    Try {
+      val current = OperationState.withName(currentState)
+      val next = OperationState.withName(newState)
+      if (OperationState.isTerminal(current)) {
+        next != OperationState.CLOSED
+      } else {
+        next.id < current.id
+      }
+    }.getOrElse(false)
   }
 
   override def cleanupMetadataByIdentifier(identifier: String): Unit = {

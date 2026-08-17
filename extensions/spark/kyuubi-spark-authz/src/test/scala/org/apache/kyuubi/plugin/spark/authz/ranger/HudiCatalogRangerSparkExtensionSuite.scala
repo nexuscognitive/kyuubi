@@ -83,32 +83,32 @@ class HudiCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
       // AlterHoodieTableAddColumnsCommand
       interceptEndsWith[AccessControlException](
         doAs(someone, sql(s"ALTER TABLE $namespace1.$table1 ADD COLUMNS(age int)")))(
-        s"does not have [alter] privilege on [$namespace1/$table1/age]")
+        s"does not have [alter] privilege on [iceberg/$namespace1/$table1/age]")
 
       // AlterHoodieTableChangeColumnCommand
       interceptEndsWith[AccessControlException](
         doAs(someone, sql(s"ALTER TABLE $namespace1.$table1 CHANGE COLUMN id id bigint")))(
         s"does not have [alter] privilege" +
-          s" on [$namespace1/$table1/id]")
+          s" on [iceberg/$namespace1/$table1/id]")
 
       // AlterHoodieTableDropPartitionCommand
       interceptEndsWith[AccessControlException](
         doAs(someone, sql(s"ALTER TABLE $namespace1.$table1 DROP PARTITION (city='test')")))(
         s"does not have [alter] privilege" +
-          s" on [$namespace1/$table1/city]")
+          s" on [iceberg/$namespace1/$table1/city]")
 
       // AlterHoodieTableRenameCommand
       interceptEndsWith[AccessControlException](
         doAs(someone, sql(s"ALTER TABLE $namespace1.$table1 RENAME TO $namespace1.$table2")))(
         s"does not have [alter] privilege" +
-          s" on [$namespace1/$table1]")
+          s" on [iceberg/$namespace1/$table1]")
 
       // AlterTableCommand && Spark31AlterTableCommand
       try {
         sql("set hoodie.schema.on.read.enable=true")
         interceptEndsWith[AccessControlException](
           doAs(someone, sql(s"ALTER TABLE $namespace1.$table1 ADD COLUMNS(age int)")))(
-          s"does not have [alter] privilege on [$namespace1/$table1]")
+          s"does not have [alter] privilege on [iceberg/$namespace1/$table1]")
       } finally {
         sql("set hoodie.schema.on.read.enable=false")
       }
@@ -131,7 +131,8 @@ class HudiCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
                | 'hoodie.datasource.hive_sync.enable' = 'false'
                |)
                |PARTITIONED BY(city)
-               |""".stripMargin)))(s"does not have [create] privilege on [$namespace1/$table1]")
+               |""".stripMargin)))(
+                 s"does not have [create] privilege on [iceberg/$namespace1/$table1]")
     }
   }
 
@@ -160,7 +161,8 @@ class HudiCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
                |USING HUDI
                |AS
                |SELECT id FROM $namespace1.$table1
-               |""".stripMargin)))(s"does not have [select] privilege on [$namespace1/$table1/id]")
+               |""".stripMargin)))(
+                 s"does not have [select] privilege on [iceberg/$namespace1/$table1/id]")
     }
   }
 
@@ -195,7 +197,7 @@ class HudiCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
           someone,
           sql(
             createTableSql))
-      }(s"does not have [select] privilege on [$namespace1/$table1]")
+      }(s"does not have [select] privilege on [iceberg/$namespace1/$table1]")
       doAs(admin, sql(createTableSql))
     }
   }
@@ -220,7 +222,7 @@ class HudiCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
       val dropTableSql = s"DROP TABLE IF EXISTS $namespace1.$table1"
       interceptEndsWith[AccessControlException] {
         doAs(someone, sql(dropTableSql))
-      }(s"does not have [drop] privilege on [$namespace1/$table1]")
+      }(s"does not have [drop] privilege on [iceberg/$namespace1/$table1]")
       doAs(admin, sql(dropTableSql))
     }
   }
@@ -245,7 +247,7 @@ class HudiCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
       val repairTableSql = s"MSCK REPAIR TABLE $namespace1.$table1"
       interceptEndsWith[AccessControlException] {
         doAs(someone, sql(repairTableSql))
-      }(s"does not have [alter] privilege on [$namespace1/$table1]")
+      }(s"does not have [alter] privilege on [iceberg/$namespace1/$table1]")
       doAs(admin, sql(repairTableSql))
     }
   }
@@ -270,7 +272,7 @@ class HudiCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
       val truncateTableSql = s"TRUNCATE TABLE $namespace1.$table1"
       interceptEndsWith[AccessControlException] {
         doAs(someone, sql(truncateTableSql))
-      }(s"does not have [update] privilege on [$namespace1/$table1]")
+      }(s"does not have [update] privilege on [iceberg/$namespace1/$table1]")
       doAs(admin, sql(truncateTableSql))
     }
   }
@@ -295,13 +297,13 @@ class HudiCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
       val compactionTable = s"RUN COMPACTION ON $namespace1.$table1"
       interceptEndsWith[AccessControlException] {
         doAs(someone, sql(compactionTable))
-      }(s"does not have [create] privilege on [$namespace1/$table1]")
+      }(s"does not have [create] privilege on [iceberg/$namespace1/$table1]")
       doAs(admin, sql(compactionTable))
 
       val showCompactionTable = s"SHOW COMPACTION ON  $namespace1.$table1"
       interceptEndsWith[AccessControlException] {
         doAs(someone, sql(showCompactionTable))
-      }(s"does not have [select] privilege on [$namespace1/$table1]")
+      }(s"does not have [select] privilege on [iceberg/$namespace1/$table1]")
       doAs(admin, sql(showCompactionTable))
     }
   }
@@ -385,8 +387,9 @@ class HudiCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
         interceptEndsWith[AccessControlException] {
           doAs(someone, sql(insertIntoHoodieTableSql))
         }(s"does not have [select] privilege on " +
-          s"[$namespace1/$table2/id,$namespace1/$table2/name,hudi_ns/$table2/city], " +
-          s"[update] privilege on [$namespace1/$table1]")
+          s"[iceberg/$namespace1/$table2/id,iceberg/$namespace1/$table2/name," +
+          s"iceberg/hudi_ns/$table2/city], " +
+          s"[update] privilege on [iceberg/$namespace1/$table1]")
       }
     }
   }
@@ -415,14 +418,14 @@ class HudiCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
         val showPartitionsSql = s"SHOW PARTITIONS $namespace1.$table1"
         interceptEndsWith[AccessControlException] {
           doAs(someone, sql(showPartitionsSql))
-        }(s"does not have [select] privilege on [$namespace1/$table1]")
+        }(s"does not have [select] privilege on [iceberg/$namespace1/$table1]")
         doAs(admin, sql(showPartitionsSql))
 
         val showPartitionSpecSql =
           s"SHOW PARTITIONS $namespace1.$table1 PARTITION (city = 'hangzhou')"
         interceptEndsWith[AccessControlException] {
           doAs(someone, sql(showPartitionSpecSql))
-        }(s"does not have [select] privilege on [$namespace1/$table1/city]")
+        }(s"does not have [select] privilege on [iceberg/$namespace1/$table1/city]")
         doAs(admin, sql(showPartitionSpecSql))
       }
     }
@@ -466,13 +469,13 @@ class HudiCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
         val deleteFrom = s"DELETE FROM $namespace1.$table1 WHERE id = 10"
         interceptEndsWith[AccessControlException] {
           doAs(someone, sql(deleteFrom))
-        }(s"does not have [update] privilege on [$namespace1/$table1]")
+        }(s"does not have [update] privilege on [iceberg/$namespace1/$table1]")
         doAs(admin, sql(deleteFrom))
 
         val updateSql = s"UPDATE $namespace1.$table1 SET name = 'test' WHERE id > 10"
         interceptEndsWith[AccessControlException] {
           doAs(someone, sql(updateSql))
-        }(s"does not have [update] privilege on [$namespace1/$table1]")
+        }(s"does not have [update] privilege on [iceberg/$namespace1/$table1]")
         doAs(admin, sql(updateSql))
 
         val mergeIntoSQL =
@@ -487,8 +490,9 @@ class HudiCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
         interceptEndsWith[AccessControlException] {
           doAs(someone, sql(mergeIntoSQL))
         }(s"does not have [select] privilege on " +
-          s"[$namespace1/$table2/city,$namespace1/$table2/id,$namespace1/$table2/name], " +
-          s"[update] privilege on [$namespace1/$table1]")
+          s"[iceberg/$namespace1/$table2/city,iceberg/$namespace1/$table2/id," +
+          s"iceberg/$namespace1/$table2/name], " +
+          s"[update] privilege on [iceberg/$namespace1/$table1]")
         doAs(admin, sql(mergeIntoSQL))
       }
     }
@@ -532,14 +536,14 @@ class HudiCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
           s"CALL copy_to_table(table => '$namespace1.$table1', new_table => '$namespace1.$table2')"
         interceptEndsWith[AccessControlException] {
           doAs(someone, sql(copy_to_table))
-        }(s"does not have [select] privilege on [$namespace1/$table1], " +
-          s"[update] privilege on [$namespace1/$table2]")
+        }(s"does not have [select] privilege on [iceberg/$namespace1/$table1], " +
+          s"[update] privilege on [iceberg/$namespace1/$table2]")
         doAs(admin, sql(copy_to_table))
 
         val show_table_properties = s"CALL show_table_properties(table => '$namespace1.$table1')"
         interceptEndsWith[AccessControlException] {
           doAs(someone, sql(show_table_properties))
-        }(s"does not have [select] privilege on [$namespace1/$table1]")
+        }(s"does not have [select] privilege on [iceberg/$namespace1/$table1]")
         doAs(admin, sql(show_table_properties))
       }
     }
@@ -568,7 +572,7 @@ class HudiCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
       interceptEndsWith[AccessControlException](
         doAs(
           someone,
-          sql(createIndex)))(s"does not have [index] privilege on [$namespace1/$table1]")
+          sql(createIndex)))(s"does not have [index] privilege on [iceberg/$namespace1/$table1]")
       doAs(admin, sql(createIndex))
 
       // RefreshIndexCommand
@@ -576,7 +580,7 @@ class HudiCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
       interceptEndsWith[AccessControlException](
         doAs(
           someone,
-          sql(refreshIndex)))(s"does not have [alter] privilege on [$namespace1/$table1]")
+          sql(refreshIndex)))(s"does not have [alter] privilege on [iceberg/$namespace1/$table1]")
       doAs(admin, sql(refreshIndex))
 
       // ShowIndexesCommand
@@ -584,7 +588,7 @@ class HudiCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
       interceptEndsWith[AccessControlException](
         doAs(
           someone,
-          sql(showIndex)))(s"does not have [select] privilege on [$namespace1/$table1]")
+          sql(showIndex)))(s"does not have [select] privilege on [iceberg/$namespace1/$table1]")
       doAs(admin, sql(showIndex))
 
       // DropIndexCommand
@@ -592,7 +596,7 @@ class HudiCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
       interceptEndsWith[AccessControlException](
         doAs(
           someone,
-          sql(dropIndex)))(s"does not have [drop] privilege on [$namespace1/$table1]")
+          sql(dropIndex)))(s"does not have [drop] privilege on [iceberg/$namespace1/$table1]")
       doAs(admin, sql(dropIndex))
     }
   }
@@ -618,7 +622,7 @@ class HudiCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
       val showCommitsSql = s"CALL SHOW_COMMITS(table => '$namespace1.$table1', limit => 10)"
       interceptEndsWith[AccessControlException] {
         doAs(someone, sql(showCommitsSql))
-      }(s"does not have [select] privilege on [$namespace1/$table1]")
+      }(s"does not have [select] privilege on [iceberg/$namespace1/$table1]")
       doAs(admin, sql(showCommitsSql))
     }
   }

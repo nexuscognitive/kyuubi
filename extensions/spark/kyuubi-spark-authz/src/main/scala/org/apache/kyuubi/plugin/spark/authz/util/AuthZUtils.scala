@@ -27,6 +27,7 @@ import org.apache.commons.lang3.StringUtils
 import org.apache.hadoop.security.UserGroupInformation
 import org.apache.ranger.plugin.service.RangerBasePlugin
 import org.apache.spark.{SPARK_VERSION, SparkContext}
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, View}
 
 import org.apache.kyuubi.plugin.spark.authz.AccessControlException
@@ -111,6 +112,15 @@ private[authz] object AuthZUtils {
   def quote(parts: Seq[String]): String = {
     parts.map(quoteIfNeeded).mkString(".")
   }
+
+  // When a table/scan is recognized as a privilege-bearing object but its
+  // identity cannot be extracted (an exception is thrown during extraction),
+  // fail closed (deny) instead of silently skipping the check (fail open).
+  // Operators can set this to "false" to restore the legacy lenient behavior.
+  val EXTRACTION_FAIL_CLOSED_KEY = "spark.sql.ranger.authz.extraction.failClosed"
+
+  def authzExtractionFailClosed(spark: SparkSession): Boolean =
+    spark.conf.get(EXTRACTION_FAIL_CLOSED_KEY, "true").equalsIgnoreCase("true")
 
   private def verifyKyuubiSessionUser(spark: SparkContext, user: String): Unit = {
     def illegalAccessWithUnverifiedUser = {

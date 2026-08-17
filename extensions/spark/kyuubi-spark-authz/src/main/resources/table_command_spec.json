@@ -6,7 +6,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "child",
+      "fieldExtractor" : "ResolvedTableCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -27,7 +31,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "table",
+      "fieldExtractor" : "DataSourceV2RelationCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -43,7 +51,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "child",
+      "fieldExtractor" : "ResolvedTableCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -64,7 +76,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "catalog",
+      "fieldExtractor" : "CatalogPluginCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -90,7 +106,11 @@
       "comment" : ""
     },
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "table",
+      "fieldExtractor" : "DataSourceV2RelationCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -135,7 +155,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "child",
+      "fieldExtractor" : "ResolvedTableCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -151,7 +175,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "child",
+      "fieldExtractor" : "ResolvedIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -175,7 +203,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "child",
+      "fieldExtractor" : "ResolvedDbObjectNameCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -206,7 +238,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "name",
+      "fieldExtractor" : "ResolvedIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -230,7 +266,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "name",
+      "fieldExtractor" : "ResolvedDbObjectNameCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -295,7 +335,11 @@
       "comment" : ""
     },
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "table",
+      "fieldExtractor" : "DataSourceV2RelationCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -311,7 +355,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "relation",
+      "fieldExtractor" : "ResolvedTableCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : true,
     "setCurrentDatabaseIfMissing" : true,
     "comment" : ""
@@ -327,7 +375,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "child",
+      "fieldExtractor" : "ResolvedTableCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -348,7 +400,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "table",
+      "fieldExtractor" : "DataSourceV2RelationCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -364,7 +420,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "child",
+      "fieldExtractor" : "ResolvedIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -374,7 +434,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "child",
+      "fieldExtractor" : "ResolvedTableCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -395,7 +459,11 @@
       "comment" : ""
     },
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "targetTable",
+      "fieldExtractor" : "DataSourceV2RelationCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -420,7 +488,11 @@
       "comment" : ""
     },
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "table",
+      "fieldExtractor" : "DataSourceV2RelationCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -450,7 +522,11 @@
       "comment" : ""
     },
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "table",
+      "fieldExtractor" : "DataSourceV2RelationCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -475,7 +551,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "child",
+      "fieldExtractor" : "ResolvedTableCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : true,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -491,7 +571,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "child",
+      "fieldExtractor" : "ResolvedTableCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -512,7 +596,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "table",
+      "fieldExtractor" : "DataSourceV2RelationCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -528,7 +616,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "child",
+      "fieldExtractor" : "ResolvedTableCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -544,7 +636,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "child",
+      "fieldExtractor" : "ResolvedTableCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -560,7 +656,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "child",
+      "fieldExtractor" : "ResolvedTableCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -586,7 +686,11 @@
       "comment" : ""
     },
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "originalTable",
+      "fieldExtractor" : "DataSourceV2RelationCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -606,7 +710,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "child",
+      "fieldExtractor" : "ResolvedIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -630,7 +738,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "child",
+      "fieldExtractor" : "ResolvedDbObjectNameCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -661,7 +773,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "name",
+      "fieldExtractor" : "ResolvedIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -685,7 +801,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "name",
+      "fieldExtractor" : "ResolvedDbObjectNameCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -715,7 +835,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "table",
+      "fieldExtractor" : "ResolvedTableCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -736,7 +860,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "child",
+      "fieldExtractor" : "ResolvedTableCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : true,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -752,7 +880,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "table",
+      "fieldExtractor" : "ResolvedTableCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : true,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -768,7 +900,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "table",
+      "fieldExtractor" : "DataSourceV2RelationCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -784,7 +920,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "child",
+      "fieldExtractor" : "ResolvedTableCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -800,7 +940,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "child",
+      "fieldExtractor" : "ResolvedTableCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -821,7 +965,11 @@
       "comment" : ""
     },
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "table",
+      "fieldExtractor" : "DataSourceV2RelationCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -885,7 +1033,11 @@
     },
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "table",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -905,7 +1057,11 @@
     },
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "tableName",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -930,7 +1086,11 @@
     },
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "tableName",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -950,7 +1110,11 @@
     },
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "tableName",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -971,7 +1135,11 @@
       "skipTypes" : [ "TEMP_VIEW" ],
       "comment" : ""
     },
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "oldName",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -991,7 +1159,11 @@
     },
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "tableName",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -1011,7 +1183,11 @@
     },
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "tableName",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -1031,7 +1207,11 @@
     },
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "tableName",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -1052,7 +1232,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "tableName",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -1068,7 +1252,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "tableName",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -1089,7 +1277,11 @@
       "skipTypes" : [ "TEMP_VIEW" ],
       "comment" : ""
     },
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "name",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -1109,7 +1301,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "tableIdent",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -1123,7 +1319,11 @@
     },
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "tableIdent",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : true,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -1137,7 +1337,11 @@
     },
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "tableIdent",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : true,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -1153,7 +1357,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "tableIdent",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -1167,7 +1375,11 @@
     },
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "tableIdent",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : true,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -1183,7 +1395,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "tableIdent",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -1193,7 +1409,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "tableIdent",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : true,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -1286,7 +1506,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "targetTable",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : true,
     "comment" : ""
@@ -1296,7 +1520,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "sourceTable",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : true,
     "setCurrentDatabaseIfMissing" : true,
     "comment" : ""
@@ -1322,7 +1550,11 @@
       "skipTypes" : [ "TEMP_VIEW", "GLOBAL_TEMP_VIEW" ],
       "comment" : ""
     },
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "name",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -1350,7 +1582,11 @@
     },
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "table",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : true,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -1370,7 +1606,11 @@
     },
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "table",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : true,
     "setCurrentDatabaseIfMissing" : true,
     "comment" : ""
@@ -1391,7 +1631,11 @@
       "skipTypes" : [ "TEMP_VIEW" ],
       "comment" : ""
     },
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "tableName",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -1427,7 +1671,11 @@
       "comment" : ""
     },
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "table",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -1448,7 +1696,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "tableIdent",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : true,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -1464,7 +1716,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "tableName",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -1480,7 +1736,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "tableName",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : true,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -1496,7 +1756,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "table",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : true,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -1512,7 +1776,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "table",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : true,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -1532,7 +1800,11 @@
     },
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "tableName",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : true,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -1548,7 +1820,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "table",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : true,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -1568,7 +1844,11 @@
     },
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "tableName",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -1641,7 +1921,11 @@
       "comment" : ""
     },
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "catalogTable",
+      "fieldExtractor" : "CatalogTableOptionCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -1661,7 +1945,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "tableIdent",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : true,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -1859,7 +2147,11 @@
       "comment" : ""
     },
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "table",
+      "fieldExtractor" : "DataSourceV2RelationCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : "Iceberg"
@@ -1944,7 +2236,11 @@
       "comment" : ""
     },
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "targetTable",
+      "fieldExtractor" : "DataSourceV2RelationCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : "Iceberg"
@@ -2017,7 +2313,11 @@
       "comment" : ""
     },
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "targetTable",
+      "fieldExtractor" : "DataSourceV2RelationCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : "Iceberg"
@@ -2042,7 +2342,11 @@
       "comment" : ""
     },
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "table",
+      "fieldExtractor" : "DataSourceV2RelationCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : "Iceberg"
@@ -2062,7 +2366,11 @@
     },
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "tableId",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : "Hudi"
@@ -2082,7 +2390,11 @@
     },
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "tableIdentifier",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : "Hudi"
@@ -2102,7 +2414,11 @@
     },
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "tableIdentifier",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : "Hudi"
@@ -2123,7 +2439,11 @@
       "skipTypes" : [ "TEMP_VIEW" ],
       "comment" : "Hudi"
     },
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "oldName",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : "Hudi"
@@ -2291,7 +2611,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "targetTable",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : true,
     "comment" : "Hudi"
@@ -2301,7 +2625,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "sourceTable",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : true,
     "setCurrentDatabaseIfMissing" : true,
     "comment" : "Hudi"
@@ -2359,7 +2687,11 @@
       "skipTypes" : [ "TEMP_VIEW" ],
       "comment" : "Hudi"
     },
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "tableIdentifier",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -2457,7 +2789,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "tableName",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -2477,7 +2813,11 @@
     },
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "tableIdentifier",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : true,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : "Hudi"
@@ -2529,7 +2869,11 @@
     },
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "tableIdentifier",
+      "fieldExtractor" : "TableIdentifierCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : "Hudi"
@@ -2566,7 +2910,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "child",
+      "fieldExtractor" : "ResolvedTableCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : "Delta"
@@ -2663,7 +3011,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "child",
+      "fieldExtractor" : "ResolvedTableCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : "Delta"
@@ -2751,7 +3103,11 @@
       "comment" : ""
     },
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "relation",
+      "fieldExtractor" : "DataSourceV2RelationCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -2772,7 +3128,11 @@
       "comment" : ""
     },
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "targetTable",
+      "fieldExtractor" : "DataSourceV2RelationCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -2782,7 +3142,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "sourceTable",
+      "fieldExtractor" : "DataSourceV2RelationCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : true,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
@@ -2803,7 +3167,11 @@
       "comment" : ""
     },
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "relation",
+      "fieldExtractor" : "DataSourceV2RelationCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""

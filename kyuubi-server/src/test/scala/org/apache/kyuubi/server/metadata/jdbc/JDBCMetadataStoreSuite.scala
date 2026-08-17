@@ -17,12 +17,13 @@
 
 package org.apache.kyuubi.server.metadata.jdbc
 
+import java.sql.DriverManager
 import java.util.UUID
 
 import org.scalatest.concurrent.PatienceConfiguration.Timeout
 import org.scalatest.time.SpanSugar._
 
-import org.apache.kyuubi.{KyuubiException, KyuubiFunSuite}
+import org.apache.kyuubi.{KyuubiException, KyuubiFunSuite, Utils}
 import org.apache.kyuubi.config.KyuubiConf
 import org.apache.kyuubi.engine.ApplicationState
 import org.apache.kyuubi.server.metadata.MetadataManager
@@ -252,6 +253,112 @@ class JDBCMetadataStoreSuite extends KyuubiFunSuite {
     val metadata = Metadata(identifier = UUID.randomUUID().toString, state = "RUNNING")
     intercept[KyuubiException] {
       jdbcMetadataStore.updateMetadata(metadata)
+    }
+  }
+
+  test("updateMetadata drops regressive state changes (monotonic + terminal freeze)") {
+    val id = UUID.randomUUID().toString
+    jdbcMetadataStore.insertMetadata(Metadata(
+      identifier = id,
+      sessionType = SessionType.BATCH,
+      realUser = "kyuubi",
+      username = "kyuubi",
+      ipAddress = "127.0.0.1",
+      kyuubiInstance = "localhost:10099",
+      state = "PENDING",
+      createTime = System.currentTimeMillis(),
+      engineType = "spark"))
+
+    // forward transition applies
+    jdbcMetadataStore.updateMetadata(Metadata(identifier = id, state = "RUNNING"))
+    assert(jdbcMetadataStore.getMetadata(id).state == "RUNNING")
+
+    // backward transition (RUNNING -> PENDING) is dropped without error
+    jdbcMetadataStore.updateMetadata(Metadata(identifier = id, state = "PENDING"))
+    assert(jdbcMetadataStore.getMetadata(id).state == "RUNNING")
+
+    // reach a terminal state
+    jdbcMetadataStore.updateMetadata(Metadata(identifier = id, state = "FINISHED"))
+    assert(jdbcMetadataStore.getMetadata(id).state == "FINISHED")
+
+    // terminal is frozen: a stale RUNNING (late async-retry replay / post-takeover zombie) is dropped
+    jdbcMetadataStore.updateMetadata(Metadata(identifier = id, state = "RUNNING"))
+    assert(jdbcMetadataStore.getMetadata(id).state == "FINISHED")
+
+    // terminal is frozen: a resubmit-failure ERROR cannot overwrite the real FINISHED state
+    jdbcMetadataStore.updateMetadata(Metadata(identifier = id, state = "ERROR"))
+    assert(jdbcMetadataStore.getMetadata(id).state == "FINISHED")
+
+    // non-state fields can still be updated on a terminal row (e.g. peer-close bookkeeping)
+    jdbcMetadataStore.updateMetadata(Metadata(identifier = id, peerInstanceClosed = true))
+    assert(jdbcMetadataStore.getMetadata(id).peerInstanceClosed)
+    assert(jdbcMetadataStore.getMetadata(id).state == "FINISHED")
+
+    jdbcMetadataStore.cleanupMetadataByIdentifier(id)
+  }
+
+  test("migrateSchema adds the version column to an existing (older) metadata table") {
+    val dbFile = Utils.createTempDir().resolve("old_schema.db")
+    val url = s"jdbc:sqlite:$dbFile"
+    // Simulate a database created by an older Kyuubi: a metadata table WITHOUT the version column.
+    val conn = DriverManager.getConnection(url)
+    try {
+      val st = conn.createStatement()
+      st.executeUpdate(
+        """CREATE TABLE metadata(
+          |  key_id INTEGER PRIMARY KEY AUTOINCREMENT,
+          |  identifier varchar(36) NOT NULL,
+          |  session_type varchar(32) NOT NULL,
+          |  real_user varchar(255) NOT NULL,
+          |  user_name varchar(255) NOT NULL,
+          |  ip_address varchar(128),
+          |  kyuubi_instance varchar(1024),
+          |  state varchar(128) NOT NULL,
+          |  resource varchar(1024),
+          |  class_name varchar(1024),
+          |  request_name varchar(1024),
+          |  request_conf mediumtext,
+          |  request_args mediumtext,
+          |  create_time BIGINT NOT NULL,
+          |  engine_type varchar(32) NOT NULL,
+          |  cluster_manager varchar(128),
+          |  engine_open_time bigint,
+          |  engine_id varchar(128),
+          |  engine_name mediumtext,
+          |  engine_url varchar(1024),
+          |  engine_state varchar(32),
+          |  engine_error mediumtext,
+          |  end_time bigint,
+          |  priority INTEGER NOT NULL DEFAULT 10,
+          |  peer_instance_closed boolean default '0'
+          |)""".stripMargin)
+      st.close()
+    } finally {
+      conn.close()
+    }
+
+    val migratingConf = KyuubiConf()
+      .set(METADATA_STORE_JDBC_DATABASE_TYPE, DatabaseType.SQLITE.toString)
+      .set(METADATA_STORE_JDBC_DATABASE_SCHEMA_INIT, true)
+      .set(METADATA_STORE_JDBC_URL, url)
+    val store = new JDBCMetadataStore(migratingConf)
+    try {
+      // If migration didn't add `version`, the optimistic-CAS update (which reads/writes version)
+      // would fail. A successful forward transition proves the column was added on startup.
+      val id = UUID.randomUUID().toString
+      store.insertMetadata(Metadata(
+        identifier = id,
+        sessionType = SessionType.BATCH,
+        realUser = "kyuubi",
+        username = "kyuubi",
+        ipAddress = "127.0.0.1",
+        state = "PENDING",
+        createTime = System.currentTimeMillis(),
+        engineType = "spark"))
+      store.updateMetadata(Metadata(identifier = id, state = "RUNNING"))
+      assert(store.getMetadata(id).state == "RUNNING")
+    } finally {
+      store.close()
     }
   }
 

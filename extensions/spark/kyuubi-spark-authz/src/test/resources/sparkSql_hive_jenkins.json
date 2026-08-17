@@ -69,12 +69,17 @@
     "description" : "Policy for all - database, table, column",
     "isAuditEnabled" : true,
     "resources" : {
+      "catalog" : {
+        "values" : [ "iceberg" ],
+        "isExcludes" : false,
+        "isRecursive" : false
+      },
       "column" : {
         "values" : [ "*" ],
         "isExcludes" : false,
         "isRecursive" : false
       },
-      "database" : {
+      "schema" : {
         "values" : [ "*" ],
         "isExcludes" : false,
         "isRecursive" : false
@@ -133,7 +138,12 @@
     "description" : "Policy for all - database, udf",
     "isAuditEnabled" : true,
     "resources" : {
-      "database" : {
+      "catalog" : {
+        "values" : [ "iceberg" ],
+        "isExcludes" : false,
+        "isRecursive" : false
+      },
+      "schema" : {
         "values" : [ "*" ],
         "isExcludes" : false,
         "isRecursive" : false
@@ -192,12 +202,17 @@
     "description" : "Policy for all - database, udf",
     "isAuditEnabled" : true,
     "resources" : {
+      "catalog" : {
+        "values" : [ "iceberg" ],
+        "isExcludes" : false,
+        "isRecursive" : false
+      },
       "column" : {
         "values" : [ "*" ],
         "isExcludes" : false,
         "isRecursive" : false
       },
-      "database" : {
+      "schema" : {
         "values" : [ "default", "spark_catalog", "iceberg_ns", "ns1", "paimon_ns" ],
         "isExcludes" : false,
         "isRecursive" : false
@@ -262,12 +277,17 @@
     "policyPriority" : 0,
     "isAuditEnabled" : true,
     "resources" : {
+      "catalog" : {
+        "values" : [ "iceberg" ],
+        "isExcludes" : false,
+        "isRecursive" : false
+      },
       "column" : {
         "values" : [ "key" ],
         "isExcludes" : false,
         "isRecursive" : false
       },
-      "database" : {
+      "schema" : {
         "values" : [ "default", "spark_catalog" ],
         "isExcludes" : false,
         "isRecursive" : false
@@ -332,12 +352,17 @@
     "policyPriority" : 0,
     "isAuditEnabled" : true,
     "resources" : {
+      "catalog" : {
+        "values" : [ "iceberg" ],
+        "isExcludes" : false,
+        "isRecursive" : false
+      },
       "column" : {
         "values" : [ "*" ],
         "isExcludes" : false,
         "isRecursive" : false
       },
-      "database" : {
+      "schema" : {
         "values" : [ "default_bob", "spark_catalog" ],
         "isExcludes" : false,
         "isRecursive" : false
@@ -368,12 +393,17 @@
     "policyPriority" : 0,
     "isAuditEnabled" : true,
     "resources" : {
+      "catalog" : {
+        "values" : [ "iceberg" ],
+        "isExcludes" : false,
+        "isRecursive" : false
+      },
       "column" : {
         "values" : [ "*" ],
         "isExcludes" : false,
         "isRecursive" : false
       },
-      "database" : {
+      "schema" : {
         "values" : [ "default_bob", "spark_catalog" ],
         "isExcludes" : false,
         "isRecursive" : false
@@ -407,12 +437,17 @@
     "policyPriority" : 0,
     "isAuditEnabled" : true,
     "resources" : {
+      "catalog" : {
+        "values" : [ "iceberg" ],
+        "isExcludes" : false,
+        "isRecursive" : false
+      },
       "column" : {
         "values" : [ "*" ],
         "isExcludes" : false,
         "isRecursive" : false
       },
-      "database" : {
+      "schema" : {
         "values" : [ "default" ],
         "isExcludes" : false,
         "isRecursive" : false
@@ -443,12 +478,17 @@
     "policyPriority" : 0,
     "isAuditEnabled" : true,
     "resources" : {
+      "catalog" : {
+        "values" : [ "iceberg" ],
+        "isExcludes" : false,
+        "isRecursive" : false
+      },
       "column" : {
         "values" : [ "*" ],
         "isExcludes" : false,
         "isRecursive" : false
       },
-      "database" : {
+      "schema" : {
         "values" : [ "default" ],
         "isExcludes" : false,
         "isRecursive" : false
@@ -479,12 +519,17 @@
     "policyPriority" : 0,
     "isAuditEnabled" : true,
     "resources" : {
+      "catalog" : {
+        "values" : [ "iceberg" ],
+        "isExcludes" : false,
+        "isRecursive" : false
+      },
       "column" : {
         "values" : [ "*" ],
         "isExcludes" : false,
         "isRecursive" : false
       },
-      "database" : {
+      "schema" : {
         "values" : [ "iceberg_ns", "hudi_ns", "paimon_ns", "delta_ns" ],
         "isExcludes" : false,
         "isRecursive" : false
@@ -515,7 +560,12 @@
     "policyPriority" : 0,
     "isAuditEnabled" : true,
     "resources" : {
-      "database" : {
+      "catalog" : {
+        "values" : [ "iceberg" ],
+        "isExcludes" : false,
+        "isRecursive" : false
+      },
+      "schema" : {
         "values" : [ "default" ],
         "isExcludes" : false,
         "isRecursive" : false
@@ -549,7 +599,12 @@
     "policyPriority" : 0,
     "isAuditEnabled" : true,
     "resources" : {
-      "database" : {
+      "catalog" : {
+        "values" : [ "iceberg" ],
+        "isExcludes" : false,
+        "isRecursive" : false
+      },
+      "schema" : {
         "values" : [ "default" ],
         "isExcludes" : false,
         "isRecursive" : false
@@ -583,12 +638,17 @@
     "policyPriority" : 0,
     "isAuditEnabled" : true,
     "resources" : {
+      "catalog" : {
+        "values" : [ "iceberg" ],
+        "isExcludes" : false,
+        "isRecursive" : false
+      },
       "column" : {
         "values" : [ "value1" ],
         "isExcludes" : false,
         "isRecursive" : false
       },
-      "database" : {
+      "schema" : {
         "values" : [ "default", "spark_catalog" ],
         "isExcludes" : false,
         "isRecursive" : false
@@ -622,12 +682,17 @@
     "policyPriority" : 0,
     "isAuditEnabled" : true,
     "resources" : {
+      "catalog" : {
+        "values" : [ "iceberg" ],
+        "isExcludes" : false,
+        "isRecursive" : false
+      },
       "column" : {
         "values" : [ "value1" ],
         "isExcludes" : false,
         "isRecursive" : false
       },
-      "database" : {
+      "schema" : {
         "values" : [ "default", "spark_catalog" ],
         "isExcludes" : false,
         "isRecursive" : false
@@ -661,12 +726,17 @@
     "policyPriority" : 0,
     "isAuditEnabled" : true,
     "resources" : {
+      "catalog" : {
+        "values" : [ "iceberg" ],
+        "isExcludes" : false,
+        "isRecursive" : false
+      },
       "column" : {
         "values" : [ "value2" ],
         "isExcludes" : false,
         "isRecursive" : false
       },
-      "database" : {
+      "schema" : {
         "values" : [ "default", "spark_catalog", "iceberg_ns", "ns1" ],
         "isExcludes" : false,
         "isRecursive" : false
@@ -700,12 +770,17 @@
     "policyPriority" : 0,
     "isAuditEnabled" : true,
     "resources" : {
+      "catalog" : {
+        "values" : [ "iceberg" ],
+        "isExcludes" : false,
+        "isRecursive" : false
+      },
       "column" : {
         "values" : [ "value3" ],
         "isExcludes" : false,
         "isRecursive" : false
       },
-      "database" : {
+      "schema" : {
         "values" : [ "default", "spark_catalog" ],
         "isExcludes" : false,
         "isRecursive" : false
@@ -739,12 +814,17 @@
     "policyPriority" : 0,
     "isAuditEnabled" : true,
     "resources" : {
+      "catalog" : {
+        "values" : [ "iceberg" ],
+        "isExcludes" : false,
+        "isRecursive" : false
+      },
       "column" : {
         "values" : [ "value4" ],
         "isExcludes" : false,
         "isRecursive" : false
       },
-      "database" : {
+      "schema" : {
         "values" : [ "default", "spark_catalog" ],
         "isExcludes" : false,
         "isRecursive" : false
@@ -778,12 +858,17 @@
     "policyPriority" : 0,
     "isAuditEnabled" : true,
     "resources" : {
+      "catalog" : {
+        "values" : [ "iceberg" ],
+        "isExcludes" : false,
+        "isRecursive" : false
+      },
       "column" : {
         "values" : [ "value5" ],
         "isExcludes" : false,
         "isRecursive" : false
       },
-      "database" : {
+      "schema" : {
         "values" : [ "default", "spark_catalog" ],
         "isExcludes" : false,
         "isRecursive" : false
@@ -863,7 +948,7 @@
     } ],
     "resources" : [ {
       "itemId" : 1,
-      "name" : "database",
+      "name" : "catalog",
       "type" : "string",
       "level" : 10,
       "mandatory" : true,
@@ -878,37 +963,39 @@
       "validationRegEx" : "",
       "validationMessage" : "",
       "uiHint" : "",
-      "label" : "Hive Database",
-      "description" : "Hive Database",
+      "label" : "Catalog",
+      "description" : "Catalog",
       "accessTypeRestrictions" : [ ],
-      "isValidLeaf" : false
+      "isValidLeaf" : true,
+      "parent" : ""
     }, {
-      "itemId" : 5,
-      "name" : "url",
+      "itemId" : 2,
+      "name" : "schema",
       "type" : "string",
-      "level" : 10,
+      "level" : 20,
       "mandatory" : true,
-      "lookupSupported" : false,
-      "recursiveSupported" : true,
-      "excludesSupported" : false,
-      "matcher" : "org.apache.ranger.plugin.resourcematcher.RangerPathResourceMatcher",
+      "lookupSupported" : true,
+      "recursiveSupported" : false,
+      "excludesSupported" : true,
+      "matcher" : "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
       "matcherOptions" : {
         "wildCard" : "true",
-        "ignoreCase" : "false"
+        "ignoreCase" : "true"
       },
       "validationRegEx" : "",
       "validationMessage" : "",
       "uiHint" : "",
-      "label" : "URL",
-      "description" : "URL",
+      "label" : "Schema",
+      "description" : "Schema / Namespace",
       "accessTypeRestrictions" : [ ],
-      "isValidLeaf" : true
+      "isValidLeaf" : true,
+      "parent" : "catalog"
     }, {
-      "itemId" : 2,
+      "itemId" : 3,
       "name" : "table",
       "type" : "string",
-      "level" : 20,
-      "parent" : "database",
+      "level" : 30,
+      "parent" : "schema",
       "mandatory" : true,
       "lookupSupported" : true,
       "recursiveSupported" : false,
@@ -924,13 +1011,13 @@
       "label" : "Hive Table",
       "description" : "Hive Table",
       "accessTypeRestrictions" : [ ],
-      "isValidLeaf" : false
+      "isValidLeaf" : true
     }, {
-      "itemId" : 3,
+      "itemId" : 4,
       "name" : "udf",
       "type" : "string",
-      "level" : 20,
-      "parent" : "database",
+      "level" : 30,
+      "parent" : "schema",
       "mandatory" : true,
       "lookupSupported" : true,
       "recursiveSupported" : false,
@@ -948,10 +1035,10 @@
       "accessTypeRestrictions" : [ ],
       "isValidLeaf" : true
     }, {
-      "itemId" : 4,
+      "itemId" : 5,
       "name" : "column",
       "type" : "string",
-      "level" : 30,
+      "level" : 40,
       "parent" : "table",
       "mandatory" : true,
       "lookupSupported" : true,
@@ -967,6 +1054,27 @@
       "uiHint" : "",
       "label" : "Hive Column",
       "description" : "Hive Column",
+      "accessTypeRestrictions" : [ ],
+      "isValidLeaf" : true
+    }, {
+      "itemId" : 6,
+      "name" : "url",
+      "type" : "string",
+      "level" : 10,
+      "mandatory" : true,
+      "lookupSupported" : false,
+      "recursiveSupported" : true,
+      "excludesSupported" : false,
+      "matcher" : "org.apache.ranger.plugin.resourcematcher.RangerPathResourceMatcher",
+      "matcherOptions" : {
+        "wildCard" : "true",
+        "ignoreCase" : "false"
+      },
+      "validationRegEx" : "",
+      "validationMessage" : "",
+      "uiHint" : "",
+      "label" : "URL",
+      "description" : "URL",
       "accessTypeRestrictions" : [ ],
       "isValidLeaf" : true
     } ],
@@ -1087,7 +1195,28 @@
       } ],
       "resources" : [ {
         "itemId" : 1,
-        "name" : "database",
+        "name" : "catalog",
+        "type" : "string",
+        "level" : 10,
+        "mandatory" : true,
+        "lookupSupported" : true,
+        "recursiveSupported" : false,
+        "excludesSupported" : false,
+        "matcher" : "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+        "matcherOptions" : {
+          "wildCard" : "false",
+          "ignoreCase" : "true"
+        },
+        "validationRegEx" : "",
+        "validationMessage" : "",
+        "uiHint" : "{ \"singleValue\":true }",
+        "label" : "Hive Database",
+        "description" : "Hive Database",
+        "accessTypeRestrictions" : [ ],
+        "isValidLeaf" : false
+      }, {
+        "itemId" : 1,
+        "name" : "schema",
         "type" : "string",
         "level" : 10,
         "mandatory" : true,
@@ -1161,7 +1290,28 @@
       } ],
       "resources" : [ {
         "itemId" : 1,
-        "name" : "database",
+        "name" : "catalog",
+        "type" : "string",
+        "level" : 10,
+        "mandatory" : true,
+        "lookupSupported" : true,
+        "recursiveSupported" : false,
+        "excludesSupported" : false,
+        "matcher" : "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+        "matcherOptions" : {
+          "wildCard" : "false",
+          "ignoreCase" : "true"
+        },
+        "validationRegEx" : "",
+        "validationMessage" : "",
+        "uiHint" : "{ \"singleValue\":true }",
+        "label" : "Hive Database",
+        "description" : "Hive Database",
+        "accessTypeRestrictions" : [ ],
+        "isValidLeaf" : false
+      }, {
+        "itemId" : 1,
+        "name" : "schema",
         "type" : "string",
         "level" : 10,
         "mandatory" : true,

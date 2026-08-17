@@ -83,6 +83,17 @@ trait MetadataStore extends Closeable {
   def updateMetadata(metadata: Metadata): Unit
 
   /**
+   * Atomically transfer ownership of a metadata record to another kyuubi instance, conditioned on
+   * the record still being owned by fromKyuubiInstance. Returns true iff this call performed the
+   * transfer. This is the safe primitive for reclaiming a dead instance's batches: even if several
+   * live instances race to take over the same batch, only one wins the compare-and-set.
+   */
+  def transferMetadataOwnership(
+      identifier: String,
+      fromKyuubiInstance: String,
+      toKyuubiInstance: String): Boolean
+
+  /**
    * Upsert the kubernetes engine info. Insert if not exists, otherwise update.
    */
   def upsertKubernetesEngineInfo(engineInfo: KubernetesEngineInfo): Unit

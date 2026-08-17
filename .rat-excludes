@@ -48,6 +48,7 @@ build/scala-*/**
 **/node/**
 **/web-ui/dist/**
 **/web-ui/coverage/**
+**/src/main/resources/dist/**
 **/pnpm-lock.yaml
 **/node_modules/**
 **/gen/*

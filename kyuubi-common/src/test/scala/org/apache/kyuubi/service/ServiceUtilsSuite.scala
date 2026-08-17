@@ -45,8 +45,8 @@ class ServiceUtilsSuite extends KyuubiFunSuite {
     assert(ServiceUtils.getShortName(null) === null)
     assert(ServiceUtils.getShortName("") === "")
     assert(ServiceUtils.getShortName("kent") === "kent")
-    assert(ServiceUtils.getShortName("kent/x") == "kent")
-    assert(ServiceUtils.getShortName("kent@abc/c") === "kent")
-    assert(ServiceUtils.getShortName("kent/abc@c") === "kent")
+    assert(ServiceUtils.getShortName("kent/x") === "kent/x")
+    assert(ServiceUtils.getShortName("kent@abc/c") === "kent@abc/c")
+    assert(ServiceUtils.getShortName("kent/abc@c") === "kent/abc@c")
   }
 }

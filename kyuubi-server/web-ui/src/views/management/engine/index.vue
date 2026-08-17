@@ -53,11 +53,16 @@
     </header>
   </el-card>
   <el-card class="table-container">
-    <el-table v-loading="loading" :data="tableData" style="width: 100%">
+    <el-table
+      v-loading="loading"
+      :data="tableData"
+      style="width: 100%"
+      @sort-change="handleSortChange">
       <el-table-column
         prop="instance"
         :label="$t('engine_address')"
-        min-width="20%" />
+        min-width="20%"
+        sortable="custom" />
       <el-table-column :label="$t('engine_id')" min-width="20%">
         <template #default="scope">
           <span>{{
@@ -70,14 +75,24 @@
       <el-table-column
         prop="engineType"
         :label="$t('engine_type')"
-        min-width="20%" />
+        min-width="20%"
+        sortable="custom" />
       <el-table-column
         prop="sharelevel"
         :label="$t('share_level')"
-        min-width="20%" />
+        min-width="20%"
+        sortable="custom" />
 
-      <el-table-column prop="user" :label="$t('user')" min-width="15%" />
-      <el-table-column prop="version" :label="$t('version')" min-width="15%" />
+      <el-table-column
+        prop="user"
+        :label="$t('user')"
+        min-width="15%"
+        sortable="custom" />
+      <el-table-column
+        prop="version"
+        :label="$t('version')"
+        min-width="15%"
+        sortable="custom" />
       <el-table-column fixed="right" :label="$t('operation.text')" width="120">
         <template #default="scope">
           <el-space wrap>
@@ -117,6 +132,15 @@
         </template>
       </el-table-column>
     </el-table>
+    <el-pagination
+      v-model:current-page="currentPage"
+      v-model:page-size="pageSize"
+      :page-sizes="[10, 20, 50, 100]"
+      :total="totalPage"
+      layout="total, sizes, prev, pager, next, jumper"
+      class="pagination"
+      @size-change="handleSizeChange"
+      @current-change="handleCurrentChange" />
   </el-card>
 </template>
 
@@ -130,7 +154,17 @@
   import { getEngineType, getShareLevel } from '@/utils/engine'
 
   const { t } = useI18n()
-  const { tableData, loading, getList: _getList } = useTable()
+  const {
+    tableData,
+    loading,
+    currentPage,
+    pageSize,
+    totalPage,
+    handleSizeChange,
+    handleCurrentChange,
+    handleSortChange,
+    getList: _getList
+  } = useTable()
   // default search params
   const searchParam: IEngineSearch = reactive({
     type: 'SPARK_SQL',
@@ -191,5 +225,10 @@
   }
   .filter_card {
     margin-bottom: 10px;
+  }
+  .pagination {
+    margin-top: 12px;
+    display: flex;
+    justify-content: flex-end;
   }
 </style>

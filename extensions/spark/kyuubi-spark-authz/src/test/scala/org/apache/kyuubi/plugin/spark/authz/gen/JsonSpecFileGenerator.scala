@@ -23,8 +23,7 @@ import java.nio.file.{Files, Paths, StandardOpenOption}
 //scalastyle:off
 import org.scalatest.funsuite.AnyFunSuite
 
-import org.apache.kyuubi.plugin.spark.authz.serde.{mapper, CommandSpec}
-import org.apache.kyuubi.plugin.spark.authz.serde.CommandSpecs
+import org.apache.kyuubi.plugin.spark.authz.serde._
 import org.apache.kyuubi.util.AssertionUtils._
 import org.apache.kyuubi.util.GoldenFileUtils._
 
@@ -52,6 +51,39 @@ class JsonSpecFileGenerator extends AnyFunSuite {
     writeCommandSpecJson("scan", Seq(Scans))
   }
 
+  /**
+   * Catalog mode (the deployed default) needs a `catalog` resource on every
+   * table/database descriptor. For extractors that derive the catalog from the
+   * same field value (which always exists), inject the matching catalog
+   * extractor automatically. Sibling-field cases (catalog read from a separate
+   * `catalog`/`catalogName` field) are declared explicitly in the command specs
+   * and preserved here untouched.
+   */
+  private val sameFieldCatalogExtractor: Map[String, String] = Map(
+    "TableIdentifierTableExtractor" -> "TableIdentifierCatalogExtractor",
+    "ResolvedTableTableExtractor" -> "ResolvedTableCatalogExtractor",
+    "DataSourceV2RelationTableExtractor" -> "DataSourceV2RelationCatalogExtractor",
+    "ResolvedIdentifierTableExtractor" -> "ResolvedIdentifierCatalogExtractor",
+    "ResolvedDbObjectNameTableExtractor" -> "ResolvedDbObjectNameCatalogExtractor",
+    "CatalogTableOptionTableExtractor" -> "CatalogTableOptionCatalogExtractor",
+    "ResolvedNamespaceDatabaseExtractor" -> "ResolvedNamespaceCatalogExtractor",
+    "ResolvedDBObjectNameDatabaseExtractor" -> "ResolvedDbObjectNameCatalogExtractor")
+
+  private def catalogFor(fieldName: String, fieldExtractor: String): Option[CatalogDesc] =
+    sameFieldCatalogExtractor.get(fieldExtractor).map(ce => CatalogDesc(fieldName, ce))
+
+  private def injectCatalogDesc(spec: CommandSpec): CommandSpec = spec match {
+    case t: TableCommandSpec =>
+      t.copy(tableDescs = t.tableDescs.map(d =>
+        if (d.catalogDesc.nonEmpty) d
+        else d.copy(catalogDesc = catalogFor(d.fieldName, d.fieldExtractor))))
+    case d: DatabaseCommandSpec =>
+      d.copy(databaseDescs = d.databaseDescs.map(dd =>
+        if (dd.catalogDesc.nonEmpty) dd
+        else dd.copy(catalogDesc = catalogFor(dd.fieldName, dd.fieldExtractor))))
+    case other => other
+  }
+
   def writeCommandSpecJson[T <: CommandSpec](
       commandType: String,
       specsArr: Seq[CommandSpecs[T]]): Unit = {
@@ -59,7 +91,7 @@ class JsonSpecFileGenerator extends AnyFunSuite {
     val filePath = Paths.get(
       s"${getCurrentModuleHome(this)}/src/main/resources/$filename")
 
-    val allSpecs = specsArr.flatMap(_.specs.sortBy(_.classname))
+    val allSpecs = specsArr.flatMap(_.specs.sortBy(_.classname)).map(injectCatalogDesc)
     val duplicatedClassnames = allSpecs.groupBy(_.classname).values
       .filter(_.size > 1).flatMap(specs => specs.map(_.classname)).toSet
     withClue(s"Unexpected duplicated classnames: $duplicatedClassnames")(

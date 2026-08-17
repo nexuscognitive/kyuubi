@@ -17,19 +17,48 @@
 -->
 <template>
   <el-card class="table-container">
-    <el-table v-loading="loading" :data="tableData" style="width: 100%">
-      <el-table-column prop="host" :label="$t('server_ip')" min-width="20%" />
+    <el-input
+      v-model="searchText"
+      :placeholder="$t('search')"
+      clearable
+      class="search-input"
+      @input="handleSearch" />
+    <el-table
+      v-loading="loading"
+      :data="tableData"
+      style="width: 100%"
+      @sort-change="handleSortChange">
+      <el-table-column
+        prop="host"
+        :label="$t('server_ip')"
+        min-width="20%"
+        sortable="custom" />
       <el-table-column
         prop="namespace"
         :label="$t('namespace')"
-        min-width="20%" />
+        min-width="20%"
+        sortable="custom" />
       <el-table-column
         prop="instance"
         :label="$t('kyuubi_instance')"
-        min-width="20%" />
+        min-width="20%"
+        sortable="custom" />
       <el-table-column prop="attributes.version" :label="$t('version')" />
-      <el-table-column prop="status" :label="$t('state')" min-width="20%" />
+      <el-table-column
+        prop="status"
+        :label="$t('state')"
+        min-width="20%"
+        sortable="custom" />
     </el-table>
+    <el-pagination
+      v-model:current-page="currentPage"
+      v-model:page-size="pageSize"
+      :page-sizes="[10, 20, 50, 100]"
+      :total="totalPage"
+      layout="total, sizes, prev, pager, next, jumper"
+      class="pagination"
+      @size-change="handleSizeChange"
+      @current-change="handleCurrentChange" />
   </el-card>
 </template>
 
@@ -37,7 +66,19 @@
   import { getAllServer } from '@/api/server'
   import { useTable } from '@/utils/use-table'
 
-  const { tableData, loading, getList: _getList } = useTable()
+  const {
+    tableData,
+    loading,
+    currentPage,
+    pageSize,
+    totalPage,
+    searchText,
+    handleSizeChange,
+    handleCurrentChange,
+    handleSortChange,
+    handleSearch,
+    getList: _getList
+  } = useTable()
   const getList = () => {
     _getList(getAllServer)
   }
@@ -46,6 +87,15 @@
 
 <style scoped lang="scss">
   header {
+    display: flex;
+    justify-content: flex-end;
+  }
+  .search-input {
+    width: 260px;
+    margin-bottom: 12px;
+  }
+  .pagination {
+    margin-top: 12px;
     display: flex;
     justify-content: flex-end;
   }

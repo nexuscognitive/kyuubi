@@ -22,8 +22,8 @@ import java.util.Base64
 import scala.collection.JavaConverters._
 import scala.util.Try
 
-import org.apache.kyuubi.client.{BaseRestApi, BatchRestApi, KyuubiRestClient}
-import org.apache.kyuubi.client.api.v1.dto.{Batch, CloseBatchResponse, OperationLog}
+import org.apache.kyuubi.client.{AdminRestApi, BaseRestApi, BatchRestApi, KyuubiRestClient}
+import org.apache.kyuubi.client.api.v1.dto.{Batch, CloseBatchResponse, OperationData, OperationLog, SessionData}
 import org.apache.kyuubi.client.auth.AuthHeaderGenerator
 import org.apache.kyuubi.server.http.authentication.AuthSchemes
 import org.apache.kyuubi.service.authentication.InternalSecurityAccessor
@@ -55,8 +55,42 @@ class InternalRestClient(
 
   private val internalBatchRestApi = new BatchRestApi(initKyuubiRestClient())
   private val internalBaseRestApi = new BaseRestApi(initKyuubiRestClient())
+  private val internalAdminRestApi = new AdminRestApi(initKyuubiRestClient())
 
   def pingAble(): Boolean = Try(internalBaseRestApi.ping()).isSuccess
+
+  /**
+   * List the sessions held in the peer instance's local memory only.
+   *
+   * Uses the non-aggregating `listSessions()` form (no clusterWide flag) so the peer
+   * never fans out again - this is the recursion guard for cluster-wide reads.
+   */
+  def listLocalSessions(user: String): Seq[SessionData] = withAuthUser(user) {
+    internalAdminRestApi.listSessions().asScala.toSeq
+  }
+
+  /**
+   * List the operations held in the peer instance's local memory only.
+   * Non-aggregating form, see [[listLocalSessions]] for the recursion guard rationale.
+   */
+  def listLocalOperations(user: String): Seq[OperationData] = withAuthUser(user) {
+    internalAdminRestApi.listOperations().asScala.toSeq
+  }
+
+  /**
+   * Close a session on the peer instance. The forwarded close carries no kyuubiInstance
+   * hint, so the peer acts locally and never re-forwards (recursion guard for cancels).
+   */
+  def closeSession(user: String, sessionHandle: String): String = withAuthUser(user) {
+    internalAdminRestApi.closeSession(sessionHandle)
+  }
+
+  /**
+   * Close an operation on the peer instance. No kyuubiInstance hint => peer acts locally.
+   */
+  def closeOperation(user: String, operationHandle: String): String = withAuthUser(user) {
+    internalAdminRestApi.closeOperation(operationHandle)
+  }
 
   def getBatch(user: String, clientIp: String, batchId: String): Batch = {
     withAuthUser(user) {

@@ -114,22 +114,22 @@ class IcebergCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite 
           someone,
           sql(mergeIntoSql)))
       assert(e1.getMessage.contains(s"does not have [select] privilege" +
-        s" on [$namespace1/$table1/city,$namespace1/$table1/id,$namespace1/$table1/name]"))
+        s" on [iceberg/$namespace1/$table1/city,iceberg/$namespace1/$table1/id,iceberg/$namespace1/$table1/name]"))
 
       withSingleCallEnabled {
         interceptEndsWith[AccessControlException](doAs(someone, sql(mergeIntoSql)))(
           if (isSparkV35OrGreater) {
-            s"does not have [select] privilege on [$namespace1/table1/city" +
-              s",$namespace1/$table1/id,$namespace1/$table1/name]"
+            s"does not have [select] privilege on [iceberg/$namespace1/table1/city" +
+              s",iceberg/$namespace1/$table1/id,iceberg/$namespace1/$table1/name]"
           } else {
             "does not have " +
-              s"[select] privilege on [$namespace1/$table1/city,$namespace1/$table1/id,$namespace1/$table1/name]," +
-              s" [update] privilege on [$bobNamespace/$bobSelectTable]"
+              s"[select] privilege on [iceberg/$namespace1/$table1/city,iceberg/$namespace1/$table1/id,iceberg/$namespace1/$table1/name]," +
+              s" [update] privilege on [iceberg/$bobNamespace/$bobSelectTable]"
           })
 
         interceptEndsWith[AccessControlException] {
           doAs(bob, sql(mergeIntoSql))
-        }(s"does not have [update] privilege on [$bobNamespace/$bobSelectTable]")
+        }(s"does not have [update] privilege on [iceberg/$bobNamespace/$bobSelectTable]")
       }
 
       doAs(admin, sql(mergeIntoSql))
@@ -145,11 +145,11 @@ class IcebergCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite 
           sql(s"UPDATE $catalogV2.$namespace1.$table1 SET city='Guangzhou'  WHERE id=1"))
       }(if (isSparkV35OrGreater) {
         s"does not have [select] privilege on " +
-          s"[$namespace1/$table1/_file,$namespace1/$table1/_pos," +
-          s"$namespace1/$table1/id,$namespace1/$table1/name,$namespace1/$table1/city], " +
-          s"[update] privilege on [$namespace1/$table1]"
+          s"[iceberg/$namespace1/$table1/_file,iceberg/$namespace1/$table1/_pos," +
+          s"iceberg/$namespace1/$table1/id,iceberg/$namespace1/$table1/name,iceberg/$namespace1/$table1/city], " +
+          s"[update] privilege on [iceberg/$namespace1/$table1]"
       } else {
-        s"does not have [update] privilege on [$namespace1/$table1]"
+        s"does not have [update] privilege on [iceberg/$namespace1/$table1]"
       })
 
       doAs(
@@ -166,16 +166,16 @@ class IcebergCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite 
         doAs(someone, sql(s"DELETE FROM $catalogV2.$namespace1.$table1 WHERE id=2"))
       }(if (isSparkV34OrGreater) {
         s"does not have [select] privilege on " +
-          s"[$namespace1/$table1/_file,$namespace1/$table1/_pos," +
-          s"$namespace1/$table1/city,$namespace1/$table1/id,$namespace1/$table1/name], " +
-          s"[update] privilege on [$namespace1/$table1]"
+          s"[iceberg/$namespace1/$table1/_file,iceberg/$namespace1/$table1/_pos," +
+          s"iceberg/$namespace1/$table1/city,iceberg/$namespace1/$table1/id,iceberg/$namespace1/$table1/name], " +
+          s"[update] privilege on [iceberg/$namespace1/$table1]"
       } else {
-        s"does not have [update] privilege on [$namespace1/$table1]"
+        s"does not have [update] privilege on [iceberg/$namespace1/$table1]"
       })
 
       interceptEndsWith[AccessControlException] {
         doAs(bob, sql(s"DELETE FROM $catalogV2.$bobNamespace.$bobSelectTable WHERE id=2"))
-      }(s"does not have [update] privilege on [$bobNamespace/$bobSelectTable]")
+      }(s"does not have [update] privilege on [iceberg/$bobNamespace/$bobSelectTable]")
 
       doAs(admin, sql(s"DELETE FROM $catalogV2.$namespace1.$table1 WHERE id=2"))
     }
@@ -260,7 +260,7 @@ class IcebergCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite 
     val e1 = intercept[AccessControlException](
       doAs(someone, sql(s"DESCRIBE TABLE $catalogV2.$namespace1.$table1").explain()))
     assert(e1.getMessage.contains(s"does not have [select] privilege" +
-      s" on [$namespace1/$table1]"))
+      s" on [iceberg/$namespace1/$table1]"))
   }
 
   test("CALL RewriteDataFilesProcedure") {
@@ -282,9 +282,9 @@ class IcebergCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite 
         })
 
       interceptEndsWith[AccessControlException](doAs(someone, sql(rewriteDataFiles1)))(
-        s"does not have [alter] privilege on [$namespace1/$tableName]")
+        s"does not have [alter] privilege on [iceberg/$namespace1/$tableName]")
       interceptEndsWith[AccessControlException](doAs(someone, sql(rewriteDataFiles2)))(
-        s"does not have [alter] privilege on [$namespace1/$tableName]")
+        s"does not have [alter] privilege on [iceberg/$namespace1/$tableName]")
 
       /**
        * Case 1: Number of input data files equals or greater than minimum expected.
@@ -344,7 +344,7 @@ class IcebergCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite 
         s"CALL $catalogV2.system.rollback_to_snapshot (table => '$table', snapshot_id => $targetSnapshotId)"
 
       interceptEndsWith[AccessControlException](doAs(someone, sql(callRollbackToSnapshot)))(
-        s"does not have [alter] privilege on [$namespace1/$tableName]")
+        s"does not have [alter] privilege on [iceberg/$namespace1/$tableName]")
       doAs(admin, sql(callRollbackToSnapshot))
     }
   }
@@ -362,7 +362,7 @@ class IcebergCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite 
       }
 
       interceptEndsWith[AccessControlException](doAs(someone, sql(callRollbackToTimestamp)))(
-        s"does not have [alter] privilege on [$namespace1/$tableName]")
+        s"does not have [alter] privilege on [iceberg/$namespace1/$tableName]")
       doAs(admin, sql(callRollbackToTimestamp))
     }
   }
@@ -377,7 +377,7 @@ class IcebergCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite 
         s"CALL $catalogV2.system.set_current_snapshot (table => '$table', snapshot_id => $targetSnapshotId)"
 
       interceptEndsWith[AccessControlException](doAs(someone, sql(callSetCurrentSnapshot)))(
-        s"does not have [alter] privilege on [$namespace1/$tableName]")
+        s"does not have [alter] privilege on [iceberg/$namespace1/$tableName]")
       doAs(admin, sql(callSetCurrentSnapshot))
     }
   }
@@ -392,7 +392,7 @@ class IcebergCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite 
       val addPartitionSql = s"ALTER TABLE $table ADD PARTITION FIELD id"
       interceptEndsWith[AccessControlException] {
         doAs(someone, sql(addPartitionSql))
-      }(s"does not have [alter] privilege on [$namespace1/partitioned_table]")
+      }(s"does not have [alter] privilege on [iceberg/$namespace1/partitioned_table]")
       doAs(admin, sql(addPartitionSql))
     }
   }
@@ -407,7 +407,7 @@ class IcebergCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite 
       val addPartitionSql = s"ALTER TABLE $table DROP PARTITION FIELD id"
       interceptEndsWith[AccessControlException] {
         doAs(someone, sql(addPartitionSql))
-      }(s"does not have [alter] privilege on [$namespace1/partitioned_table]")
+      }(s"does not have [alter] privilege on [iceberg/$namespace1/partitioned_table]")
       doAs(admin, sql(addPartitionSql))
     }
   }
@@ -422,7 +422,7 @@ class IcebergCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite 
       val addPartitionSql = s"ALTER TABLE $table REPLACE PARTITION FIELD city WITH id"
       interceptEndsWith[AccessControlException] {
         doAs(someone, sql(addPartitionSql))
-      }(s"does not have [alter] privilege on [$namespace1/partitioned_table]")
+      }(s"does not have [alter] privilege on [iceberg/$namespace1/partitioned_table]")
       doAs(admin, sql(addPartitionSql))
     }
   }
@@ -437,7 +437,7 @@ class IcebergCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite 
       val writeOrderBySql = s"ALTER TABLE $table WRITE ORDERED BY id"
       interceptEndsWith[AccessControlException] {
         doAs(someone, sql(writeOrderBySql))
-      }(s"does not have [alter] privilege on [$namespace1/partitioned_table]")
+      }(s"does not have [alter] privilege on [iceberg/$namespace1/partitioned_table]")
       doAs(admin, sql(writeOrderBySql))
     }
   }
@@ -452,7 +452,7 @@ class IcebergCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite 
       val writeDistributedSql = s"ALTER TABLE $table WRITE DISTRIBUTED BY PARTITION"
       interceptEndsWith[AccessControlException] {
         doAs(someone, sql(writeDistributedSql))
-      }(s"does not have [alter] privilege on [$namespace1/partitioned_table]")
+      }(s"does not have [alter] privilege on [iceberg/$namespace1/partitioned_table]")
       doAs(admin, sql(writeDistributedSql))
     }
   }
@@ -467,7 +467,7 @@ class IcebergCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite 
       val setIdentifierSql = s"ALTER TABLE $table SET IDENTIFIER FIELDS id"
       interceptEndsWith[AccessControlException] {
         doAs(someone, sql(setIdentifierSql))
-      }(s"does not have [alter] privilege on [$namespace1/partitioned_table]")
+      }(s"does not have [alter] privilege on [iceberg/$namespace1/partitioned_table]")
       doAs(admin, sql(setIdentifierSql))
     }
   }
@@ -483,7 +483,7 @@ class IcebergCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite 
       val dropIdentifierSql = s"ALTER TABLE $table DROP IDENTIFIER FIELDS id"
       interceptEndsWith[AccessControlException] {
         doAs(someone, sql(dropIdentifierSql))
-      }(s"does not have [alter] privilege on [$namespace1/partitioned_table]")
+      }(s"does not have [alter] privilege on [iceberg/$namespace1/partitioned_table]")
       doAs(admin, sql(dropIdentifierSql))
     }
   }
@@ -499,7 +499,7 @@ class IcebergCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite 
       val createBranchSql = s"ALTER TABLE $table CREATE BRANCH test_branch"
       interceptEndsWith[AccessControlException] {
         doAs(someone, sql(createBranchSql))
-      }(s"does not have [alter] privilege on [$namespace1/partitioned_table]")
+      }(s"does not have [alter] privilege on [iceberg/$namespace1/partitioned_table]")
       doAs(admin, sql(createBranchSql))
     }
   }
@@ -515,7 +515,7 @@ class IcebergCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite 
       val createTagSql = s"ALTER TABLE $table CREATE TAG test_tag"
       interceptEndsWith[AccessControlException] {
         doAs(someone, sql(createTagSql))
-      }(s"does not have [alter] privilege on [$namespace1/partitioned_table]")
+      }(s"does not have [alter] privilege on [iceberg/$namespace1/partitioned_table]")
       doAs(admin, sql(createTagSql))
     }
   }
@@ -533,7 +533,7 @@ class IcebergCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite 
       val replaceBranchSql = s"ALTER TABLE $table REPLACE BRANCH test_branch"
       interceptEndsWith[AccessControlException] {
         doAs(someone, sql(replaceBranchSql))
-      }(s"does not have [alter] privilege on [$namespace1/partitioned_table]")
+      }(s"does not have [alter] privilege on [iceberg/$namespace1/partitioned_table]")
       doAs(admin, sql(replaceBranchSql))
     }
   }
@@ -551,7 +551,7 @@ class IcebergCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite 
       val replaceTagSql = s"ALTER TABLE $table REPLACE TAG test_tag"
       interceptEndsWith[AccessControlException] {
         doAs(someone, sql(replaceTagSql))
-      }(s"does not have [alter] privilege on [$namespace1/partitioned_table]")
+      }(s"does not have [alter] privilege on [iceberg/$namespace1/partitioned_table]")
       doAs(admin, sql(replaceTagSql))
     }
   }
@@ -568,7 +568,7 @@ class IcebergCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite 
       val dropBranchSql = s"ALTER TABLE $table DROP BRANCH test_branch"
       interceptEndsWith[AccessControlException] {
         doAs(someone, sql(dropBranchSql))
-      }(s"does not have [alter] privilege on [$namespace1/partitioned_table]")
+      }(s"does not have [alter] privilege on [iceberg/$namespace1/partitioned_table]")
       doAs(admin, sql(dropBranchSql))
     }
   }
@@ -585,7 +585,7 @@ class IcebergCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite 
       val dropTagSql = s"ALTER TABLE $table DROP TAG test_tag"
       interceptEndsWith[AccessControlException] {
         doAs(someone, sql(dropTagSql))
-      }(s"does not have [alter] privilege on [$namespace1/partitioned_table]")
+      }(s"does not have [alter] privilege on [iceberg/$namespace1/partitioned_table]")
       doAs(admin, sql(dropTagSql))
     }
   }
@@ -602,7 +602,7 @@ class IcebergCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite 
         s"rename to $namespace1.new_table"
       interceptEndsWith[AccessControlException] {
         doAs(someone, sql(renameSql))
-      }(s"does not have [alter] privilege on [$namespace1/tablex]")
+      }(s"does not have [alter] privilege on [iceberg/$namespace1/tablex]")
       doAs(admin, sql(renameSql))
     }
   }
@@ -631,11 +631,11 @@ class IcebergCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite 
            |""".stripMargin
       interceptEndsWith[AccessControlException] {
         doAs(someone, sql(alterTableSetPropertiesSql))
-      }(s"does not have [alter] privilege on [$namespace1/tablex]")
+      }(s"does not have [alter] privilege on [iceberg/$namespace1/tablex]")
       doAs(admin, sql(alterTableSetPropertiesSql))
       interceptEndsWith[AccessControlException] {
         doAs(someone, sql(alterTableUnsetPropertiesSql))
-      }(s"does not have [alter] privilege on [$namespace1/tablex]")
+      }(s"does not have [alter] privilege on [iceberg/$namespace1/tablex]")
       doAs(admin, sql(alterTableUnsetPropertiesSql))
     }
   }
@@ -670,19 +670,19 @@ class IcebergCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite 
            |""".stripMargin
       interceptEndsWith[AccessControlException] {
         doAs(someone, sql(alterTableAddColumnSql))
-      }(s"does not have [alter] privilege on [$namespace1/tablex]")
+      }(s"does not have [alter] privilege on [iceberg/$namespace1/tablex]")
       doAs(admin, sql(alterTableAddColumnSql))
       interceptEndsWith[AccessControlException] {
         doAs(someone, sql(alterTableRenameColumnSql))
-      }(s"does not have [alter] privilege on [$namespace1/tablex]")
+      }(s"does not have [alter] privilege on [iceberg/$namespace1/tablex]")
       doAs(admin, sql(alterTableRenameColumnSql))
       interceptEndsWith[AccessControlException] {
         doAs(someone, sql(alterTableAlterColumnSql))
-      }(s"does not have [alter] privilege on [$namespace1/tablex]")
+      }(s"does not have [alter] privilege on [iceberg/$namespace1/tablex]")
       doAs(admin, sql(alterTableAlterColumnSql))
       interceptEndsWith[AccessControlException] {
         doAs(someone, sql(alterTableDropColumnSql))
-      }(s"does not have [alter] privilege on [$namespace1/tablex]")
+      }(s"does not have [alter] privilege on [iceberg/$namespace1/tablex]")
       doAs(admin, sql(alterTableDropColumnSql))
     }
   }

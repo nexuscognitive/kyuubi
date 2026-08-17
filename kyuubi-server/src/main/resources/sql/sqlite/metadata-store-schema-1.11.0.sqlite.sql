@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS metadata(
     engine_error mediumtext, -- the engine application diagnose
     end_time bigint, -- the metadata end time
     priority INTEGER NOT NULL DEFAULT 10, -- the application priority, high value means high priority
-    peer_instance_closed boolean default '0' -- closed by peer kyuubi instance
+    peer_instance_closed boolean default '0', -- closed by peer kyuubi instance
+    version INTEGER NOT NULL DEFAULT 0 -- optimistic-lock revision, incremented on every update
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS metadata_unique_identifier_index ON metadata(identifier);

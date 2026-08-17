@@ -88,7 +88,7 @@ abstract class RangerSparkExtensionSuite extends AnyFunSuite
       privilege: String,
       resource: String = "default/src",
       user: String = UserGroupInformation.getCurrentUser.getShortUserName): String = {
-    s"Permission denied: user [$user] does not have [$privilege] privilege on [$resource]"
+    s"Permission denied: user [$user] does not have [$privilege] privilege on [iceberg/$resource]"
   }
 
   /**
@@ -584,11 +584,13 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
 
       val e1 = intercept[AccessControlException](
         doAs(someone, sql(s"CREATE VIEW $permView AS SELECT 1 as a")))
-      assert(e1.getMessage.contains(s"does not have [create] privilege on [default/$permView]"))
+      assert(e1.getMessage.contains(
+        s"does not have [create] privilege on [iceberg/default/$permView]"))
 
       val e2 = intercept[AccessControlException](
         doAs(someone, sql(s"CREATE VIEW $permView AS SELECT * FROM $table")))
-      assert(e2.getMessage.contains(s"does not have [select] privilege on [default/$table/id]"))
+      assert(e2.getMessage.contains(
+        s"does not have [select] privilege on [iceberg/default/$table/id]"))
     }
   }
 
@@ -609,7 +611,8 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
           someone, {
             sql(s"select * from $db1.$permView").collect()
           }))
-      assert(e1.getMessage.contains(s"does not have [select] privilege on [$db1/$permView/id]"))
+      assert(e1.getMessage.contains(
+        s"does not have [select] privilege on [iceberg/$db1/$permView/id]"))
     }
   }
 
@@ -672,9 +675,10 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
         val e = intercept[AccessControlException](doAs(someone, sql(insertSql1)))
         assert(e.getMessage.contains(s"does not have" +
           s" [select] privilege on" +
-          s" [$db1/$srcTable1/city,$db1/$srcTable1/id,$db1/$srcTable1/name," +
-          s"$db1/$srcTable2/age,$db1/$srcTable2/id]," +
-          s" [update] privilege on [$db1/$sinkTable1]"))
+          s" [iceberg/$db1/$srcTable1/city," +
+          s"iceberg/$db1/$srcTable1/id,iceberg/$db1/$srcTable1/name," +
+          s"iceberg/$db1/$srcTable2/age,iceberg/$db1/$srcTable2/id]," +
+          s" [update] privilege on [iceberg/$db1/$sinkTable1]"))
       }
     }
   }
@@ -704,7 +708,8 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
           doAs(someone, sql(s"CACHE TABLE $cacheTable2 select * from $db1.$srcTable1")))
         assert(
           e1.getMessage.contains(s"does not have [select] privilege on " +
-            s"[$db1/$srcTable1/city,$db1/$srcTable1/id,$db1/$srcTable1/name]"))
+            s"[iceberg/$db1/$srcTable1/city,iceberg/$db1/$srcTable1/id," +
+            s"iceberg/$db1/$srcTable1/name]"))
       }
       doAs(admin, sql(s"CACHE TABLE $cacheTable3 SELECT 1 AS a, 2 AS b "))
       doAs(someone, sql(s"CACHE TABLE $cacheTable4 select 1 as a, 2 as b "))
@@ -765,7 +770,7 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
             s"""INSERT OVERWRITE DIRECTORY '/tmp/test_dir' ROW FORMAT DELIMITED FIELDS
                | TERMINATED BY ','
                | SELECT * FROM $db1.$table;""".stripMargin)))
-      assert(e.getMessage.contains(s"does not have [select] privilege on [$db1/$table/id]"))
+      assert(e.getMessage.contains(s"does not have [select] privilege on [iceberg/$db1/$table/id]"))
     }
   }
 
@@ -810,7 +815,8 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
                |""".stripMargin).show())
       }
       // Will first check subquery privilege.
-      assert(e1.getMessage.contains(s"does not have [select] privilege on [$db1/$table1/scope]"))
+      assert(e1.getMessage.contains(
+        s"does not have [select] privilege on [iceberg/$db1/$table1/scope]"))
 
       doAs(
         admin,
@@ -827,7 +833,8 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
       // Will just check permanent view privilege.
       val e2 = intercept[AccessControlException](
         doAs(someone, sql(s"SELECT * FROM $db1.$view1".stripMargin).show()))
-      assert(e2.getMessage.contains(s"does not have [select] privilege on [$db1/$view1/new_id]"))
+      assert(e2.getMessage.contains(
+        s"does not have [select] privilege on [iceberg/$db1/$view1/new_id]"))
     }
   }
 
@@ -854,7 +861,8 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
                |""".stripMargin).show())
       }
       // Will first check subquery privilege.
-      assert(e1.getMessage.contains(s"does not have [select] privilege on [$db1/$table1/scope]"))
+      assert(e1.getMessage.contains(
+        s"does not have [select] privilege on [iceberg/$db1/$table1/scope]"))
 
       doAs(
         admin,
@@ -871,7 +879,8 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
       // Will just check permanent view privilege.
       val e2 = intercept[AccessControlException](
         doAs(someone, sql(s"SELECT * FROM $db1.$view1".stripMargin).show()))
-      assert(e2.getMessage.contains(s"does not have [select] privilege on [$db1/$view1/new_id]"))
+      assert(e2.getMessage.contains(
+        s"does not have [select] privilege on [iceberg/$db1/$view1/new_id]"))
     }
   }
 
@@ -916,11 +925,11 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
         if (isSparkV35OrGreater) {
           assert(e2.getMessage.contains(
             s"does not have [select] privilege on " +
-              s"[$db1/$view1/id,$db1/$view1/max_scope,$db1/$view1/name]"))
+              s"[iceberg/$db1/$view1/id,iceberg/$db1/$view1/max_scope,iceberg/$db1/$view1/name]"))
         } else {
           assert(e2.getMessage.contains(
             s"does not have [select] privilege on " +
-              s"[$db1/$view1/name,$db1/$view1/id,$db1/$view1/max_scope]"))
+              s"[iceberg/$db1/$view1/name,iceberg/$db1/$view1/id,iceberg/$db1/$view1/max_scope]"))
         }
       }
     }
@@ -935,7 +944,7 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
           sql(s"SELECT * FROM VALUES(1, 100),(2, 200),(3, 300) AS t(id, scope)")).persist()
         interceptEndsWith[AccessControlException](
           doAs(someone, df.write.mode("overwrite").saveAsTable(table1)))(
-          s"does not have [create] privilege on [$defaultDb/$table1]")
+          s"does not have [create] privilege on [iceberg/$defaultDb/$table1]")
       }
     }
   }
@@ -966,27 +975,29 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
 
         interceptEndsWith[AccessControlException](
           doAs(someone, sql(s"SELECT count(id) FROM $db1.$table1 WHERE id > 10").show()))(
-          s"does not have [select] privilege on [$db1/$table1/id]")
+          s"does not have [select] privilege on [iceberg/$db1/$table1/id]")
 
         interceptEndsWith[AccessControlException](
           doAs(someone, sql(s"SELECT count(id) FROM $db1.$view1 WHERE id > 10").show()))(
-          s"does not have [select] privilege on [$db1/$view1/id]")
+          s"does not have [select] privilege on [iceberg/$db1/$view1/id]")
 
         interceptEndsWith[AccessControlException](
           doAs(someone, sql(s"SELECT count(sum_id) FROM $db1.$view2 WHERE sum_id > 10").show()))(
-          s"does not have [select] privilege on [$db1/$view2/sum_id]")
+          s"does not have [select] privilege on [iceberg/$db1/$view2/sum_id]")
 
         interceptEndsWith[AccessControlException](
           doAs(someone, sql(s"SELECT count(scope) FROM $db1.$table1 WHERE id > 10").show()))(
-          s"does not have [select] privilege on [$db1/$table1/scope,$db1/$table1/id]")
+          s"does not have [select] privilege on [iceberg/$db1/$table1/scope," +
+          s"iceberg/$db1/$table1/id]")
 
         interceptEndsWith[AccessControlException](
           doAs(someone, sql(s"SELECT count(scope) FROM $db1.$view1 WHERE id > 10").show()))(
-          s"does not have [select] privilege on [$db1/$view1/scope,$db1/$view1/id]")
+          s"does not have [select] privilege on [iceberg/$db1/$view1/scope,iceberg/$db1/$view1/id]")
 
         interceptEndsWith[AccessControlException](
           doAs(someone, sql(s"SELECT count(cnt) FROM $db1.$view2 WHERE sum_id > 10").show()))(
-          s"does not have [select] privilege on [$db1/$view2/cnt,$db1/$view2/sum_id]")
+          s"does not have [select] privilege on [iceberg/$db1/$view2/cnt," +
+          s"iceberg/$db1/$view2/sum_id]")
       }
     }
   }
@@ -1019,7 +1030,7 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
                  |)
                  |""".stripMargin).show()))(
           s"does not have [select] privilege on " +
-            s"[$db1/$perm_view/id,$db1/$perm_view/scope]")
+            s"[iceberg/$db1/$perm_view/id,iceberg/$db1/$perm_view/scope]")
         interceptEndsWith[AccessControlException](
           doAs(
             permViewOnlyUser,
@@ -1034,7 +1045,7 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
                  |)
                  |""".stripMargin).show()))(
           s"does not have [select] privilege on " +
-            s"[$db1/$table1/id]")
+            s"[iceberg/$db1/$table1/id]")
 
         interceptEndsWith[AccessControlException](
           doAs(
@@ -1050,7 +1061,7 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
                  |)
                  |""".stripMargin).show()))(
           s"does not have [select] privilege on " +
-            s"[$db1/$table2/id,$db1/$table2/scope]")
+            s"[iceberg/$db1/$table2/id,iceberg/$db1/$table2/scope]")
         interceptEndsWith[AccessControlException](
           doAs(
             table2OnlyUser,
@@ -1065,7 +1076,7 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
                  |)
                  |""".stripMargin).show()))(
           s"does not have [select] privilege on " +
-            s"[$db1/$table1/id]")
+            s"[iceberg/$db1/$table1/id]")
       }
     }
   }
@@ -1084,7 +1095,8 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
                  |INSERT OVERWRITE DIRECTORY '$path'
                  |ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
                  |SELECT * FROM $db1.$table1""".stripMargin)))(
-            s"does not have [select] privilege on [$db1/$table1/id,$db1/$table1/scope], " +
+            s"does not have [select] privilege on [iceberg/$db1/$table1/id," +
+            s"iceberg/$db1/$table1/scope], " +
               s"[write] privilege on [[$path, $path/]]")
         }
       }
@@ -1174,7 +1186,7 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
           interceptEndsWith[AccessControlException](
             doAs(someone, sql(loadDataSql).explain(true)))(
             s"does not have [read] privilege on [[$path, $path/]], " +
-              s"[update] privilege on [$db1/$table1]")
+              s"[update] privilege on [iceberg/$db1/$table1]")
         }
       }
     }
@@ -1201,12 +1213,12 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
           withCleanTmpResources(Seq((s"$db1", "database"))) {
             interceptEndsWith[AccessControlException](
               doAs(someone, sql(s"CREATE DATABASE $db1 LOCATION '$path1'")))(
-              s"does not have [create] privilege on [$db1], " +
+              s"does not have [create] privilege on [iceberg/$db1], " +
                 s"[write] privilege on [[$path1, $path1/]]")
             doAs(admin, sql(s"CREATE DATABASE $db1 LOCATION '$path1'"))
             interceptEndsWith[AccessControlException](
               doAs(someone, sql(s"ALTER DATABASE $db1 SET LOCATION '$path2'")))(
-              s"does not have [alter] privilege on [$db1], " +
+              s"does not have [alter] privilege on [iceberg/$db1], " +
                 s"[write] privilege on [[$path2, $path2/]]")
             val e = intercept[UndeclaredThrowableException](
               doAs(admin, sql(s"ALTER DATABASE $db1 SET LOCATION '$path2'")))
@@ -1236,7 +1248,7 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
                  |""".stripMargin))
           interceptEndsWith[AccessControlException](
             doAs(someone, sql(s"ALTER TABLE $db1.$table1 SET LOCATION '$path1'")))(
-            s"does not have [alter] privilege on [$db1/$table1], " +
+            s"does not have [alter] privilege on [iceberg/$db1/$table1], " +
               s"[write] privilege on [[$path1, $path1/]]")
 
           withTempDir { path2 =>
@@ -1251,7 +1263,7 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
                        |PARTITION (day='2023-01-01') LOCATION '$path2'
                        |PARTITION (day='2023-01-02') LOCATION '$path3'
                        |""".stripMargin)))(
-                s"does not have [alter] privilege on [$db1/$table1/day], " +
+                s"does not have [alter] privilege on [iceberg/$db1/$table1/day], " +
                   s"[write] privilege on [[$path2, $path2/],[$path3, $path3/]]")
             }
           }
@@ -1274,10 +1286,10 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
                  |CREATE TABLE IF NOT EXISTS $db1.$table1(id int, scope int)
                  |LOCATION '$path'""".stripMargin)))(
             if (!isSparkV35OrGreater) {
-              s"does not have [create] privilege on [$db1/$table1], " +
+              s"does not have [create] privilege on [iceberg/$db1/$table1], " +
                 s"[write] privilege on [[$path, $path/]]"
             } else {
-              s"does not have [create] privilege on [$db1/$table1], " +
+              s"does not have [create] privilege on [iceberg/$db1/$table1], " +
                 s"[write] privilege on [[file://$path, file://$path/]]"
             })
           doAs(
@@ -1295,8 +1307,8 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
                    |LIKE $db1.$table1
                    |LOCATION '$path'
                    |""".stripMargin)))(
-            s"does not have [select] privilege on [$db1/$table1], " +
-              s"[create] privilege on [$db1/$table2], " +
+            s"does not have [select] privilege on [iceberg/$db1/$table1], " +
+              s"[create] privilege on [iceberg/$db1/$table2], " +
               s"[write] privilege on [[$path, $path/]]")
           interceptEndsWith[AccessControlException](
             doAs(
@@ -1309,12 +1321,14 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
                    |SELECT * FROM $db1.$table1
                    |""".stripMargin)))(
             if (!isSparkV35OrGreater) {
-              s"does not have [select] privilege on [$db1/$table1/id,$db1/$table1/scope], " +
-                s"[create] privilege on [$db1/$table2/id,$db1/$table2/scope], " +
+              s"does not have [select] privilege on [iceberg/$db1/$table1/id," +
+              s"iceberg/$db1/$table1/scope], " +
+                s"[create] privilege on [iceberg/$db1/$table2/id,iceberg/$db1/$table2/scope], " +
                 s"[write] privilege on [[$path, $path/]]"
             } else {
-              s"does not have [select] privilege on [$db1/$table1/id,$db1/$table1/scope], " +
-                s"[create] privilege on [$db1/$table2/id,$db1/$table2/scope], " +
+              s"does not have [select] privilege on [iceberg/$db1/$table1/id," +
+              s"iceberg/$db1/$table1/scope], " +
+                s"[create] privilege on [iceberg/$db1/$table2/id,iceberg/$db1/$table2/scope], " +
                 s"[write] privilege on [[file://$path, file://$path/]]"
             })
         }
@@ -1341,7 +1355,7 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
           doAs(
             someone,
             sql(s"SELECT typeof(id), typeof(typeof(day)) FROM $db1.$table1").collect()))(
-          s"does not have [select] privilege on [$db1/$table1/day,$db1/$table1/id]")
+          s"does not have [select] privilege on [iceberg/$db1/$table1/day,iceberg/$db1/$table1/id]")
         interceptEndsWith[AccessControlException](
           doAs(
             someone,
@@ -1351,7 +1365,7 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
                  |typeof(cast(id as string)),
                  |typeof(substring(day, 1, 3))
                  |FROM $db1.$table1""".stripMargin).collect()))(
-          s"does not have [select] privilege on [$db1/$table1/day,$db1/$table1/id]")
+          s"does not have [select] privilege on [iceberg/$db1/$table1/day,iceberg/$db1/$table1/id]")
         checkAnswer(
           admin,
           s"""
@@ -1380,10 +1394,10 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
         doAs(admin, sql(explainSql))
         val result = doAs(someone, sql(explainSql).collect()).head.getString(0)
         assert(!result.contains("Error occurred during query planning"))
-        assert(!result.contains(s"does not have [select] privilege on [$db1/$table1/id]"))
+        assert(!result.contains(s"does not have [select] privilege on [iceberg/$db1/$table1/id]"))
         interceptEndsWith[AccessControlException](
           doAs(someone, sql(s"SELECT id FROM $db1.$table1").collect()))(
-          s"does not have [select] privilege on [$db1/$table1/id]")
+          s"does not have [select] privilege on [iceberg/$db1/$table1/id]")
       }
     }
   }
@@ -1460,7 +1474,8 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
               "mapInPandas",
               (classOf[PythonUDF], mapTableInPandasUDF))
               .asInstanceOf[DataFrame].select(col("id"), col("scope")).limit(1).show(true)))(
-          s"does not have [select] privilege on [$db1/$table1/id,$db1/$table1/scope]")
+          s"does not have [select] privilege on [iceberg/$db1/$table1/id," +
+          s"iceberg/$db1/$table1/scope]")
 
         val view = spark.read.table(s"$db1.$view1")
         val mapViewInPandasUDF = PythonUDF(
@@ -1478,7 +1493,7 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
               "mapInPandas",
               (classOf[PythonUDF], mapViewInPandasUDF))
               .asInstanceOf[DataFrame].select(col("id"), col("scope")).limit(1).show(true)))(
-          s"does not have [select] privilege on [$db1/$view1/id,$db1/$view1/scope]")
+          s"does not have [select] privilege on [iceberg/$db1/$view1/id,iceberg/$db1/$view1/scope]")
       }
     }
   }
@@ -1503,7 +1518,7 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
           doAs(
             someone,
             sql(s"SELECT count(id) FROM $db1.$view1 WHERE id > 1").collect()))(
-          s"does not have [select] privilege on [$db1/$view1/id]")
+          s"does not have [select] privilege on [iceberg/$db1/$view1/id]")
       }
     }
   }

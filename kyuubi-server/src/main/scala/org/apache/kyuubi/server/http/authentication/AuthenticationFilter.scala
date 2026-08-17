@@ -115,6 +115,13 @@ class AuthenticationFilter(conf: KyuubiConf) extends Filter with Logging {
     val httpRequest = request.asInstanceOf[HttpServletRequest]
     val httpResponse = response.asInstanceOf[HttpServletResponse]
 
+    // Health/version endpoints are served without authentication so they can be used as
+    // liveness/readiness probes (e.g. Kubernetes). Everything else under /v1/* still needs auth.
+    if (AuthenticationFilter.isUnauthenticatedPath(httpRequest.getRequestURI)) {
+      filterChain.doFilter(request, response)
+      return
+    }
+
     val authorization = httpRequest.getHeader(AUTHORIZATION_HEADER)
     val matchedHandler = getMatchedHandler(authorization).orNull
     HTTP_CLIENT_IP_ADDRESS.set(httpRequest.getRemoteAddr)
@@ -179,6 +186,16 @@ class AuthenticationFilter(conf: KyuubiConf) extends Filter with Logging {
 }
 
 object AuthenticationFilter {
+  // REST paths (relative to any context prefix) that are served without authentication so they
+  // can be used as health/version probes. Kept intentionally small - only static, side-effect-free
+  // endpoints belong here.
+  final private val UNAUTHENTICATED_PATH_SUFFIXES = Seq("/v1/ping", "/v1/version")
+
+  def isUnauthenticatedPath(requestUri: String): Boolean = {
+    val path = Option(requestUri).getOrElse("").stripSuffix("/")
+    UNAUTHENTICATED_PATH_SUFFIXES.exists(path.endsWith)
+  }
+
   final val HTTP_CLIENT_IP_ADDRESS = new ThreadLocal[String]() {
     override protected def initialValue: String = null
   }

@@ -401,6 +401,45 @@ class SparkProcessBuilderSuite extends KerberizedTestHelper with MockitoSugar {
     assert(execPodNamePrefix4 === Some(s"kyuubi-$engineRefId"))
   }
 
+  test("SparkProcessBuilder#appendYuniKornUserInfoConf") {
+    val engineRefId = "kyuubi-test-engine"
+    val processBuilder = new SparkProcessBuilder(
+      "kyuubi",
+      true,
+      conf.set(MASTER_KEY, "k8s://internal").set(DEPLOY_MODE_KEY, "cluster"),
+      engineRefId)
+    // inject driver and executor annotations on k8s when absent
+    val userInfo = """{"user":"kyuubi"}"""
+    val conf1 = processBuilder.appendYuniKornUserInfoConf(Map.empty)
+    assert(conf1.get(KUBERNETES_DRIVER_YUNIKORN_USER_INFO_ANNOTATION) === Some(userInfo))
+    assert(conf1.get(KUBERNETES_EXECUTOR_YUNIKORN_USER_INFO_ANNOTATION) === Some(userInfo))
+    // respect user specified annotations
+    val conf2 = processBuilder.appendYuniKornUserInfoConf(Map(
+      KUBERNETES_DRIVER_YUNIKORN_USER_INFO_ANNOTATION -> """{"user":"custom"}""",
+      KUBERNETES_EXECUTOR_YUNIKORN_USER_INFO_ANNOTATION -> """{"user":"custom"}"""))
+    assert(conf2.get(KUBERNETES_DRIVER_YUNIKORN_USER_INFO_ANNOTATION) === None)
+    assert(conf2.get(KUBERNETES_EXECUTOR_YUNIKORN_USER_INFO_ANNOTATION) === None)
+    // do not inject on non-k8s master
+    val yarnProcessBuilder = new SparkProcessBuilder(
+      "kyuubi",
+      true,
+      KyuubiConf(false).set(MASTER_KEY, "yarn"),
+      engineRefId)
+    val conf3 = yarnProcessBuilder.appendYuniKornUserInfoConf(Map.empty)
+    assert(conf3.isEmpty)
+  }
+
+  test("SparkProcessBuilder sets SPARK_USER env to the submitting user") {
+    val engineRefId = "kyuubi-test-engine"
+    // injects SPARK_USER = proxyUser when absent
+    val pb1 = new SparkProcessBuilder("kyuubi_user", true, conf, engineRefId)
+    assert(pb1.env.get("SPARK_USER") === Some("kyuubi_user"))
+    // respect a user-specified SPARK_USER
+    val conf2 = KyuubiConf(false).set("kyuubi.engineEnv.SPARK_USER", "custom_user")
+    val pb2 = new SparkProcessBuilder("kyuubi_user", true, conf2, engineRefId)
+    assert(pb2.env.get("SPARK_USER") === Some("custom_user"))
+  }
+
   test("extract spark core scala version") {
     val builder = new SparkProcessBuilder("kentyao", true, KyuubiConf(false))
     Seq(

@@ -109,13 +109,13 @@ class DeltaCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
            |""".stripMargin
       interceptEndsWith[AccessControlException] {
         doAs(someone, sql(createNonPartitionTableSql))
-      }(s"does not have [create] privilege on [$namespace1/$table1]")
+      }(s"does not have [create] privilege on [iceberg/$namespace1/$table1]")
       doAs(admin, sql(createNonPartitionTableSql))
 
       val createPartitionTableSql = createTableSql(namespace1, table2)
       interceptEndsWith[AccessControlException] {
         doAs(someone, sql(createPartitionTableSql))
-      }(s"does not have [create] privilege on [$namespace1/$table2]")
+      }(s"does not have [create] privilege on [iceberg/$namespace1/$table2]")
       doAs(admin, sql(createPartitionTableSql))
     }
   }
@@ -134,7 +134,7 @@ class DeltaCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
            |""".stripMargin
       interceptEndsWith[AccessControlException] {
         doAs(someone, sql(createOrReplaceTableSql))
-      }(s"does not have [create] privilege on [$namespace1/$table1]")
+      }(s"does not have [create] privilege on [iceberg/$namespace1/$table1]")
       doAs(admin, sql(createOrReplaceTableSql))
     }
   }
@@ -147,7 +147,7 @@ class DeltaCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
       // add columns
       interceptEndsWith[AccessControlException](
         doAs(someone, sql(s"ALTER TABLE $namespace1.$table1 ADD COLUMNS (age int)")))(
-        s"does not have [alter] privilege on [$namespace1/$table1]")
+        s"does not have [alter] privilege on [iceberg/$namespace1/$table1]")
 
       // change column
       interceptEndsWith[AccessControlException](
@@ -155,7 +155,7 @@ class DeltaCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
           someone,
           sql(s"ALTER TABLE $namespace1.$table1" +
             s" CHANGE COLUMN gender gender STRING AFTER birthDate")))(
-        s"does not have [alter] privilege on [$namespace1/$table1]")
+        s"does not have [alter] privilege on [iceberg/$namespace1/$table1]")
 
       // replace columns
       interceptEndsWith[AccessControlException](
@@ -163,7 +163,7 @@ class DeltaCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
           someone,
           sql(s"ALTER TABLE $namespace1.$table1" +
             s" REPLACE COLUMNS (id INT, name STRING)")))(
-        s"does not have [alter] privilege on [$namespace1/$table1]")
+        s"does not have [alter] privilege on [iceberg/$namespace1/$table1]")
 
       // rename column
       interceptEndsWith[AccessControlException](
@@ -171,12 +171,12 @@ class DeltaCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
           someone,
           sql(s"ALTER TABLE $namespace1.$table1" +
             s" RENAME COLUMN birthDate TO dateOfBirth")))(
-        s"does not have [alter] privilege on [$namespace1/$table1]")
+        s"does not have [alter] privilege on [iceberg/$namespace1/$table1]")
 
       // drop column
       interceptEndsWith[AccessControlException](
         doAs(someone, sql(s"ALTER TABLE $namespace1.$table1 DROP COLUMN birthDate")))(
-        s"does not have [alter] privilege on [$namespace1/$table1]")
+        s"does not have [alter] privilege on [iceberg/$namespace1/$table1]")
 
       // set properties
       interceptEndsWith[AccessControlException](
@@ -184,7 +184,7 @@ class DeltaCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
           someone,
           sql(s"ALTER TABLE $namespace1.$table1" +
             s" SET TBLPROPERTIES ('delta.appendOnly' = 'true')")))(
-        s"does not have [alter] privilege on [$namespace1/$table1]")
+        s"does not have [alter] privilege on [iceberg/$namespace1/$table1]")
     }
   }
 
@@ -195,7 +195,7 @@ class DeltaCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
       val deleteFromTableSql = s"DELETE FROM $namespace1.$table1 WHERE birthDate < '1955-01-01'"
       interceptEndsWith[AccessControlException](
         doAs(someone, sql(deleteFromTableSql)))(
-        s"does not have [update] privilege on [$namespace1/$table1]")
+        s"does not have [update] privilege on [iceberg/$namespace1/$table1]")
       doAs(admin, sql(deleteFromTableSql))
     }
   }
@@ -216,9 +216,9 @@ class DeltaCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
         interceptEndsWith[AccessControlException](
           doAs(someone, sql(insertIntoSql)))(
           s"does not have [select] privilege on " +
-            s"[$namespace1/$table2/birthDate,$namespace1/$table2/gender," +
-            s"$namespace1/$table2/id,$namespace1/$table2/name]," +
-            s" [update] privilege on [$namespace1/$table1]")
+            s"[iceberg/$namespace1/$table2/birthDate,iceberg/$namespace1/$table2/gender," +
+            s"iceberg/$namespace1/$table2/id,iceberg/$namespace1/$table2/name]," +
+            s" [update] privilege on [iceberg/$namespace1/$table1]")
         doAs(admin, sql(insertIntoSql))
 
         // insert overwrite
@@ -227,9 +227,9 @@ class DeltaCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
         interceptEndsWith[AccessControlException](
           doAs(someone, sql(insertOverwriteSql)))(
           s"does not have [select] privilege on " +
-            s"[$namespace1/$table2/birthDate,$namespace1/$table2/gender," +
-            s"$namespace1/$table2/id,$namespace1/$table2/name]," +
-            s" [update] privilege on [$namespace1/$table1]")
+            s"[iceberg/$namespace1/$table2/birthDate,iceberg/$namespace1/$table2/gender," +
+            s"iceberg/$namespace1/$table2/id,iceberg/$namespace1/$table2/name]," +
+            s" [update] privilege on [iceberg/$namespace1/$table1]")
         doAs(admin, sql(insertOverwriteSql))
       }
     }
@@ -243,7 +243,7 @@ class DeltaCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
         s" SET gender = 'Female' WHERE gender = 'F'"
       interceptEndsWith[AccessControlException](
         doAs(someone, sql(updateTableSql)))(
-        s"does not have [update] privilege on [$namespace1/$table1]")
+        s"does not have [update] privilege on [iceberg/$namespace1/$table1]")
       doAs(admin, sql(updateTableSql))
     }
   }
@@ -286,9 +286,9 @@ class DeltaCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
         interceptEndsWith[AccessControlException](
           doAs(someone, sql(mergeIntoSql)))(
           s"does not have [select] privilege on " +
-            s"[$namespace1/$table2/birthDate,$namespace1/$table2/gender," +
-            s"$namespace1/$table2/id,$namespace1/$table2/name]," +
-            s" [update] privilege on [$namespace1/$table1]")
+            s"[iceberg/$namespace1/$table2/birthDate,iceberg/$namespace1/$table2/gender," +
+            s"iceberg/$namespace1/$table2/id,iceberg/$namespace1/$table2/name]," +
+            s" [update] privilege on [iceberg/$namespace1/$table1]")
         doAs(admin, sql(mergeIntoSql))
       }
     }
@@ -301,7 +301,7 @@ class DeltaCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
       val optimizeTableSql = s"OPTIMIZE $namespace1.$table1"
       interceptEndsWith[AccessControlException](
         doAs(someone, sql(optimizeTableSql)))(
-        s"does not have [alter] privilege on [$namespace1/$table1]")
+        s"does not have [alter] privilege on [iceberg/$namespace1/$table1]")
       doAs(admin, sql(optimizeTableSql))
     }
   }
@@ -313,7 +313,7 @@ class DeltaCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
       val vacuumTableSql = s"VACUUM $namespace1.$table1"
       interceptEndsWith[AccessControlException](
         doAs(someone, sql(vacuumTableSql)))(
-        s"does not have [alter] privilege on [$namespace1/$table1]")
+        s"does not have [alter] privilege on [iceberg/$namespace1/$table1]")
       doAs(admin, sql(vacuumTableSql))
     }
   }
@@ -379,9 +379,9 @@ class DeltaCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
           val insertIntoSql = s"INSERT INTO delta.`$path` SELECT * FROM $namespace1.$table2"
           interceptEndsWith[AccessControlException](
             doAs(someone, sql(insertIntoSql)))(
-            s"does not have [select] privilege on [$namespace1/$table2/birthDate," +
-              s"$namespace1/$table2/gender,$namespace1/$table2/id," +
-              s"$namespace1/$table2/name], [write] privilege on [[$path, $path/]]")
+            s"does not have [select] privilege on [iceberg/$namespace1/$table2/birthDate," +
+              s"iceberg/$namespace1/$table2/gender,iceberg/$namespace1/$table2/id," +
+              s"iceberg/$namespace1/$table2/name], [write] privilege on [[$path, $path/]]")
           doAs(admin, sql(insertIntoSql))
 
           // insert overwrite
@@ -389,9 +389,9 @@ class DeltaCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
             s"INSERT OVERWRITE delta.`$path` SELECT * FROM $namespace1.$table2"
           interceptEndsWith[AccessControlException](
             doAs(someone, sql(insertOverwriteSql)))(
-            s"does not have [select] privilege on [$namespace1/$table2/birthDate," +
-              s"$namespace1/$table2/gender,$namespace1/$table2/id," +
-              s"$namespace1/$table2/name], [write] privilege on [[$path, $path/]]")
+            s"does not have [select] privilege on [iceberg/$namespace1/$table2/birthDate," +
+              s"iceberg/$namespace1/$table2/gender,iceberg/$namespace1/$table2/id," +
+              s"iceberg/$namespace1/$table2/name], [write] privilege on [[$path, $path/]]")
           doAs(admin, sql(insertOverwriteSql))
         })
       }
@@ -434,9 +434,9 @@ class DeltaCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
                |""".stripMargin
           interceptEndsWith[AccessControlException](
             doAs(someone, sql(mergeIntoSql)))(
-            s"does not have [select] privilege on [$namespace1/$table2/birthDate," +
-              s"$namespace1/$table2/gender,$namespace1/$table2/id," +
-              s"$namespace1/$table2/name], [write] privilege on [[$path, $path/]]")
+            s"does not have [select] privilege on [iceberg/$namespace1/$table2/birthDate," +
+              s"iceberg/$namespace1/$table2/gender,iceberg/$namespace1/$table2/id," +
+              s"iceberg/$namespace1/$table2/name], [write] privilege on [[$path, $path/]]")
           doAs(admin, sql(mergeIntoSql))
         })
       }

@@ -222,19 +222,28 @@ class EtcdDiscoveryClient(conf: KyuubiConf) extends DiscoveryClient {
     try {
       val hosts = getChildren(DiscoveryPaths.makePath(null, namespace))
       val size = sizeOpt.getOrElse(hosts.size)
-      hosts.takeRight(size).map { p =>
+      hosts.takeRight(size).flatMap { p =>
         val path = DiscoveryPaths.makePath(namespace, p)
-        val instance = new String(getData(path), UTF_8)
-        val (host, port) = DiscoveryClient.parseInstanceHostPort(instance)
-        val attributes =
-          p.split(";").map(_.split("=", 2)).filter(_.length == 2).map(kv =>
-            (kv.head, kv.last)).toMap
-        val version = attributes.get("version")
-        val engineRefId = attributes.get("refId")
-        val engineIdStr = attributes.get(KYUUBI_ENGINE_ID).map(" engine id:" + _).getOrElse("")
-        info(s"Get service instance:$instance$engineIdStr and version:${version.getOrElse("")} " +
-          s"under $namespace")
-        ServiceNodeInfo(namespace, p, host, port, version, engineRefId, attributes)
+        try {
+          val instance = new String(getData(path), UTF_8)
+          val (host, port) = DiscoveryClient.parseInstanceHostPort(instance)
+          val attributes =
+            p.split(";").map(_.split("=", 2)).filter(_.length == 2).map(kv =>
+              (kv.head, kv.last)).toMap
+          val version = attributes.get("version")
+          val engineRefId = attributes.get("refId")
+          val engineIdStr = attributes.get(KYUUBI_ENGINE_ID).map(" engine id:" + _).getOrElse("")
+          info(s"Get service instance:$instance$engineIdStr and version:${version.getOrElse("")} " +
+            s"under $namespace")
+          Some(ServiceNodeInfo(namespace, p, host, port, version, engineRefId, attributes))
+        } catch {
+          // The node was concurrently removed between listing and reading (e.g. a transient
+          // engine whose lease expired). Skip just this stale node instead of failing the whole
+          // listing, so live servers/engines are still returned.
+          case e: Exception =>
+            warn(s"Skipping stale service node under $namespace: ${e.getMessage}")
+            None
+        }
       }
     } catch {
       case _: Exception if silent => Nil

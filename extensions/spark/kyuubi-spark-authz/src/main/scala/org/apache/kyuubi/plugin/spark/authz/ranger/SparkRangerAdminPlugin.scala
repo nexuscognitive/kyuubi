@@ -147,6 +147,20 @@ object SparkRangerAdminPlugin extends RangerBasePlugin("spark", "sparkSql")
     if (requests.nonEmpty) {
       val results = SparkRangerAdminPlugin.isAccessAllowed(requests.asJava, auditHandler)
       if (results != null) {
+        // Diagnostic: log every resource actually evaluated, whether it was
+        // allowed, and which policy (id) decided it. policyId == -1 with
+        // allowed == true means a default/implicit allow (no policy matched a
+        // deny) - useful when access is unexpectedly granted.
+        if (LOG.isDebugEnabled) {
+          results.asScala.zipWithIndex.foreach { case (result, idx) =>
+            val req = requests(idx)
+            val allowed = result != null && result.getIsAllowed
+            val policyId = if (result != null) result.getPolicyId else -1L
+            LOG.debug(
+              s"[authz] evaluate user=${req.getUser} access=${req.getAccessType} " +
+                s"resource=[${req.getResource.getAsString}] allowed=$allowed policyId=$policyId")
+          }
+        }
         val indices = results.asScala.zipWithIndex.filter { case (result, idx) =>
           result != null && !result.getIsAllowed
         }.map(_._2)
