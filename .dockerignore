@@ -15,9 +15,16 @@
 # limitations under the License.
 #
 
+# `*/target` only matches one level down, so nested modules such as
+# extensions/spark/*/target still entered the context. The release job runs
+# build/dist before the image build, so these exist in CI too and are several GB.
+**/target
 externals/*/target
 */target
 target
 .git
 .idea
 .github
+**/node_modules
+# The extracted distribution tree; the image consumes the .tgz, not this.
+apache-kyuubi-*-bin/
