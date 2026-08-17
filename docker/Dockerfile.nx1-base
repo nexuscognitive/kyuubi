@@ -1,0 +1,76 @@
+#
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+#
+# NX1 `kyuubi-base` image.
+#
+# Contains the Kyuubi distribution built from this repository -- server jars,
+# beeline jars, the NX1-branded web UI and the Spark engine -- and nothing else.
+# Spark itself is deliberately absent: nx1-kyuubi layers its own Spark image and
+# its Keycloak/NX1 jars on top of this one.
+#
+# Built by .github/workflows/nx1-release.yml from the same tarball that is
+# attached to the GitHub Release, so the image and the downloadable artifact are
+# the same bytes.
+#
+# Local build:
+#   ./build/dist --tgz --web-ui --spark-provided
+#   docker build -f docker/Dockerfile.nx1-base \
+#     --build-arg KYUUBI_TARBALL=apache-kyuubi-1.12.0-bin.tgz -t kyuubi-base .
+#
+ARG BASE_IMAGE=eclipse-temurin:17-jdk-jammy
+
+FROM ${BASE_IMAGE}
+
+# Name of the tarball produced by build/dist, relative to the build context.
+ARG KYUUBI_TARBALL
+# Matches the uid nx1-kyuubi runs as, so the layers it adds stay readable.
+ARG KYUUBI_UID=1000
+
+ENV KYUUBI_HOME=/opt/kyuubi
+ENV KYUUBI_LOG_DIR=${KYUUBI_HOME}/logs
+ENV KYUUBI_PID_DIR=${KYUUBI_HOME}/pid
+ENV KYUUBI_WORK_DIR_ROOT=${KYUUBI_HOME}/work
+
+RUN set -ex && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+      bash tini curl procps krb5-user libc6 libpam-modules libnss3 && \
+    rm -rf /var/lib/apt/lists/* && \
+    ln -snf /bin/bash /bin/sh && \
+    useradd -m -s /bin/bash -u ${KYUUBI_UID} kyuubi
+
+# `KYUUBI_TARBALL` has no default on purpose -- an unset build-arg would
+# otherwise silently COPY nothing and produce an empty, broken image.
+COPY ${KYUUBI_TARBALL} /tmp/kyuubi.tgz
+
+RUN set -ex && \
+    mkdir -p ${KYUUBI_HOME} && \
+    tar -xzf /tmp/kyuubi.tgz -C ${KYUUBI_HOME} --strip-components=1 && \
+    rm -f /tmp/kyuubi.tgz && \
+    test -d ${KYUUBI_HOME}/jars && \
+    test -d ${KYUUBI_HOME}/web-ui && \
+    mkdir -p ${KYUUBI_LOG_DIR} ${KYUUBI_PID_DIR} ${KYUUBI_WORK_DIR_ROOT} && \
+    chown -R kyuubi:root ${KYUUBI_HOME} && \
+    chmod -R ug+rw ${KYUUBI_HOME} && \
+    chmod -R a+rwx ${KYUUBI_WORK_DIR_ROOT}
+
+WORKDIR ${KYUUBI_HOME}
+USER ${KYUUBI_UID}
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["./bin/kyuubi", "run"]

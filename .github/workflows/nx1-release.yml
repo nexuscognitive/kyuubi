@@ -1,0 +1,214 @@
+#
+# NX1 release pipeline for the Nexus Cognitive Kyuubi fork.
+#
+# Two jobs, in order:
+#
+#   verify  - the strict gate. Style, licence, authorization tests, server tests
+#             and the web UI all have to pass before anything is published. This
+#             is deliberately not skippable: a tag that cannot pass the gate is a
+#             tag that should not become an image.
+#   release - builds the binary distribution once, attaches it to a GitHub
+#             Release, and publishes the same tarball as the `kyuubi-base` image
+#             that nx1-kyuubi builds FROM.
+#
+# The image and the release asset are produced from one `build/dist` run, so the
+# tarball you can download is byte-for-byte what is inside the image.
+#
+name: NX1 Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - 'nx1-*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to build (defaults to the current ref)'
+        required: false
+        type: string
+
+# A second tag push should not race the first for the same registry tag.
+concurrency:
+  group: nx1-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  JAVA_VERSION: '17'
+  # Keep in step with kyuubi-server/web-ui/package.json engines.node.
+  NODE_VERSION: '24'
+
+jobs:
+  verify:
+    name: Verify (strict gate)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: Set up Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@11 --activate
+
+      # Style and licence run first: they are seconds, and failing fast on
+      # formatting avoids burning a test run on a build that cannot merge.
+      - name: Scalastyle
+        run: ./build/mvn -B scalastyle:check
+
+      - name: Spotless
+        run: ./build/mvn -B spotless:check
+
+      - name: License (RAT)
+        run: ./build/mvn -B org.apache.rat:apache-rat-plugin:check
+
+      - name: Web UI - install
+        working-directory: kyuubi-server/web-ui
+        run: pnpm install --frozen-lockfile
+
+      - name: Web UI - lint
+        working-directory: kyuubi-server/web-ui
+        run: pnpm run lint
+
+      - name: Web UI - typecheck and build
+        working-directory: kyuubi-server/web-ui
+        run: pnpm run build
+
+      # `pnpm run test` is vitest in watch mode and would hang the runner.
+      - name: Web UI - unit tests
+        working-directory: kyuubi-server/web-ui
+        run: pnpm exec vitest run
+
+      # The authorization module gates every query in the platform, so its
+      # suite is not optional on a release tag.
+      - name: Test - Spark authz
+        run: ./build/mvn -B test -pl extensions/spark/kyuubi-spark-authz
+
+      - name: Test - common and server
+        run: ./build/mvn -B test -pl kyuubi-common,kyuubi-server
+
+      # Golden files are generated. If a merge or a code change leaves them
+      # stale the plugin ships policies that no longer match the generator, so
+      # regenerate and fail if anything moved.
+      - name: Check authz golden files are current
+        run: |
+          KYUUBI_UPDATE=1 ./build/mvn -B test \
+            -pl extensions/spark/kyuubi-spark-authz -Pgen-policy -Dtest=none \
+            -DwildcardSuites=org.apache.kyuubi.plugin.spark.authz.gen.JsonSpecFileGenerator
+          KYUUBI_UPDATE=1 ./build/mvn -B test \
+            -pl extensions/spark/kyuubi-spark-authz -Pgen-policy -Dtest=none \
+            -DwildcardSuites=org.apache.kyuubi.plugin.spark.authz.gen.PolicyJsonFileGenerator
+          if ! git diff --quiet; then
+            echo "::error::Generated authz specs/policies are stale. Run dev/gen/gen_ranger_spec_json.sh and dev/gen/gen_ranger_policy_json.sh and commit the result."
+            git --no-pager diff --stat
+            exit 1
+          fi
+
+  release:
+    name: Release
+    needs: verify
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: Set up Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@11 --activate
+
+      - name: Resolve version and tag
+        id: meta
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag }}"
+          if [ -z "$TAG" ]; then TAG="${GITHUB_REF_NAME}"; fi
+          VERSION=$(./build/mvn -B -q -Dexec.executable=echo \
+            -Dexec.args='${project.version}' --non-recursive \
+            org.codehaus.mojo:exec-maven-plugin:3.1.0:exec)
+          echo "tag=$TAG"          >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION"  >> "$GITHUB_OUTPUT"
+          echo "tarball=apache-kyuubi-${VERSION}-bin.tgz" >> "$GITHUB_OUTPUT"
+
+      # Spark is deliberately excluded: nx1-kyuubi supplies its own Spark image,
+      # and bundling a second copy would roughly double the layer for no use.
+      - name: Build binary distribution
+        run: ./build/dist --tgz --web-ui --spark-provided
+
+      - name: Checksum
+        id: sum
+        run: |
+          set -euo pipefail
+          TARBALL="${{ steps.meta.outputs.tarball }}"
+          test -f "$TARBALL" || { echo "::error::$TARBALL not produced by build/dist"; ls -la ./*.tgz || true; exit 1; }
+          sha256sum "$TARBALL" > "$TARBALL.sha256"
+          echo "sha256=$(cut -d' ' -f1 < "$TARBALL.sha256")" >> "$GITHUB_OUTPUT"
+          cat "$TARBALL.sha256"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.tag }}
+          generate_release_notes: true
+          files: |
+            ${{ steps.meta.outputs.tarball }}
+            ${{ steps.meta.outputs.tarball }}.sha256
+
+      - name: Log in to ACR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ secrets.ACR_REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push kyuubi-base
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/Dockerfile.nx1-base
+          push: true
+          build-args: |
+            KYUUBI_TARBALL=${{ steps.meta.outputs.tarball }}
+          tags: |
+            ${{ secrets.ACR_REGISTRY }}/kyuubi-base:${{ steps.meta.outputs.tag }}
+            ${{ secrets.ACR_REGISTRY }}/kyuubi-base:${{ steps.meta.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        run: |
+          {
+            echo "### kyuubi-base published"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Tag | \`${{ steps.meta.outputs.tag }}\` |"
+            echo "| Version | \`${{ steps.meta.outputs.version }}\` |"
+            echo "| Image | \`${{ secrets.ACR_REGISTRY }}/kyuubi-base:${{ steps.meta.outputs.tag }}\` |"
+            echo "| Tarball | \`${{ steps.meta.outputs.tarball }}\` |"
+            echo "| SHA256 | \`${{ steps.sum.outputs.sha256 }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"

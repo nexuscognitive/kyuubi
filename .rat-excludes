@@ -57,3 +57,9 @@ build/scala-*/**
 **/BeeLine.properties
 **/sql-keywords.properties
 **/python/**
+# Nexus One brand assets. These are proprietary NX1 marks, not ASF-licensed
+# source, so they are excluded rather than given an Apache header -- stamping one
+# on them would misstate their licence.
+**/nx1-logo.svg
+**/nx1-logo-white.svg
+**/nx1-mark.svg
