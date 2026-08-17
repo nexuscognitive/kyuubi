@@ -150,10 +150,20 @@ jobs:
           echo "version=$VERSION"  >> "$GITHUB_OUTPUT"
           echo "tarball=apache-kyuubi-${VERSION}-bin.tgz" >> "$GITHUB_OUTPUT"
 
-      # Spark is deliberately excluded: nx1-kyuubi supplies its own Spark image,
-      # and bundling a second copy would roughly double the layer for no use.
+      # Two engine binary distributions are deliberately excluded:
+      #
+      #   --spark-provided  nx1-kyuubi copies Spark from its own spark image, so
+      #                     bundling a second copy here is dead weight.
+      #   --hive-provided   the Hive engine is not used; it costs 355MB in every
+      #                     pull. Drop this flag to bring it back.
+      #
+      # Flink IS bundled (~509MB) because it is on the roadmap. The Kyuubi engine
+      # jars under externals/engines are included for every engine regardless, so
+      # what these flags control is only the third-party distribution.
       - name: Build binary distribution
-        run: ./build/dist --tgz --web-ui --spark-provided
+        run: >-
+          ./build/dist --tgz --web-ui
+          --spark-provided --hive-provided
 
       - name: Checksum
         id: sum
