@@ -24,7 +24,7 @@ import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
 import com.google.common.cache.{Cache, CacheBuilder, RemovalNotification}
-import io.fabric8.kubernetes.api.model.{ContainerState, Pod, Service}
+import io.fabric8.kubernetes.api.model.{ContainerState, Event, Pod, Service}
 import io.fabric8.kubernetes.client.KubernetesClient
 import io.fabric8.kubernetes.client.informers.{ResourceEventHandler, SharedIndexInformer}
 
@@ -376,6 +376,65 @@ class KubernetesApplicationOperation extends ApplicationOperation with Logging {
       Seq(s"Driver pod for ${toLabel(tag)} was not found " +
         "(it may not be scheduled yet, or has already been cleaned up).")
     }
+  }
+
+  /**
+   * Fetch recent Kubernetes events for the Spark driver pod of a batch, located by the kyuubi
+   * unique tag. Like the driver log, this reads directly from the Kubernetes API, so any Kyuubi
+   * instance can serve it regardless of which one owns the batch session. Only available while the
+   * driver pod exists.
+   */
+  private[kyuubi] def getDriverPodEventsByTag(tag: String, size: Int): Seq[String] = {
+    val maxLines = if (size <= 0) 500 else size
+    val result = kubernetesClients.values().asScala.iterator.flatMap { client =>
+      try {
+        client.pods()
+          .withLabel(LABEL_KYUUBI_UNIQUE_KEY, tag)
+          .withLabel(SPARK_ROLE_LABEL, SPARK_ROLE_DRIVER)
+          .list().getItems.asScala.headOption.map { pod =>
+          val name = pod.getMetadata.getName
+          val ns = pod.getMetadata.getNamespace
+          val uid = pod.getMetadata.getUid
+          val events = client.v1().events().inNamespace(ns)
+            .withField("involvedObject.uid", uid)
+            .list().getItems.asScala.toSeq
+          if (events.isEmpty) {
+            Seq(s"No events found for driver pod $name.")
+          } else {
+            events.sortBy(driverPodEventTimestamp).takeRight(maxLines).map(formatDriverPodEvent)
+          }
+        }
+      } catch {
+        case NonFatal(e) =>
+          warn(s"Failed to fetch driver pod events for ${toLabel(tag)}: ${e.getMessage}")
+          None
+      }
+    }
+    if (result.hasNext) {
+      result.next()
+    } else {
+      Seq(s"Driver pod for ${toLabel(tag)} was not found " +
+        "(it may not be scheduled yet, or has already been cleaned up).")
+    }
+  }
+
+  // Best available timestamp for ordering an event: lastTimestamp, then firstTimestamp, then the
+  // newer eventTime (MicroTime). Kubernetes emits RFC3339 UTC strings, which sort chronologically.
+  private def driverPodEventTimestamp(event: Event): String = {
+    Option(event.getLastTimestamp)
+      .orElse(Option(event.getFirstTimestamp))
+      .orElse(Option(event.getEventTime).map(_.getTime))
+      .getOrElse("")
+  }
+
+  // e.g. "[2026-07-23T18:20:01Z] Warning  FailedScheduling (x3): 0/5 nodes are available: ..."
+  private def formatDriverPodEvent(event: Event): String = {
+    val ts = driverPodEventTimestamp(event)
+    val level = Option(event.getType).getOrElse("Normal")
+    val reason = Option(event.getReason).getOrElse("")
+    val count = Option(event.getCount).map(_.intValue).filter(_ > 1).map(c => s" (x$c)").getOrElse("")
+    val message = Option(event.getMessage).getOrElse("").trim
+    s"[$ts] $level  $reason$count: $message"
   }
 
   /**

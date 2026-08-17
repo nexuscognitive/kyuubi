@@ -55,3 +55,12 @@ export function getBatchDriverLog(batchId: string, size = 500) {
     params: { size }
   })
 }
+
+// Recent Kubernetes events for the Spark driver pod of a batch (batchId == the batch session id).
+export function getBatchDriverPodEvents(batchId: string, size = 500) {
+  return request({
+    url: `api/v1/batches/${batchId}/driverPodEvents`,
+    method: 'get',
+    params: { size }
+  })
+}

@@ -17,6 +17,7 @@
 
 package org.apache.kyuubi.server.metadata
 
+import java.nio.file.{Files, Path, Paths}
 import java.util.concurrent.{ConcurrentHashMap, ThreadPoolExecutor, TimeUnit}
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -24,11 +25,12 @@ import scala.collection.JavaConverters._
 
 import com.google.common.annotations.VisibleForTesting
 
-import org.apache.kyuubi.{KyuubiException, Logging}
+import org.apache.kyuubi.{KyuubiException, Logging, Utils}
 import org.apache.kyuubi.client.api.v1.dto.Batch
 import org.apache.kyuubi.config.KyuubiConf
 import org.apache.kyuubi.config.KyuubiConf.METADATA_MAX_AGE
 import org.apache.kyuubi.engine.{ApplicationInfo, ApplicationState}
+import org.apache.kyuubi.engine.spark.SparkBatchProcessBuilder
 import org.apache.kyuubi.metrics.{MetricsConstants, MetricsSystem}
 import org.apache.kyuubi.operation.OperationState
 import org.apache.kyuubi.server.metadata.api.{KubernetesEngineInfo, Metadata, MetadataFilter}
@@ -216,6 +218,13 @@ class MetadataManager extends AbstractService("MetadataManager") {
     }
   }
 
+  def transferBatchOwnership(
+      identifier: String,
+      fromKyuubiInstance: String,
+      toKyuubiInstance: String): Boolean =
+    withMetadataRequestMetrics(
+      _metadataStore.transferMetadataOwnership(identifier, fromKyuubiInstance, toKyuubiInstance))
+
   def upsertKubernetesMetadata(kubernetesEngineInfo: KubernetesEngineInfo): Unit = {
     try {
       withMetadataRequestMetrics(_metadataStore.upsertKubernetesEngineInfo(kubernetesEngineInfo))
@@ -246,6 +255,8 @@ class MetadataManager extends AbstractService("MetadataManager") {
       } catch {
         case e: Throwable => error("Error cleaning up the metadata by age", e)
       }
+      // Same schedule/process that ages batches out of the UI also removes their submit logs.
+      Utils.tryLogNonFatalError(cleanupOrphanedBatchSubmitLogs())
     }
 
     scheduleTolerableRunnableWithFixedDelay(
@@ -286,6 +297,47 @@ class MetadataManager extends AbstractService("MetadataManager") {
             s"will continue in the next round.")
         }
       }
+    }
+  }
+
+  /**
+   * Delete spark-submit logs (`kyuubi-spark-batch-submit-<batchId>.log`, written by
+   * [[SparkBatchProcessBuilder]]) whose batch has left the metastore -- i.e. its row was already
+   * removed by the age-based metadata cleanup (so it has disappeared from the UI), or it never had a
+   * record (orphaned by a crash before insert). Runs on the metadata-cleaner schedule. The log is
+   * local to the instance that submitted the batch, so each instance only ever deletes its own
+   * files; deletion for a batch owned by a peer is a no-op here. Best effort: never throws.
+   */
+  private[metadata] def cleanupOrphanedBatchSubmitLogs(): Unit = {
+    sys.env.get("KYUUBI_WORK_DIR_ROOT").map(Paths.get(_)).filter(p => Files.isDirectory(p))
+      .foreach(cleanupOrphanedBatchSubmitLogsUnder)
+  }
+
+  private[metadata] def cleanupOrphanedBatchSubmitLogsUnder(workRoot: Path): Unit = {
+    val prefix = s"${SparkBatchProcessBuilder.BATCH_SUBMIT_LOG_MODULE}-"
+    val suffix = ".log"
+    withDirectoryStream(workRoot) { userDirs =>
+      userDirs.asScala.filter(p => Files.isDirectory(p)).foreach { userDir =>
+        withDirectoryStream(userDir, s"$prefix*$suffix") { logs =>
+          logs.asScala.foreach { logPath =>
+            val batchId = logPath.getFileName.toString.stripPrefix(prefix).stripSuffix(suffix)
+            if (batchId.nonEmpty && _metadataStore.getMetadata(batchId) == null) {
+              if (Files.deleteIfExists(logPath)) {
+                info(s"Cleaned up orphaned batch submit log $logPath")
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  private def withDirectoryStream[T](dir: Path, glob: String = "*")(
+      f: java.nio.file.DirectoryStream[Path] => T): Unit = {
+    Utils.tryLogNonFatalError {
+      val stream = Files.newDirectoryStream(dir, glob)
+      try f(stream)
+      finally stream.close()
     }
   }
 

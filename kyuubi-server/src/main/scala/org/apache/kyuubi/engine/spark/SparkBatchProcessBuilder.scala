@@ -17,6 +17,9 @@
 
 package org.apache.kyuubi.engine.spark
 
+import java.io.File
+import java.nio.file.Files
+
 import scala.collection.mutable
 
 import org.apache.kyuubi.config.KyuubiConf
@@ -78,9 +81,32 @@ class SparkBatchProcessBuilder(
     }.getOrElse(Map())
   }
 
-  override protected def module: String = "kyuubi-spark-batch-submit"
+  override protected def module: String = SparkBatchProcessBuilder.BATCH_SUBMIT_LOG_MODULE
+
+  // Name the spark-submit log deterministically by the batch session id so it is trivial to find
+  // which log belongs to which batch (was `kyuubi-spark-batch-submit.log.<rollingIndex>`). Because
+  // the name is unique per batch, we drop the base class's timeout-based file reuse; these logs are
+  // instead cleaned up by the metadata cleaner once the batch leaves the metastore
+  // (see MetadataManager.cleanupOrphanedBatchSubmitLogs).
+  override private[kyuubi] lazy val engineLog: File = {
+    Files.createDirectories(workingDir)
+    val file = new File(workingDir.toFile, s"$module-$batchId.log")
+    if (file.exists()) {
+      // A recycled/retried batch id: start from a clean file.
+      file.delete()
+    }
+    file.createNewFile()
+    file.setLastModified(System.currentTimeMillis())
+    info(s"Logging to $file")
+    file
+  }
 
   override private[spark] def getSparkOption(key: String) = {
     batchConf.get(key).orElse(super.getSparkOption(key))
   }
+}
+
+object SparkBatchProcessBuilder {
+  // Prefix of the spark-submit log file name; the full name is `<module>-<batchId>.log`.
+  val BATCH_SUBMIT_LOG_MODULE: String = "kyuubi-spark-batch-submit"
 }

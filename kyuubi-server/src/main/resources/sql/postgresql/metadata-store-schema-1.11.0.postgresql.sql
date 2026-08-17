@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS metadata(
     engine_error text,
     end_time bigint,
     priority int NOT NULL DEFAULT 10,
-    peer_instance_closed boolean DEFAULT FALSE
+    peer_instance_closed boolean DEFAULT FALSE,
+    version int NOT NULL DEFAULT 0
 );
 
 COMMENT ON COLUMN metadata.key_id IS 'the auto increment key id';
@@ -51,6 +52,7 @@ COMMENT ON COLUMN metadata.engine_error IS 'the engine application diagnose';
 COMMENT ON COLUMN metadata.end_time IS 'the metadata end time';
 COMMENT ON COLUMN metadata.priority IS 'the application priority, high value means high priority';
 COMMENT ON COLUMN metadata.peer_instance_closed IS 'closed by peer kyuubi instance';
+COMMENT ON COLUMN metadata.version IS 'optimistic-lock revision, incremented on every update';
 
 CREATE UNIQUE INDEX IF NOT EXISTS unique_identifier_index ON metadata(identifier);
 CREATE INDEX IF NOT EXISTS user_name_index ON metadata(user_name);

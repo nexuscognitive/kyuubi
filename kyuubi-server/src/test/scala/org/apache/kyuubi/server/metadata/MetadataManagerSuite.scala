@@ -17,15 +17,17 @@
 
 package org.apache.kyuubi.server.metadata
 
+import java.nio.file.Files
 import java.util.UUID
 
 import scala.collection.JavaConverters._
 
 import org.scalatest.time.SpanSugar.convertIntToGrainOfTime
 
-import org.apache.kyuubi.{KyuubiException, KyuubiFunSuite}
+import org.apache.kyuubi.{KyuubiException, KyuubiFunSuite, Utils}
 import org.apache.kyuubi.config.KyuubiConf
 import org.apache.kyuubi.config.KyuubiConf._
+import org.apache.kyuubi.engine.spark.SparkBatchProcessBuilder
 import org.apache.kyuubi.metrics.{MetricsConstants, MetricsSystem}
 import org.apache.kyuubi.metrics.MetricsConstants._
 import org.apache.kyuubi.operation.OperationState
@@ -193,6 +195,31 @@ class MetadataManagerSuite extends KyuubiFunSuite {
 
         val metadata3 = metadataManager.pickBatchForSubmitting(mockKyuubiInstance)
         assert(metadata3.exists(m => m.identifier === "mock_batch_job_3"))
+    }
+  }
+
+  test("cleanupOrphanedBatchSubmitLogs removes logs whose batch left the metastore") {
+    withMetadataManager(Map.empty) { metadataManager =>
+      val workRoot = Utils.createTempDir()
+      val userDir = Files.createDirectories(workRoot.resolve("kyuubi"))
+      val prefix = s"${SparkBatchProcessBuilder.BATCH_SUBMIT_LOG_MODULE}-"
+
+      // a submit log whose batch still exists in the metastore -> kept
+      val live = newMetadata()
+      metadataManager.insertMetadata(live, asyncRetryOnError = false)
+      val liveLog = Files.createFile(userDir.resolve(s"$prefix${live.identifier}.log"))
+
+      // a submit log with no metastore record (batch aged out / never inserted) -> deleted
+      val orphanLog = Files.createFile(userDir.resolve(s"${prefix}nonexistent-batch.log"))
+
+      // an unrelated file -> untouched
+      val unrelated = Files.createFile(userDir.resolve("some-other-file.log"))
+
+      metadataManager.cleanupOrphanedBatchSubmitLogsUnder(workRoot)
+
+      assert(Files.exists(liveLog))
+      assert(!Files.exists(orphanLog))
+      assert(Files.exists(unrelated))
     }
   }
 

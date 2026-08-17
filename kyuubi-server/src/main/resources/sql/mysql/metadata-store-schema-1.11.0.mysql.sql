@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS metadata(
     end_time bigint COMMENT 'the metadata end time',
     priority int NOT NULL DEFAULT 10 COMMENT 'the application priority, high value means high priority',
     peer_instance_closed boolean default '0' COMMENT 'closed by peer kyuubi instance',
+    version int NOT NULL DEFAULT 0 COMMENT 'optimistic-lock revision, incremented on every update',
     UNIQUE INDEX unique_identifier_index(identifier),
     INDEX user_name_index(user_name),
     INDEX engine_type_index(engine_type),

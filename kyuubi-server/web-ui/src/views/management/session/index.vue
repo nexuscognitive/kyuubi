@@ -119,7 +119,7 @@
           }}
         </template>
       </el-table-column>
-      <el-table-column fixed="right" :label="$t('operation.text')" width="120">
+      <el-table-column fixed="right" :label="$t('operation.text')" width="160">
         <template #default="scope">
           <el-space wrap>
             <el-tooltip
@@ -132,6 +132,17 @@
                 icon="Document"
                 circle
                 @click="openDriverLog(scope.row)" />
+            </el-tooltip>
+            <el-tooltip
+              v-if="scope.row.sessionType === 'BATCH'"
+              effect="dark"
+              :content="$t('driver_events')"
+              placement="top">
+              <el-button
+                type="warning"
+                icon="Bell"
+                circle
+                @click="openDriverEvents(scope.row)" />
             </el-tooltip>
             <el-tooltip
               v-if="isOwnerDown(scope.row)"
@@ -190,12 +201,34 @@
     </div>
     <pre v-loading="driverLogLoading" class="driver-log">{{ driverLogText }}</pre>
   </el-dialog>
+
+  <el-dialog
+    v-model="driverEventsVisible"
+    :title="$t('driver_events') + (driverEventsBatchId ? ': ' + driverEventsBatchId : '')"
+    width="72%"
+    top="6vh">
+    <div class="driver-log-toolbar">
+      <el-button
+        size="small"
+        icon="Refresh"
+        :loading="driverEventsLoading"
+        @click="refreshDriverEvents">
+        {{ $t('refresh') }}
+      </el-button>
+    </div>
+    <pre v-loading="driverEventsLoading" class="driver-log">{{ driverEventsText }}</pre>
+  </el-dialog>
 </template>
 
 <script lang="ts" setup>
   import { computed, ref } from 'vue'
   import { format } from 'date-fns'
-  import { getAllSessions, deleteSession, getBatchDriverLog } from '@/api/session'
+  import {
+    getAllSessions,
+    deleteSession,
+    getBatchDriverLog,
+    getBatchDriverPodEvents
+  } from '@/api/session'
   import { ElMessage } from 'element-plus'
   import { useI18n } from 'vue-i18n'
   import { useTable } from '@/utils/use-table'
@@ -332,6 +365,33 @@
       })
       .finally(() => {
         driverLogLoading.value = false
+      })
+  }
+
+  // Spark driver pod Kubernetes events viewer (batch sessions). Same direct-from-K8s model as the
+  // driver log, so it works from any instance while the driver pod exists.
+  const driverEventsVisible = ref(false)
+  const driverEventsLoading = ref(false)
+  const driverEventsText = ref('')
+  const driverEventsBatchId = ref('')
+  const openDriverEvents = (row: { identifier: string }) => {
+    driverEventsBatchId.value = row.identifier
+    driverEventsVisible.value = true
+    refreshDriverEvents()
+  }
+  const refreshDriverEvents = () => {
+    if (!driverEventsBatchId.value) return
+    driverEventsLoading.value = true
+    getBatchDriverPodEvents(driverEventsBatchId.value, 500)
+      .then((res: any) => {
+        const lines = res?.logRowSet || []
+        driverEventsText.value = lines.length ? lines.join('\n') : t('no_events')
+      })
+      .catch(() => {
+        driverEventsText.value = t('no_events')
+      })
+      .finally(() => {
+        driverEventsLoading.value = false
       })
   }
 

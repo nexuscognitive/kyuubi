@@ -34,8 +34,13 @@ import org.eclipse.jetty.servlet.{ErrorPageErrorHandler, FilterHolder, ServletHo
 import org.apache.kyuubi.{KyuubiException, Utils}
 import org.apache.kyuubi.config.KyuubiConf
 import org.apache.kyuubi.config.KyuubiConf._
+import org.apache.kyuubi.ha.HighAvailabilityConf.HA_NAMESPACE
+import org.apache.kyuubi.ha.client.DiscoveryClientProvider.withDiscoveryClient
+import org.apache.kyuubi.ha.client.DiscoveryPaths
+import org.apache.kyuubi.ha.client.ServiceDiscovery
 import org.apache.kyuubi.metrics.{MetricsConstants, MetricsSystem}
 import org.apache.kyuubi.metrics.MetricsConstants.OPERATION_BATCH_PENDING_MAX_ELAPSE
+import org.apache.kyuubi.operation.OperationState
 import org.apache.kyuubi.server.api.v1.ApiRootResource
 import org.apache.kyuubi.server.http.authentication.{AuthenticationFilter, KyuubiHttpAuthenticationFactory}
 import org.apache.kyuubi.server.ui.{JettyServer, JettyUtils}
@@ -65,6 +70,16 @@ class KyuubiRestFrontendService(override val serverable: Serverable)
   private[kyuubi] lazy val batchService: Option[KyuubiBatchService] =
     if (conf.get(BATCH_SUBMITTER_ENABLED)) {
       Some(new KyuubiBatchService(this, sessionManager))
+    } else {
+      None
+    }
+
+  // Reconciles batch ownership against live discovery membership so a dead/removed instance's
+  // batches are taken over automatically. Needs both a metadata store (batches) and discovery
+  // (liveness), i.e. the same prerequisites as batch HA.
+  private[kyuubi] lazy val batchTakeoverService: Option[BatchTakeoverService] =
+    if (conf.get(BATCH_SUBMITTER_ENABLED) && ServiceDiscovery.supportServiceDiscovery(conf)) {
+      Some(new BatchTakeoverService(this, sessionManager))
     } else {
       None
     }
@@ -106,6 +121,7 @@ class KyuubiRestFrontendService(override val serverable: Serverable)
       conf.get(FRONTEND_REST_JETTY_STOP_TIMEOUT),
       conf.get(FRONTEND_JETTY_SEND_VERSION_ENABLED))
     batchService.foreach(addService)
+    batchTakeoverService.foreach(addService)
     super.initialize(conf)
   }
 
@@ -288,6 +304,22 @@ class KyuubiRestFrontendService(override val serverable: Serverable)
       }
     }
 
+  /**
+   * The REST connection URLs (host:restPort) of all currently-registered Kyuubi servers,
+   * including self. Discovery registers the THRIFT_BINARY frontend, so we remap each discovered
+   * host to this node's REST port (homogeneous deployment). Used by batch takeover to decide
+   * which batch owners are dead (an owner not in this set has lost its discovery lease).
+   */
+  private[kyuubi] def liveRestInstances(): Set[String] = {
+    val self = connectionUrl
+    val restPort = self.substring(self.lastIndexOf(":") + 1)
+    val serverSpec = DiscoveryPaths.makePath(null, conf.get(HA_NAMESPACE))
+    val peers = withDiscoveryClient(conf) { discoveryClient =>
+      discoveryClient.getServiceNodesInfo(serverSpec).map(node => s"${node.host}:$restPort")
+    }
+    (peers :+ self).toSet
+  }
+
   private def getBatchPendingMaxElapse(): Long = {
     val batchPendingElapseTimes = sessionManager.allSessions().map {
       case session: KyuubiBatchSession => session.batchJobSubmissionOp.getPendingElapsedTime
@@ -328,9 +360,51 @@ class KyuubiRestFrontendService(override val serverable: Serverable)
   override def stop(): Unit = synchronized {
     ThreadUtils.shutdown(batchChecker)
     if (isStarted.getAndSet(false)) {
+      handoffBatchSessionsToPeers()
       server.stop()
     }
     super.stop()
+  }
+
+  /**
+   * On graceful shutdown, proactively hand this instance's live batch sessions to surviving peers
+   * by reassigning ownership in the metadata store (atomic CAS). Session close on shutdown does not
+   * kill the batch drivers (they run detached in cluster mode), so this only moves who tracks them;
+   * each peer's takeover sweep then re-attaches. If handoff is partial or skipped, the sweep still
+   * reclaims them once this instance's discovery lease expires - so it is best-effort acceleration,
+   * not a correctness dependency.
+   */
+  private def handoffBatchSessionsToPeers(): Unit = {
+    if (batchTakeoverService.isEmpty || sessionManager.metadataManager.isEmpty) return
+    try {
+      val peers = (liveRestInstances() - connectionUrl).toSeq
+      val localBatchIds = sessionManager.allSessions().collect {
+        case s: KyuubiBatchSession
+            if !OperationState.isTerminal(s.batchJobSubmissionOp.getStatus.state) =>
+          s.batchJobSubmissionOp.batchId
+      }.toSeq
+      if (peers.isEmpty) {
+        if (localBatchIds.nonEmpty) {
+          warn(
+            s"No live peers to hand off ${localBatchIds.size} batch session(s) to; they will be" +
+              s" reclaimed by a peer's takeover sweep after this instance leaves discovery")
+        }
+        return
+      }
+      localBatchIds.zipWithIndex.foreach { case (batchId, idx) =>
+        val peer = peers(idx % peers.size)
+        try {
+          if (sessionManager.metadataManager.exists(
+              _.transferBatchOwnership(batchId, connectionUrl, peer))) {
+            info(s"Handed off batch $batchId to peer $peer for graceful shutdown")
+          }
+        } catch {
+          case e: Throwable => warn(s"Failed to hand off batch $batchId to $peer", e)
+        }
+      }
+    } catch {
+      case e: Throwable => warn("Error during batch handoff on shutdown", e)
+    }
   }
 
   def getRealUser(): String = {

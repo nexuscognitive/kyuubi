@@ -109,6 +109,11 @@ class KyuubiApplicationManager(metadataManager: Option[MetadataManager])
     getKubernetesApplicationOperation.map(_.getDriverLogByTag(tag, size)).getOrElse(
       Seq("Driver log is only available for Kubernetes batch applications."))
 
+  /** Recent Kubernetes events for a batch's Spark driver pod (Kubernetes only), by unique tag. */
+  def getDriverPodEvents(tag: String, size: Int): Seq[String] =
+    getKubernetesApplicationOperation.map(_.getDriverPodEventsByTag(tag, size)).getOrElse(
+      Seq("Driver pod events are only available for Kubernetes batch applications."))
+
   /** Current driver pod state per batch (Kubernetes only), keyed by unique tag (== batch id). */
   def getDriverPodStates(): Map[String, String] =
     getKubernetesApplicationOperation.map(_.getDriverPodStates()).getOrElse(Map.empty)

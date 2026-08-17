@@ -27,6 +27,8 @@ export default {
   search: 'Search',
   reconnecting: 'Reconnecting',
   driver_log: 'Driver Log',
+  driver_events: 'Driver Events',
+  no_events: 'No events',
   driver_state: 'Driver State',
   refresh: 'Refresh',
   owner_down_hint:

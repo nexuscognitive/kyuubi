@@ -351,6 +351,20 @@ class BatchJobSubmission(
           throw new KyuubiException(s"$batchType batch[$batchId] job failed: ${_applicationInfo}")
         case None =>
       }
+    } catch {
+      case e: Throwable =>
+        // The driver pod name is derived from the batchId (kyuubi-unique-tag), so if this batch was
+        // already submitted by a former owner before a takeover, our spark-submit collides ("pod
+        // already exists"). Rather than fail a healthy job, re-check K8s by tag: if a driver
+        // already exists, attach to it (K8s is the final dedup authority); otherwise rethrow.
+        _applicationInfo = currentApplicationInfo()
+        applicationId(_applicationInfo) match {
+          case Some(appId) =>
+            warn(s"$batchType batch[$batchId] submission failed, but a driver already exists for" +
+              s" its tag; attaching to $appId instead of resubmitting.", e)
+            monitorBatchJob(appId)
+          case None => throw e
+        }
     } finally {
       val destroyProcess = !waitEngineCompletion
       if (destroyProcess) {
