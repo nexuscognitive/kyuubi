@@ -92,6 +92,25 @@ describe('login dialog', () => {
     expect(wrapper.text()).not.toContain('Continue with SSO')
   })
 
+  /*
+   * Regression: the modal renders at the app root, so it also mounts on the OIDC
+   * callback page. There it sees an unauthenticated session and used to fire a
+   * silent authorization request, which overwrote the single-use state/verifier
+   * that the callback was about to exchange -- the sign-in then failed with
+   * "Authorization state mismatch". It must stay out of the way entirely.
+   */
+  test('does not start a new authorization request on the callback page', async () => {
+    getWebUIConfig.mockResolvedValue(oidcConfig)
+    const original = window.location.pathname
+    window.history.replaceState({}, '', '/ui/auth/callback?code=abc&state=xyz')
+    try {
+      await mountLogin()
+      expect(beginLogin).not.toHaveBeenCalled()
+    } finally {
+      window.history.replaceState({}, '', original)
+    }
+  })
+
   test('offers SSO once a silent attempt has come back needing interaction', async () => {
     getWebUIConfig.mockResolvedValue(oidcConfig)
     silentAlreadyFailed()

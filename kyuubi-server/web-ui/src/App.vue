@@ -17,11 +17,23 @@
 -->
 
 <script lang="ts" setup>
-  // This starter template is using Vue 3 <script setup> SFCs
+  import { computed } from 'vue'
+  import { useRoute } from 'vue-router'
+
+  const route = useRoute()
+
+  /*
+   * The login modal must not exist while the OIDC callback is being exchanged.
+   * It starts a silent authorization request when it sees an unauthenticated
+   * session -- which is exactly the state the callback page is in -- and that
+   * request overwrites the single-use state/verifier the exchange is about to
+   * read, failing the sign-in with a state mismatch.
+   */
+  const isAuthCallbackRoute = computed(() => route.name === 'auth-callback')
 </script>
 
 <template>
-  <login-modal />
+  <login-modal v-if="!isAuthCallbackRoute" />
   <router-view />
 </template>
 

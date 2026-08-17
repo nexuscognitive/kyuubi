@@ -71,7 +71,7 @@
   import { useI18n } from 'vue-i18n'
   import { useAuthStore } from '@/pinia/auth/auth'
   import { getWebUIConfig } from '@/api/server'
-  import { silentAuthExhausted } from '@/utils/oidc'
+  import { isAuthCallback, silentAuthExhausted } from '@/utils/oidc'
 
   const { t } = useI18n()
   const authStore = useAuthStore()
@@ -127,6 +127,11 @@
    * bouncing between app and provider.
    */
   const handleAuthRequired = async () => {
+    // Never start a new authorization request while the callback is being
+    // exchanged: beginLogin would overwrite the single-use state/verifier that
+    // completeLogin is about to read, and the sign-in would fail with a state
+    // mismatch.
+    if (isAuthCallback()) return
     loginError.value = ''
     if (oidcEnabled.value && !silentAuthExhausted()) {
       try {

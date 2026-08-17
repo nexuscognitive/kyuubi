@@ -82,9 +82,24 @@ export function resetSilentAuth(): void {
   sessionStorage.removeItem(SILENT_FAILED_KEY)
 }
 
+/** Path the provider redirects back to, relative to the app base. */
+export const CALLBACK_PATH = '/ui/auth/callback'
+
 /** Where the provider sends the browser back to. Must be registered on the client. */
 export function redirectUri(): string {
-  return `${window.location.origin}/ui/auth/callback`
+  return `${window.location.origin}${CALLBACK_PATH}`
+}
+
+/**
+ * True while the browser is on the callback page.
+ *
+ * Anything that might start a *new* authorization request has to check this. The
+ * callback carries a single-use state/verifier pair in sessionStorage that
+ * [[completeLogin]] is about to consume; a concurrent [[beginLogin]] overwrites
+ * them and the exchange then fails with a state mismatch.
+ */
+export function isAuthCallback(): boolean {
+  return window.location.pathname.startsWith(CALLBACK_PATH)
 }
 
 function base64UrlEncode(bytes: Uint8Array): string {
