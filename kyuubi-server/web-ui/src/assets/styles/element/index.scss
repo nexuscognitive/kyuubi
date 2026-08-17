@@ -15,41 +15,158 @@
  * limitations under the License.
  */
 
+@use '../nx1-tokens' as nx1;
+
+/*
+ * Element Plus is themed in two passes:
+ *
+ *  1. SCSS maps, below, for anything Element computes at build time -- the
+ *     tint/shade ramps derived from each brand colour, and the menu, which bakes
+ *     its colours into selectors rather than reading CSS variables.
+ *  2. CSS custom properties, further down, for surfaces, borders, text, radius
+ *     and type. These are overridable at runtime and are what the rest of the
+ *     app should consume.
+ */
+
 $--colors: (
   'primary': (
-    'base': #242e42,
+    'base': nx1.$nx1-primary,
   ),
   'success': (
-    'base': #21ba45,
+    'base': nx1.$nx1-success,
   ),
   'warning': (
-    'base': #f2711c,
+    'base': nx1.$nx1-warning,
   ),
   'danger': (
-    'base': #db2828,
+    'base': nx1.$nx1-danger,
   ),
   'error': (
-    'base': #db2828,
+    'base': nx1.$nx1-danger,
   ),
   'info': (
-    'base': #2f9688,
+    'base': nx1.$nx1-teal,
   ),
 );
 
+// Navy chrome with the bright accent for the active/hover rail.
 $--menus: (
   'item-height': 46px,
   'icon-width': 24px,
-  'text-color': 'rgba(255, 255, 255, .75)',
+  'text-color': 'rgba(255, 255, 255, .72)',
   'hover-text-color': '#fff',
-  'hover-bg-color': '#1890ff',
-  'bg-color': '#001529',
-  'active-color': '#1890ff',
+  'hover-bg-color': 'rgba(23, 107, 248, .18)',
+  'bg-color': nx1.$nx1-navy,
+  'active-color': '#fff',
+);
+
+$--border-radius: (
+  'base': nx1.$nx1-radius-base,
+  'small': nx1.$nx1-radius-sm,
+  'round': 999px,
+  'circle': 100%,
 );
 
 @forward 'element-plus/theme-chalk/src/common/var.scss' with (
-    // do not use same name, it will override.
-    $colors: $--colors,
-    $menu: $--menus
-  );
+  // do not use same name, it will override.
+  $colors: $--colors,
+  $menu: $--menus,
+  $border-radius: $--border-radius
+);
 
-@use "element-plus/theme-chalk/src/index.scss" as *;
+@use 'element-plus/theme-chalk/src/index.scss' as *;
+
+/*
+ * Surfaces, borders, text and type. Element derives most component chrome from
+ * these, so overriding here reaches every view without touching them one by one.
+ */
+:root {
+  --el-color-primary: var(--nx1-primary);
+  --el-color-info: var(--nx1-teal);
+
+  --el-bg-color: var(--nx1-card);
+  --el-bg-color-page: var(--nx1-canvas);
+  --el-bg-color-overlay: var(--nx1-card);
+
+  --el-text-color-primary: var(--nx1-text);
+  --el-text-color-regular: #3d3830;
+  --el-text-color-secondary: var(--nx1-text-muted);
+  --el-text-color-placeholder: #8c867c;
+
+  --el-border-color: var(--nx1-border);
+  --el-border-color-light: var(--nx1-border);
+  --el-border-color-lighter: #ece7df;
+  --el-border-color-extra-light: #f3efe9;
+
+  --el-fill-color: var(--nx1-muted);
+  --el-fill-color-light: #f5f1ea;
+  --el-fill-color-lighter: #f8f5f0;
+  --el-fill-color-blank: var(--nx1-card);
+
+  --el-border-radius-base: var(--nx1-radius);
+  --el-border-radius-small: var(--nx1-radius-sm);
+
+  --el-font-family: var(--nx1-font-body);
+
+  --el-box-shadow-light: var(--nx1-shadow-1);
+  --el-box-shadow: var(--nx1-shadow-2);
+}
+
+// -- Component adjustments ---------------------------------------------------
+
+// Cards are the core surface: pure white, hairline border, barely-there shadow.
+.el-card {
+  border: 1px solid var(--nx1-border);
+  border-radius: var(--nx1-radius);
+  box-shadow: var(--nx1-shadow-1) !important;
+}
+
+// Tables: quiet header, cream rules, no heavy zebra.
+.el-table {
+  --el-table-border-color: var(--nx1-border);
+  --el-table-header-bg-color: #f7f3ec;
+  --el-table-header-text-color: var(--nx1-text-muted);
+  --el-table-row-hover-bg-color: #f5f1ea;
+
+  th.el-table__cell {
+    font-family: var(--nx1-font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+}
+
+// Buttons keep the geometric sans; no shouty weight.
+.el-button {
+  font-family: var(--nx1-font-body);
+  font-weight: 500;
+}
+
+// Tags read as small mono labels rather than filled pills.
+.el-tag {
+  border-radius: var(--nx1-radius-sm);
+  font-family: var(--nx1-font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.el-dialog {
+  border-radius: var(--nx1-radius-lg);
+}
+
+.el-dialog__title {
+  font-family: var(--nx1-font-display);
+  font-weight: 400;
+}
+
+.el-input__wrapper,
+.el-select__wrapper {
+  border-radius: var(--nx1-radius-sm);
+}
+
+.el-pagination {
+  --el-pagination-button-bg-color: transparent;
+  font-family: var(--nx1-font-body);
+}

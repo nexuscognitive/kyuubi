@@ -1,0 +1,110 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/*
+ * Nexus One design tokens.
+ *
+ * Mirrors the NX1 portal palette so the Kyuubi console reads as the same product.
+ * Values come from the Nexus One design guide; keep them in sync with
+ * `portal/app/globals.css` rather than hand-tuning here.
+ *
+ * SCSS variables are exported for Element Plus's build-time maps (which compute
+ * tint/shade ramps); the CSS custom properties are what component styles should
+ * consume so a theme change is a one-file edit.
+ */
+
+// -- Core palette ------------------------------------------------------------
+$nx1-primary: #0e56d7; // deep blue  - primary buttons, links, key emphasis
+$nx1-accent: #176bf8; // bright blue - hover/active, highlights, eyebrows
+$nx1-navy: #021941; // sidebar/header chrome, primary text
+$nx1-canvas: #fbfaf8; // warm off-white page background
+$nx1-card: #ffffff; // pure white, lifts off the canvas
+$nx1-muted: #efeae3; // warm cream, secondary surfaces
+$nx1-border: #e4ded5; // cream hairlines and dividers
+$nx1-text: #1a1712; // primary body text on light surfaces
+$nx1-text-muted: #605b52; // secondary/supporting copy
+
+// -- Editorial accents (one hue per section, never mixed) ---------------------
+$nx1-sky: #176bf8;
+$nx1-moss: #7e9e47;
+$nx1-terracotta: #b55b3b;
+$nx1-violet: #824dcb;
+$nx1-teal: #29667a;
+
+// -- Status ------------------------------------------------------------------
+$nx1-danger: #d93226;
+$nx1-success: #7e9e47; // moss
+$nx1-warning: #f59e0b;
+$nx1-info: #2e7df5;
+
+// -- Type --------------------------------------------------------------------
+// Reckless/Roobert are licensed faces and are not bundled. They are named first
+// so an environment that has them installed picks them up; everything after is
+// the documented fallback chain. Nothing is fetched over the network -- the
+// console has to render inside air-gapped clusters.
+$nx1-font-display: 'Reckless', 'Fraunces', 'Newsreader', Georgia, 'Times New Roman',
+  serif;
+$nx1-font-body: 'Roobert', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+  Roboto, 'Helvetica Neue', Arial, sans-serif;
+$nx1-font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas,
+  'Liberation Mono', monospace;
+
+// -- Shape -------------------------------------------------------------------
+$nx1-radius-sm: 8px;
+$nx1-radius-md: 10px;
+$nx1-radius-base: 12px;
+$nx1-radius-lg: 16px;
+
+:root {
+  --nx1-primary: #{$nx1-primary};
+  --nx1-accent: #{$nx1-accent};
+  --nx1-navy: #{$nx1-navy};
+  --nx1-canvas: #{$nx1-canvas};
+  --nx1-card: #{$nx1-card};
+  --nx1-muted: #{$nx1-muted};
+  --nx1-border: #{$nx1-border};
+  --nx1-text: #{$nx1-text};
+  --nx1-text-muted: #{$nx1-text-muted};
+
+  --nx1-sky: #{$nx1-sky};
+  --nx1-moss: #{$nx1-moss};
+  --nx1-terracotta: #{$nx1-terracotta};
+  --nx1-violet: #{$nx1-violet};
+  --nx1-teal: #{$nx1-teal};
+
+  --nx1-danger: #{$nx1-danger};
+  --nx1-success: #{$nx1-success};
+  --nx1-warning: #{$nx1-warning};
+  --nx1-info: #{$nx1-info};
+
+  --nx1-font-display: #{$nx1-font-display};
+  --nx1-font-body: #{$nx1-font-body};
+  --nx1-font-mono: #{$nx1-font-mono};
+
+  --nx1-radius-sm: #{$nx1-radius-sm};
+  --nx1-radius-md: #{$nx1-radius-md};
+  --nx1-radius: #{$nx1-radius-base};
+  --nx1-radius-lg: #{$nx1-radius-lg};
+
+  // Depth: a hairline carries the edge, the shadow only softens it. The guide is
+  // explicit that light surfaces lean on the border rather than a drop shadow.
+  --nx1-shadow-1: 0 1px 2px rgba(2, 25, 65, 0.04);
+  --nx1-shadow-2: 0 2px 8px rgba(2, 25, 65, 0.06);
+  --nx1-shadow-3: 0 8px 24px rgba(2, 25, 65, 0.08);
+
+  --nx1-header-height: 64px;
+}

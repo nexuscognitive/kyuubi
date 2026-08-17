@@ -18,8 +18,9 @@
 
 <template>
   <header>
-    <img v-if="!isCollapse" src="@/assets/images/kyuubi-logo.svg" />
-    <img v-else class="collapsed-logo" src="@/assets/images/kyuubi.png" />
+    <!-- White lockup on the navy rail; the icon-only mark when collapsed. -->
+    <img v-if="!isCollapse" src="@/assets/images/nx1-logo-white.svg" />
+    <img v-else class="collapsed-logo" src="@/assets/images/nx1-mark.svg" />
     <span v-if="!isCollapse">{{ version }}</span>
   </header>
   <c-menu :is-collapse="isCollapse" :active-path="activePath" :menus="menus" />
@@ -42,39 +43,42 @@
 </script>
 
 <style lang="scss" scoped>
-  $height: 64px;
   header {
     width: 100%;
     position: absolute;
     top: 0;
     left: 0;
-    height: $height;
-    line-height: $height;
+    height: var(--nx1-header-height);
+    line-height: var(--nx1-header-height);
     padding: 0 16px;
     display: flex;
-    align-items: flex-end;
+    align-items: center;
     justify-content: space-between;
     box-sizing: border-box;
+    // Aligns the navy rail with the content header's hairline.
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    // The wordmark is 346x75; height is left auto so it is never stretched.
     img {
-      width: 140px;
-      height: 50px;
+      width: 132px;
+      height: auto;
       &.collapsed-logo {
-        width: 40px;
-        height: 40px;
+        width: 32px;
+        height: 32px;
         position: relative;
-        top: -4px;
-        left: -4px;
+        left: -2px;
       }
     }
+    // The version reads as a mono eyebrow rather than body text.
     span {
-      position: relative;
-      top: 17px;
+      font-family: var(--nx1-font-mono);
       font-size: 10px;
-      font-family: 'Myriad Pro', 'Helvetica Neue', Arial, Helvetica, sans-serif;
-      color: rgba(255, 255, 255, 0.87);
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.55);
     }
   }
   .el-menu {
-    margin-top: $height;
+    margin-top: var(--nx1-header-height);
   }
 </style>

@@ -80,9 +80,30 @@
     &:not(.el-menu--collapse) {
       width: 260px;
     }
+    /*
+     * The active item is marked by a bright-blue edge rail over a soft tint,
+     * not a full-width solid slab. On the navy chrome a solid accent block is
+     * the loudest thing on the page and pulls focus away from the content.
+     */
     .el-menu-item.is-active {
-      background: #1890ff;
+      position: relative;
+      background: rgba(23, 107, 248, 0.16);
       color: #fff;
+
+      &::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        bottom: 0;
+        width: 3px;
+        background: var(--nx1-accent);
+      }
+
+      > i,
+      > span {
+        color: #fff;
+      }
     }
     .el-sub-menu__title,
     .el-menu-item {

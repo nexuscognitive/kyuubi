@@ -22,7 +22,8 @@
     :close-on-click-modal="false"
     width="400px">
     <div class="dialog-header">
-      <img class="logo" src="@/assets/images/kyuubi-logo.svg" />
+      <!-- Standard lockup: the dialog sits on a light surface. -->
+      <img class="logo" src="@/assets/images/nx1-logo.svg" />
     </div>
     <el-form class="login-form">
       <el-form-item>
@@ -110,7 +111,8 @@
   }
 
   .login-error {
-    color: red;
+    color: var(--nx1-danger);
+    font-size: 13px;
     margin-top: 10px;
     text-align: left;
   }

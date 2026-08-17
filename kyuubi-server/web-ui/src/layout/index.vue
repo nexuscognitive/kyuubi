@@ -63,17 +63,23 @@
       ::v-deep(.el-aside) {
         width: auto;
         position: relative;
-        background: #001529;
+        background: var(--nx1-navy);
       }
 
       .el-header {
         display: flex;
         align-items: center;
-        height: 64px;
-        padding: 0 12px 0 0;
-        border-bottom: 1px solid #f0f0f0;
-        background: #fff;
-        box-shadow: 0 1px 4px rgb(0 21 41 / 8%);
+        height: var(--nx1-header-height);
+        padding: 0 20px 0 0;
+        // A cream hairline carries the edge instead of a drop shadow -- on the
+        // warm canvas a shadow here reads as a smudge.
+        border-bottom: 1px solid var(--nx1-border);
+        background: var(--nx1-card);
+      }
+
+      ::v-deep(.el-main) {
+        background: var(--nx1-canvas);
+        padding: 24px;
       }
     }
   }

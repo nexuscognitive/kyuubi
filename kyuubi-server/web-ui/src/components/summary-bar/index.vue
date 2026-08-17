@@ -18,10 +18,12 @@
 
 <template>
   <div class="summary-bar">
-    <div v-for="item in items" :key="item.label" class="summary-item">
-      <div class="summary-value" :class="`is-${item.type || 'default'}`">
-        {{ item.value }}
-      </div>
+    <div
+      v-for="item in items"
+      :key="item.label"
+      class="summary-item"
+      :class="`is-${item.type || 'default'}`">
+      <div class="summary-value">{{ item.value }}</div>
       <div class="summary-label">{{ item.label }}</div>
     </div>
   </div>
@@ -48,47 +50,90 @@
 </script>
 
 <style scoped lang="scss">
+  /*
+   * Accent-stripe stat tiles. Two rules drive this:
+   *
+   *  - The value stays in text ink; the left-edge stripe carries the status
+   *    identity. Colouring the number itself makes the tile read as a status
+   *    badge and drops legibility for anyone with a colour vision deficiency.
+   *  - The stripe never encodes state on its own -- every tile is labelled, so
+   *    colour is a second channel rather than the only one.
+   */
   .summary-bar {
     display: flex;
     flex-wrap: wrap;
     gap: 12px;
-    margin-bottom: 14px;
+    margin-bottom: 18px;
   }
   .summary-item {
+    position: relative;
     flex: 0 0 auto;
-    min-width: 92px;
-    padding: 8px 18px;
-    text-align: center;
-    border: 1px solid var(--el-border-color-light);
-    border-radius: 8px;
-    background: var(--el-fill-color-blank);
+    min-width: 108px;
+    padding: 12px 20px 12px 22px;
+    overflow: hidden;
+    border: 1px solid var(--nx1-border);
+    border-radius: var(--nx1-radius);
+    background: var(--nx1-card);
+    box-shadow: var(--nx1-shadow-1);
+
+    &::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      width: 6px;
+      background: var(--nx1-stripe, var(--nx1-border));
+      transition: width 0.15s ease;
+    }
+
+    &:hover::before {
+      width: 10px;
+    }
   }
   .summary-value {
-    font-size: 26px;
-    line-height: 30px;
-    font-weight: 600;
+    font-family: var(--nx1-font-display);
+    font-size: 28px;
+    line-height: 34px;
+    font-weight: 400;
+    color: var(--nx1-text);
+    font-variant-numeric: tabular-nums;
   }
   .summary-label {
     margin-top: 2px;
-    font-size: 12px;
-    color: var(--el-text-color-secondary);
+    font-family: var(--nx1-font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--nx1-text-muted);
   }
+
+  /*
+   * Status identity lives entirely in the stripe hue. These are the NX1 brand
+   * status values, used as a status palette rather than a categorical one: no two
+   * stripes have to be told apart from each other, and every tile carries a
+   * visible mono label plus a 12px gap. That labelling is what makes the moss
+   * stripe (2.98:1 against the card) and the muted teal acceptable here -- do not
+   * reuse this set as categorical series colours, where hue would be the only
+   * channel and those two would not separate reliably under deuteranopia.
+   */
   .is-default {
-    color: var(--el-text-color-primary);
+    --nx1-stripe: var(--nx1-border);
   }
   .is-primary {
-    color: var(--el-color-primary);
+    --nx1-stripe: var(--nx1-sky);
   }
   .is-success {
-    color: var(--el-color-success);
+    --nx1-stripe: var(--nx1-moss);
   }
   .is-info {
-    color: var(--el-color-info);
+    --nx1-stripe: var(--nx1-teal);
   }
   .is-warning {
-    color: var(--el-color-warning);
+    --nx1-stripe: var(--nx1-warning);
   }
   .is-danger {
-    color: var(--el-color-danger);
+    --nx1-stripe: var(--nx1-danger);
   }
 </style>
