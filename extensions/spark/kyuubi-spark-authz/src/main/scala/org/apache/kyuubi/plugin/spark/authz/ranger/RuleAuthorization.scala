@@ -33,7 +33,7 @@ import org.apache.kyuubi.plugin.spark.authz.rule.Authorization
 import org.apache.kyuubi.plugin.spark.authz.util.AuthZUtils._
 
 object RuleAuthorization extends (SparkSession => RuleAuthorization) {
-  private final val LOG = LoggerFactory.getLogger(classOf[RuleAuthorization])
+  final private val LOG = LoggerFactory.getLogger(classOf[RuleAuthorization])
   override def apply(spark: SparkSession): RuleAuthorization = new RuleAuthorization(spark)
 }
 

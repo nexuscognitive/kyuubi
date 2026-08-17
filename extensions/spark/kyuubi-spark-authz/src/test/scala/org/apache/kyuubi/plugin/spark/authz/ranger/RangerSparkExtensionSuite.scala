@@ -1021,7 +1021,7 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
         interceptEndsWith[AccessControlException](
           doAs(someone, sql(s"SELECT count(scope) FROM $db1.$table1 WHERE id > 10").show()))(
           s"does not have [select] privilege on [iceberg/$db1/$table1/scope," +
-          s"iceberg/$db1/$table1/id]")
+            s"iceberg/$db1/$table1/id]")
 
         interceptEndsWith[AccessControlException](
           doAs(someone, sql(s"SELECT count(scope) FROM $db1.$view1 WHERE id > 10").show()))(
@@ -1030,7 +1030,7 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
         interceptEndsWith[AccessControlException](
           doAs(someone, sql(s"SELECT count(cnt) FROM $db1.$view2 WHERE sum_id > 10").show()))(
           s"does not have [select] privilege on [iceberg/$db1/$view2/cnt," +
-          s"iceberg/$db1/$view2/sum_id]")
+            s"iceberg/$db1/$view2/sum_id]")
       }
     }
   }
@@ -1129,7 +1129,7 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
                  |ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
                  |SELECT * FROM $db1.$table1""".stripMargin)))(
             s"does not have [select] privilege on [iceberg/$db1/$table1/id," +
-            s"iceberg/$db1/$table1/scope], " +
+              s"iceberg/$db1/$table1/scope], " +
               s"[write] privilege on [[$path, $path/]]")
         }
       }
@@ -1360,7 +1360,7 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
                    |""".stripMargin)))(
             if (!isSparkV35OrGreater) {
               s"does not have [select] privilege on [iceberg/$db1/$table1/id," +
-              s"iceberg/$db1/$table1/scope], " +
+                s"iceberg/$db1/$table1/scope], " +
                 s"[create] privilege on [iceberg/$db1/$table2/id,iceberg/$db1/$table2/scope], " +
                 s"[write] privilege on [[$path, $path/]]"
             } else if (isSparkV40OrGreater) {
@@ -1370,7 +1370,7 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
                 s"[write] privilege on [[file://$path, file://$path/]]"
             } else {
               s"does not have [select] privilege on [iceberg/$db1/$table1/id," +
-              s"iceberg/$db1/$table1/scope], " +
+                s"iceberg/$db1/$table1/scope], " +
                 s"[create] privilege on [iceberg/$db1/$table2/id,iceberg/$db1/$table2/scope], " +
                 s"[write] privilege on [[file://$path, file://$path/]]"
             })
@@ -1570,7 +1570,7 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
               (classOf[PythonUDF], mapTableInPandasUDF))
               .asInstanceOf[DataFrame].select(col("id"), col("scope")).limit(1).show(true)))(
           s"does not have [select] privilege on [iceberg/$db1/$table1/id," +
-          s"iceberg/$db1/$table1/scope]")
+            s"iceberg/$db1/$table1/scope]")
 
         val view = spark.read.table(s"$db1.$view1")
         val mapViewInPandasUDF = PythonUDF(

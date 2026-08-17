@@ -307,7 +307,8 @@ class JDBCMetadataStoreSuite extends KyuubiFunSuite {
     jdbcMetadataStore.updateMetadata(Metadata(identifier = id, state = "FINISHED"))
     assert(jdbcMetadataStore.getMetadata(id).state == "FINISHED")
 
-    // terminal is frozen: a stale RUNNING (late async-retry replay / post-takeover zombie) is dropped
+    // terminal is frozen: a stale RUNNING (late async-retry replay / post-takeover
+    // zombie) is dropped
     jdbcMetadataStore.updateMetadata(Metadata(identifier = id, state = "RUNNING"))
     assert(jdbcMetadataStore.getMetadata(id).state == "FINISHED")
 

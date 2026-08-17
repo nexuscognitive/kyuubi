@@ -354,16 +354,16 @@ class KubernetesApplicationOperation extends ApplicationOperation with Logging {
           .withLabel(LABEL_KYUUBI_UNIQUE_KEY, tag)
           .withLabel(SPARK_ROLE_LABEL, SPARK_ROLE_DRIVER)
           .list().getItems.asScala.headOption.map { pod =>
-          val ns = pod.getMetadata.getNamespace
-          val name = pod.getMetadata.getName
-          val log = client.pods().inNamespace(ns).withName(name)
-            .tailingLines(maxLines).getLog()
-          if (log == null || log.isEmpty) {
-            Seq(s"Driver pod $name has not produced any logs yet.")
-          } else {
-            log.split("\n").toSeq
+            val ns = pod.getMetadata.getNamespace
+            val name = pod.getMetadata.getName
+            val log = client.pods().inNamespace(ns).withName(name)
+              .tailingLines(maxLines).getLog()
+            if (log == null || log.isEmpty) {
+              Seq(s"Driver pod $name has not produced any logs yet.")
+            } else {
+              log.split("\n").toSeq
+            }
           }
-        }
       } catch {
         case NonFatal(e) =>
           warn(s"Failed to fetch driver log for ${toLabel(tag)}: ${e.getMessage}")
@@ -392,18 +392,18 @@ class KubernetesApplicationOperation extends ApplicationOperation with Logging {
           .withLabel(LABEL_KYUUBI_UNIQUE_KEY, tag)
           .withLabel(SPARK_ROLE_LABEL, SPARK_ROLE_DRIVER)
           .list().getItems.asScala.headOption.map { pod =>
-          val name = pod.getMetadata.getName
-          val ns = pod.getMetadata.getNamespace
-          val uid = pod.getMetadata.getUid
-          val events = client.v1().events().inNamespace(ns)
-            .withField("involvedObject.uid", uid)
-            .list().getItems.asScala.toSeq
-          if (events.isEmpty) {
-            Seq(s"No events found for driver pod $name.")
-          } else {
-            events.sortBy(driverPodEventTimestamp).takeRight(maxLines).map(formatDriverPodEvent)
+            val name = pod.getMetadata.getName
+            val ns = pod.getMetadata.getNamespace
+            val uid = pod.getMetadata.getUid
+            val events = client.v1().events().inNamespace(ns)
+              .withField("involvedObject.uid", uid)
+              .list().getItems.asScala.toSeq
+            if (events.isEmpty) {
+              Seq(s"No events found for driver pod $name.")
+            } else {
+              events.sortBy(driverPodEventTimestamp).takeRight(maxLines).map(formatDriverPodEvent)
+            }
           }
-        }
       } catch {
         case NonFatal(e) =>
           warn(s"Failed to fetch driver pod events for ${toLabel(tag)}: ${e.getMessage}")
@@ -432,7 +432,8 @@ class KubernetesApplicationOperation extends ApplicationOperation with Logging {
     val ts = driverPodEventTimestamp(event)
     val level = Option(event.getType).getOrElse("Normal")
     val reason = Option(event.getReason).getOrElse("")
-    val count = Option(event.getCount).map(_.intValue).filter(_ > 1).map(c => s" (x$c)").getOrElse("")
+    val count = Option(event.getCount).map(_.intValue).filter(_ > 1)
+      .map(c => s" (x$c)").getOrElse("")
     val message = Option(event.getMessage).getOrElse("").trim
     s"[$ts] $level  $reason$count: $message"
   }
@@ -448,9 +449,9 @@ class KubernetesApplicationOperation extends ApplicationOperation with Logging {
         client.pods()
           .withLabel(SPARK_ROLE_LABEL, SPARK_ROLE_DRIVER)
           .list().getItems.asScala.flatMap { pod =>
-          Option(pod.getMetadata.getLabels.get(LABEL_KYUUBI_UNIQUE_KEY))
-            .map(tag => tag -> driverPodState(pod))
-        }
+            Option(pod.getMetadata.getLabels.get(LABEL_KYUUBI_UNIQUE_KEY))
+              .map(tag => tag -> driverPodState(pod))
+          }
       } catch {
         case NonFatal(e) =>
           warn(s"Failed to list driver pod states: ${e.getMessage}")

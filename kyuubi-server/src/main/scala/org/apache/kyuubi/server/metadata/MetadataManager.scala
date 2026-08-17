@@ -303,10 +303,11 @@ class MetadataManager extends AbstractService("MetadataManager") {
   /**
    * Delete spark-submit logs (`kyuubi-spark-batch-submit-<batchId>.log`, written by
    * [[SparkBatchProcessBuilder]]) whose batch has left the metastore -- i.e. its row was already
-   * removed by the age-based metadata cleanup (so it has disappeared from the UI), or it never had a
-   * record (orphaned by a crash before insert). Runs on the metadata-cleaner schedule. The log is
-   * local to the instance that submitted the batch, so each instance only ever deletes its own
-   * files; deletion for a batch owned by a peer is a no-op here. Best effort: never throws.
+   * removed by the age-based metadata cleanup (so it has disappeared from the UI), or it never
+   * had a record (orphaned by a crash before insert). Runs on the metadata-cleaner schedule.
+   * The log is local to the instance that submitted the batch, so each instance only ever
+   * deletes its own files; deletion for a batch owned by a peer is a no-op here. Best effort:
+   * never throws.
    */
   private[metadata] def cleanupOrphanedBatchSubmitLogs(): Unit = {
     sys.env.get("KYUUBI_WORK_DIR_ROOT").map(Paths.get(_)).filter(p => Files.isDirectory(p))

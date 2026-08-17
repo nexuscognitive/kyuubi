@@ -360,8 +360,10 @@ class BatchJobSubmission(
         _applicationInfo = currentApplicationInfo()
         applicationId(_applicationInfo) match {
           case Some(appId) =>
-            warn(s"$batchType batch[$batchId] submission failed, but a driver already exists for" +
-              s" its tag; attaching to $appId instead of resubmitting.", e)
+            warn(
+              s"$batchType batch[$batchId] submission failed, but a driver already exists for" +
+                s" its tag; attaching to $appId instead of resubmitting.",
+              e)
             monitorBatchJob(appId)
           case None => throw e
         }

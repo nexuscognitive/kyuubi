@@ -133,7 +133,7 @@ class HudiCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
                |)
                |PARTITIONED BY(city)
                |""".stripMargin)))(
-                 s"does not have [create] privilege on [iceberg/$namespace1/$table1]")
+        s"does not have [create] privilege on [iceberg/$namespace1/$table1]")
     }
   }
 
@@ -163,7 +163,7 @@ class HudiCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
                |AS
                |SELECT id FROM $namespace1.$table1
                |""".stripMargin)))(
-                 s"does not have [select] privilege on [iceberg/$namespace1/$table1/id]")
+        s"does not have [select] privilege on [iceberg/$namespace1/$table1/id]")
     }
   }
 

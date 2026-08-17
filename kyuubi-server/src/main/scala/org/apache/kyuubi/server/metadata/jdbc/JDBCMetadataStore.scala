@@ -101,7 +101,10 @@ class JDBCMetadataStore(conf: KyuubiConf) extends MetadataStore with Logging {
     ensureColumn(METADATA_TABLE, "version", "int NOT NULL DEFAULT 0")
   }
 
-  /** Add `column` to `table` if the table exists and the column does not. Idempotent; never fatal. */
+  /**
+   * Add `column` to `table` if the table exists and the column does not.
+   * Idempotent; never fatal.
+   */
   private def ensureColumn(table: String, column: String, columnDef: String): Unit = {
     JdbcUtils.withConnection { connection =>
       Utils.tryLogNonFatalError {
@@ -116,12 +119,14 @@ class JDBCMetadataStore(conf: KyuubiConf) extends MetadataStore with Logging {
 
   private def tableExists(connection: Connection, table: String): Boolean = {
     val rs = connection.getMetaData.getTables(null, null, table, Array("TABLE"))
-    try rs.next() finally rs.close()
+    try rs.next()
+    finally rs.close()
   }
 
   private def columnExists(connection: Connection, table: String, column: String): Boolean = {
     val rs = connection.getMetaData.getColumns(null, null, table, column)
-    try rs.next() finally rs.close()
+    try rs.next()
+    finally rs.close()
   }
 
   private def initSchema(): Unit = {
@@ -476,7 +481,7 @@ class JDBCMetadataStore(conf: KyuubiConf) extends MetadataStore with Logging {
               s"Failed to update metadata for ${metadata.identifier} after $maxAttempts attempts" +
                 s" due to concurrent modification (version conflict). SQL: $query")
           }
-          // else: another writer bumped the version between our read and write; re-read and retry.
+        // else: another writer bumped the version between our read and write; re-read and retry.
       }
     }
   }
