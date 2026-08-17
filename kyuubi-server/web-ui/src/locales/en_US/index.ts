@@ -67,7 +67,7 @@ export default {
     reconnecting: 'Reconnecting'
   },
   overview: {
-    eyebrow: 'Nexus One → SQL Engine',
+    eyebrow: 'Nexus One → SparkEngine',
     title: 'Cluster overview',
     subtitle:
       'Live view of the Kyuubi servers, engines and sessions backing this workspace.',

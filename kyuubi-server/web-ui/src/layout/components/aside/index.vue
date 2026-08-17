@@ -18,10 +18,19 @@
 
 <template>
   <header>
-    <!-- White lockup on the navy rail; the icon-only mark when collapsed. -->
-    <img v-if="!isCollapse" src="@/assets/images/nx1-logo-white.svg" />
-    <img v-else class="collapsed-logo" src="@/assets/images/nx1-mark.svg" />
-    <span v-if="!isCollapse">{{ version }}</span>
+    <!--
+      The NX1 mark stays; the wordmark is the product name rather than the
+      company one. Split like the Nexus One lockup - light first word, bold
+      second - so it reads as the same family of marks.
+    -->
+    <div class="brand">
+      <img
+        class="brand-mark"
+        src="@/assets/images/nx1-mark.svg"
+        alt="Nexus One" />
+      <span v-if="!isCollapse" class="brand-name">Spark<b>Engine</b></span>
+    </div>
+    <span v-if="!isCollapse" class="version">{{ version }}</span>
   </header>
   <c-menu :is-collapse="isCollapse" :active-path="activePath" :menus="menus" />
 </template>
@@ -57,25 +66,39 @@
     box-sizing: border-box;
     // Aligns the navy rail with the content header's hairline.
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    // The wordmark is 346x75; height is left auto so it is never stretched.
-    img {
-      width: 132px;
-      height: auto;
-      &.collapsed-logo {
-        width: 32px;
-        height: 32px;
-        position: relative;
-        left: -2px;
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+    .brand-mark {
+      width: 28px;
+      height: 28px;
+      flex: none;
+    }
+    .brand-name {
+      font-family: var(--nx1-font-body);
+      font-size: 19px;
+      font-weight: 300;
+      letter-spacing: -0.01em;
+      line-height: 1;
+      color: #fff;
+      white-space: nowrap;
+
+      b {
+        font-weight: 600;
       }
     }
     // The version reads as a mono eyebrow rather than body text.
-    span {
+    .version {
       font-family: var(--nx1-font-mono);
       font-size: 10px;
       font-weight: 600;
       letter-spacing: 0.1em;
       text-transform: uppercase;
       color: rgba(255, 255, 255, 0.55);
+      flex: none;
     }
   }
   .el-menu {

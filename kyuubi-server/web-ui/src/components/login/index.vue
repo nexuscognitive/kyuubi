@@ -22,8 +22,8 @@
     :close-on-click-modal="false"
     width="400px">
     <div class="dialog-header">
-      <!-- Standard lockup: the dialog sits on a light surface. -->
-      <img class="logo" src="@/assets/images/nx1-logo.svg" />
+      <img class="logo" src="@/assets/images/nx1-mark.svg" alt="Nexus One" />
+      <p class="product">Spark<b>Engine</b></p>
     </div>
     <el-form class="login-form">
       <el-form-item>
@@ -101,9 +101,21 @@
   }
 
   .logo {
-    width: 100px;
-    height: auto;
+    width: 44px;
+    height: 44px;
     margin-bottom: 10px;
+  }
+
+  .product {
+    margin: 0;
+    font-size: 21px;
+    font-weight: 300;
+    letter-spacing: -0.01em;
+    color: var(--nx1-text);
+  }
+
+  .product b {
+    font-weight: 600;
   }
 
   .login-form {

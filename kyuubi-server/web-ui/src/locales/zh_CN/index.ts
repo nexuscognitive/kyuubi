@@ -67,7 +67,7 @@ export default {
     reconnecting: '重连中'
   },
   overview: {
-    eyebrow: 'Nexus One → SQL 引擎',
+    eyebrow: 'Nexus One → SparkEngine',
     title: '集群概览',
     subtitle: '实时展示支撑当前工作区的 Kyuubi 服务、引擎与会话。',
     activity: '活动',
