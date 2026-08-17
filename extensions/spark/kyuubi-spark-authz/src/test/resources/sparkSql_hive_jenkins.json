@@ -561,7 +561,12 @@
     "description" : "Policy for default db udf",
     "isAuditEnabled" : true,
     "resources" : {
-      "database" : {
+      "catalog" : {
+        "values" : [ "iceberg" ],
+        "isExcludes" : false,
+        "isRecursive" : false
+      },
+      "schema" : {
         "values" : [ "default" ],
         "isExcludes" : false,
         "isRecursive" : false
@@ -968,12 +973,17 @@
     "policyPriority" : 0,
     "isAuditEnabled" : true,
     "resources" : {
+      "catalog" : {
+        "values" : [ "iceberg" ],
+        "isExcludes" : false,
+        "isRecursive" : false
+      },
       "column" : {
         "values" : [ "value2" ],
         "isExcludes" : false,
         "isRecursive" : false
       },
-      "database" : {
+      "schema" : {
         "values" : [ "default", "spark_catalog" ],
         "isExcludes" : false,
         "isRecursive" : false

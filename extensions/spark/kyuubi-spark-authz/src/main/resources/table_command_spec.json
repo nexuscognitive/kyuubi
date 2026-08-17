@@ -76,7 +76,11 @@
     "columnDesc" : null,
     "actionTypeDesc" : null,
     "tableTypeDesc" : null,
-    "catalogDesc" : null,
+    "catalogDesc" : {
+      "fieldName" : "child",
+      "fieldExtractor" : "ResolvedTableCatalogExtractor",
+      "comment" : ""
+    },
     "isInput" : false,
     "setCurrentDatabaseIfMissing" : false,
     "comment" : ""
