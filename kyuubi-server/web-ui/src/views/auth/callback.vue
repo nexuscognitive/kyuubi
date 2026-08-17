@@ -53,6 +53,12 @@
         returnTo.startsWith('/ui') ? returnTo.slice(3) : returnTo
       )
     } catch (e) {
+      if ((e as Error)?.name === 'InteractionRequiredError') {
+        // Expected: the silent attempt found no live provider session. Not an
+        // error worth showing -- go back to the app, which now prompts.
+        await router.replace('/')
+        return
+      }
       error.value = (e as Error)?.message || 'Sign-in failed'
     }
   })

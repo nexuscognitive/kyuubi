@@ -16,7 +16,12 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { completeLogin, discover, refresh } from '@/utils/oidc'
+import {
+  completeLogin,
+  discover,
+  refresh,
+  silentAuthExhausted
+} from '@/utils/oidc'
 
 const settings = {
   issuer: 'https://sso.example.com/realms/main',
@@ -133,6 +138,59 @@ describe('completeLogin', () => {
     expect(body).toContain('grant_type=authorization_code')
     // A public client must not be sending a secret.
     expect(body).not.toContain('client_secret')
+  })
+})
+
+describe('silent re-authentication', () => {
+  /*
+   * A reload always starts unauthenticated because the token is memory-only, so
+   * the app retries with prompt=none. When there is no live provider session that
+   * comes back as login_required -- which must be treated as "now prompt", not as
+   * an error, and must not be retried silently or the page ping-pongs between app
+   * and provider forever.
+   */
+  test('a silent attempt that needs interaction is typed, not a hard error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(metadata)))
+    sessionStorage.setItem('kyuubi.oidc.silent', '1')
+
+    await expect(
+      completeLogin(settings, '?error=login_required')
+    ).rejects.toThrow(
+      expect.objectContaining({ name: 'InteractionRequiredError' })
+    )
+    // The flag is what stops the loop.
+    expect(silentAuthExhausted()).toBe(true)
+  })
+
+  test('the same error from an interactive attempt stays a hard error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(metadata)))
+    sessionStorage.setItem('kyuubi.oidc.silent', '0')
+
+    await expect(
+      completeLogin(settings, '?error=login_required')
+    ).rejects.toThrow(
+      expect.not.objectContaining({ name: 'InteractionRequiredError' })
+    )
+    expect(silentAuthExhausted()).toBe(false)
+  })
+
+  test('a completed sign-in makes silent auth viable again', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(metadata))
+      .mockResolvedValueOnce(
+        jsonResponse({ access_token: 'at', expires_in: 300 })
+      )
+    vi.stubGlobal('fetch', fetchMock)
+    sessionStorage.setItem('kyuubi.oidc.silentFailed', '1')
+    sessionStorage.setItem('kyuubi.oidc.state', 'st')
+    sessionStorage.setItem('kyuubi.oidc.verifier', 'ver')
+
+    await completeLogin(
+      { ...settings, issuer: 'https://sso.example.com/realms/again' },
+      '?code=c&state=st'
+    )
+    expect(silentAuthExhausted()).toBe(false)
   })
 })
 

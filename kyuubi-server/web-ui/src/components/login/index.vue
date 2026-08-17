@@ -71,6 +71,7 @@
   import { useI18n } from 'vue-i18n'
   import { useAuthStore } from '@/pinia/auth/auth'
   import { getWebUIConfig } from '@/api/server'
+  import { silentAuthExhausted } from '@/utils/oidc'
 
   const { t } = useI18n()
   const authStore = useAuthStore()
@@ -116,11 +117,30 @@
     }
   }
 
+  /*
+   * The access token is deliberately not persisted, so every reload starts
+   * unauthenticated. Making the user click through a login screen each time would
+   * be indistinguishable from being logged out, so first try `prompt=none`: the
+   * provider answers it straight from its SSO cookie and the user sees only a
+   * redirect. Only when that comes back needing interaction do we prompt, and
+   * `silentAuthExhausted` makes sure that decision sticks for the tab rather than
+   * bouncing between app and provider.
+   */
+  const handleAuthRequired = async () => {
+    loginError.value = ''
+    if (oidcEnabled.value && !silentAuthExhausted()) {
+      try {
+        await authStore.loginWithOidc(true)
+        return
+      } catch {
+        // Discovery failed; fall through to the interactive prompt.
+      }
+    }
+    dialogVisible.value = true
+  }
+
   onMounted(async () => {
-    window.addEventListener('auth-required', () => {
-      loginError.value = ''
-      dialogVisible.value = true
-    })
+    window.addEventListener('auth-required', handleAuthRequired)
     try {
       const config = await getWebUIConfig()
       if (config.oidcEnabled && config.oidcIssuer && config.oidcClientId) {
@@ -130,6 +150,11 @@
           clientId: config.oidcClientId,
           scopes: config.oidcScopes || 'openid profile email'
         })
+        // A reload lands here already signed out. If the provider session is
+        // still live this restores it without the user noticing.
+        if (!authStore.isAuthenticated && !silentAuthExhausted()) {
+          await handleAuthRequired()
+        }
       }
     } catch {
       // Leave the Basic form in place: an unreachable config endpoint should not

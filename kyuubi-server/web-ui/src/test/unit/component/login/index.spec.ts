@@ -28,6 +28,25 @@ vi.mock('@/api/server', () => ({
   getWebUIConfig: (...args: unknown[]) => getWebUIConfig(...args)
 }))
 
+const beginLogin = vi.fn()
+vi.mock('@/utils/oidc', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/utils/oidc')>()),
+  beginLogin: (...args: unknown[]) => beginLogin(...args)
+}))
+
+const oidcConfig = {
+  engineUIProxyEnabled: true,
+  oidcEnabled: true,
+  oidcIssuer: 'https://sso.example.com/realms/main',
+  oidcClientId: 'kyuubi-web-ui',
+  oidcScopes: 'openid profile email'
+}
+
+/** Mark silent auth as already exhausted, so the interactive prompt is shown. */
+function silentAlreadyFailed() {
+  sessionStorage.setItem('kyuubi.oidc.silentFailed', '1')
+}
+
 const i18n = createI18n({
   legacy: false,
   locale: 'en_US',
@@ -50,21 +69,37 @@ async function mountLogin() {
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  sessionStorage.clear()
   getWebUIConfig.mockReset()
+  beginLogin.mockReset()
+  beginLogin.mockResolvedValue(undefined)
 })
 
 describe('login dialog', () => {
-  test('offers SSO and no password fields when the server advertises OIDC', async () => {
-    getWebUIConfig.mockResolvedValue({
-      engineUIProxyEnabled: true,
-      oidcEnabled: true,
-      oidcIssuer: 'https://sso.example.com/realms/main',
-      oidcClientId: 'kyuubi-web-ui',
-      oidcScopes: 'openid profile email'
-    })
+  /*
+   * The access token is memory-only, so a reload always begins signed out. The
+   * app must first retry with prompt=none rather than showing a login screen --
+   * otherwise every refresh looks like a logout, which is the bug this covers.
+   */
+  test('retries silently instead of prompting on a fresh load', async () => {
+    getWebUIConfig.mockResolvedValue(oidcConfig)
 
     const wrapper = await mountLogin()
 
+    expect(beginLogin).toHaveBeenCalled()
+    // second arg is `silent`
+    expect(beginLogin.mock.calls[0][1]).toBe(true)
+    expect(wrapper.text()).not.toContain('Continue with SSO')
+  })
+
+  test('offers SSO once a silent attempt has come back needing interaction', async () => {
+    getWebUIConfig.mockResolvedValue(oidcConfig)
+    silentAlreadyFailed()
+
+    const wrapper = await mountLogin()
+
+    // No second silent attempt: that is what would loop.
+    expect(beginLogin).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('Continue with SSO')
     // Showing a password box under SSO invites users to type their IdP
     // credentials into a form that cannot verify them.

@@ -57,6 +57,30 @@ export interface TokenSet {
 const VERIFIER_KEY = 'kyuubi.oidc.verifier'
 const STATE_KEY = 'kyuubi.oidc.state'
 const RETURN_TO_KEY = 'kyuubi.oidc.returnTo'
+/** Whether the in-flight attempt used prompt=none. */
+const SILENT_KEY = 'kyuubi.oidc.silent'
+/** Set once a silent attempt has come back needing real interaction. */
+const SILENT_FAILED_KEY = 'kyuubi.oidc.silentFailed'
+
+/**
+ * Thrown when a `prompt=none` attempt needs the user to interact after all --
+ * their provider session has expired, or consent is outstanding.
+ */
+export class InteractionRequiredError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'InteractionRequiredError'
+  }
+}
+
+/** True once a silent attempt has failed, so we stop retrying it. */
+export function silentAuthExhausted(): boolean {
+  return sessionStorage.getItem(SILENT_FAILED_KEY) === '1'
+}
+
+export function resetSilentAuth(): void {
+  sessionStorage.removeItem(SILENT_FAILED_KEY)
+}
 
 /** Where the provider sends the browser back to. Must be registered on the client. */
 export function redirectUri(): string {
@@ -109,8 +133,17 @@ export async function discover(issuer: string): Promise<ProviderMetadata> {
 /**
  * Begin sign-in by navigating to the provider. Never resolves in practice -- the
  * document is replaced by the redirect.
+ *
+ * `silent` sends `prompt=none`, which the provider answers immediately from an
+ * existing SSO session without showing a login screen. That is what makes a page
+ * reload transparent: the access token only lives in memory, so every reload has
+ * to re-acquire one, and asking the user to click through a login screen each
+ * time would be indistinguishable from being logged out.
  */
-export async function beginLogin(settings: OidcSettings): Promise<void> {
+export async function beginLogin(
+  settings: OidcSettings,
+  silent = false
+): Promise<void> {
   const metadata = await discover(settings.issuer)
   const verifier = randomUrlSafe(32)
   const state = randomUrlSafe(16)
@@ -118,6 +151,7 @@ export async function beginLogin(settings: OidcSettings): Promise<void> {
 
   sessionStorage.setItem(VERIFIER_KEY, verifier)
   sessionStorage.setItem(STATE_KEY, state)
+  sessionStorage.setItem(SILENT_KEY, silent ? '1' : '0')
   // Send the user back to whatever they were looking at, not always the home page.
   sessionStorage.setItem(
     RETURN_TO_KEY,
@@ -133,6 +167,7 @@ export async function beginLogin(settings: OidcSettings): Promise<void> {
     code_challenge: challenge,
     code_challenge_method: 'S256'
   })
+  if (silent) params.set('prompt', 'none')
   window.location.assign(`${metadata.authorization_endpoint}?${params}`)
 }
 
@@ -173,8 +208,22 @@ export async function completeLogin(
   search: string
 ): Promise<{ tokens: TokenSet; returnTo: string }> {
   const params = new URLSearchParams(search)
+  const wasSilent = sessionStorage.getItem(SILENT_KEY) === '1'
   const error = params.get('error')
   if (error) {
+    // A silent attempt legitimately fails when there is no live provider session.
+    // Record that so the app stops retrying silently and prompts instead --
+    // without this the reload would bounce between app and provider forever.
+    if (
+      wasSilent &&
+      ['login_required', 'interaction_required', 'consent_required'].includes(
+        error
+      )
+    ) {
+      sessionStorage.setItem(SILENT_FAILED_KEY, '1')
+      sessionStorage.removeItem(SILENT_KEY)
+      throw new InteractionRequiredError(error)
+    }
     throw new Error(params.get('error_description') || error)
   }
 
@@ -189,6 +238,7 @@ export async function completeLogin(
   sessionStorage.removeItem(STATE_KEY)
   sessionStorage.removeItem(VERIFIER_KEY)
   sessionStorage.removeItem(RETURN_TO_KEY)
+  sessionStorage.removeItem(SILENT_KEY)
 
   if (!code) throw new Error('Authorization response contained no code')
   // The state check is what rejects a callback this browser did not initiate.
@@ -213,6 +263,8 @@ export async function completeLogin(
   if (!response.ok) {
     throw new Error(`Token exchange failed (HTTP ${response.status})`)
   }
+  // A completed sign-in means silent auth is viable again next reload.
+  sessionStorage.removeItem(SILENT_FAILED_KEY)
   return { tokens: toTokenSet(await response.json()), returnTo }
 }
 

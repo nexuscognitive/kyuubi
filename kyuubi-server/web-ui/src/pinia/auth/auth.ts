@@ -94,9 +94,9 @@ export const useAuthStore = defineStore('auth', {
       }
     },
 
-    async loginWithOidc() {
+    async loginWithOidc(silent = false) {
       if (!this.oidc) throw new Error('OIDC is not configured')
-      await beginLogin(this.oidc)
+      await beginLogin(this.oidc, silent)
     },
 
     async completeOidcLogin(search: string): Promise<string> {
