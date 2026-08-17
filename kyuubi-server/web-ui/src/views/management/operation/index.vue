@@ -155,7 +155,7 @@
   import { useI18n } from 'vue-i18n'
   import { ElMessage } from 'element-plus'
   import { useTable } from '@/utils/use-table'
-  import SummaryBar from '@/components/summary-bar/index.vue'
+  import SummaryBar, { SummaryItem } from '@/components/summary-bar/index.vue'
 
   const { t } = useI18n()
   const {
@@ -219,7 +219,7 @@
     (state || 'UNKNOWN').replace(/_STATE$/, '')
 
   // Map an operation state to an Element Plus theme color.
-  const stateType = (state: string): string => {
+  const stateType = (state: string): SummaryItem['type'] => {
     if (!state) return 'info'
     if (/^(RUNNING|PENDING|INITIALIZED|COMPILED)/.test(state)) return 'primary'
     if (state.startsWith('FINISHED')) return 'success'
@@ -237,13 +237,17 @@
       const s = r.state || 'UNKNOWN'
       counts[s] = (counts[s] || 0) + 1
     })
-    const items: Array<{ label: string; value: number; type: string }> = [
+    const items: SummaryItem[] = [
       { label: t('summary.total'), value: rows.length, type: 'default' }
     ]
     Object.keys(counts)
       .sort()
       .forEach((s) => {
-        items.push({ label: prettyState(s), value: counts[s], type: stateType(s) })
+        items.push({
+          label: prettyState(s),
+          value: counts[s],
+          type: stateType(s)
+        })
       })
     return items
   })

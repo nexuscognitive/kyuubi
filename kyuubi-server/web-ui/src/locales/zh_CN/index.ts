@@ -31,7 +31,8 @@ export default {
   no_events: '无事件',
   driver_state: 'Driver 状态',
   refresh: '刷新',
-  owner_down_hint: '所属实例暂时不可达 — 作业仍在运行，实例恢复或被其他节点接管后会重新关联。',
+  owner_down_hint:
+    '所属实例暂时不可达 — 作业仍在运行，实例恢复或被其他节点接管后会重新关联。',
   session_id: 'Session ID',
   operation_id: 'Operation ID',
   batch_id: 'Batch ID',

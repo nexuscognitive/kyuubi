@@ -39,9 +39,9 @@ object JdbcUtils extends Logging {
   // 5 attempts with 1s/2s/4s/4s of backoff, i.e. ~11s of added latency in the worst case, which
   // keeps a submission well inside a typical client timeout. Widen these if a failover is observed
   // to hold the database read-only for longer than that.
-  private final val READ_ONLY_TXN_MAX_ATTEMPTS = 5
-  private final val READ_ONLY_TXN_RETRY_BASE_WAIT_MS = 1000L
-  private final val READ_ONLY_TXN_RETRY_MAX_WAIT_MS = 4000L
+  final private val READ_ONLY_TXN_MAX_ATTEMPTS = 5
+  final private val READ_ONLY_TXN_RETRY_BASE_WAIT_MS = 1000L
+  final private val READ_ONLY_TXN_RETRY_MAX_WAIT_MS = 4000L
 
   def close(c: AutoCloseable): Unit = {
     if (c != null) {

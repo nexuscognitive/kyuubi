@@ -18,10 +18,7 @@
 
 <template>
   <div class="summary-bar">
-    <div
-      v-for="item in items"
-      :key="item.label"
-      class="summary-item">
+    <div v-for="item in items" :key="item.label" class="summary-item">
       <div class="summary-value" :class="`is-${item.type || 'default'}`">
         {{ item.value }}
       </div>
@@ -36,13 +33,7 @@
   export interface SummaryItem {
     label: string
     value: string | number
-    type?:
-      | 'default'
-      | 'primary'
-      | 'success'
-      | 'info'
-      | 'warning'
-      | 'danger'
+    type?: 'default' | 'primary' | 'success' | 'info' | 'warning' | 'danger'
   }
 
   export default {

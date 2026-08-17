@@ -78,7 +78,9 @@
             placement="top">
             <el-tag type="danger">ERROR</el-tag>
           </el-tooltip>
-          <el-tag v-else :type="sessionStatus(scope.row) === 'ACTIVE' ? 'success' : 'info'">
+          <el-tag
+            v-else
+            :type="sessionStatus(scope.row) === 'ACTIVE' ? 'success' : 'info'">
             {{ sessionStatus(scope.row) }}
           </el-tag>
         </template>
@@ -86,7 +88,9 @@
       <el-table-column :label="$t('driver_state')" width="180px">
         <template #default="scope">
           <el-tag
-            v-if="scope.row.sessionType === 'BATCH' && driverPodState(scope.row)"
+            v-if="
+              scope.row.sessionType === 'BATCH' && driverPodState(scope.row)
+            "
             :type="driverStateType(driverPodState(scope.row))"
             size="small">
             {{ driverPodState(scope.row) }}
@@ -155,7 +159,10 @@
               v-else
               :title="$t('operation.delete_confirm')"
               @confirm="
-                handleDeleteSession(scope.row.identifier, scope.row.kyuubiInstance)
+                handleDeleteSession(
+                  scope.row.identifier,
+                  scope.row.kyuubiInstance
+                )
               ">
               <template #reference>
                 <span>
@@ -187,7 +194,9 @@
 
   <el-dialog
     v-model="driverLogVisible"
-    :title="$t('driver_log') + (driverLogBatchId ? ': ' + driverLogBatchId : '')"
+    :title="
+      $t('driver_log') + (driverLogBatchId ? ': ' + driverLogBatchId : '')
+    "
     width="72%"
     top="6vh">
     <div class="driver-log-toolbar">
@@ -199,12 +208,17 @@
         {{ $t('refresh') }}
       </el-button>
     </div>
-    <pre v-loading="driverLogLoading" class="driver-log">{{ driverLogText }}</pre>
+    <pre v-loading="driverLogLoading" class="driver-log">{{
+      driverLogText
+    }}</pre>
   </el-dialog>
 
   <el-dialog
     v-model="driverEventsVisible"
-    :title="$t('driver_events') + (driverEventsBatchId ? ': ' + driverEventsBatchId : '')"
+    :title="
+      $t('driver_events') +
+      (driverEventsBatchId ? ': ' + driverEventsBatchId : '')
+    "
     width="72%"
     top="6vh">
     <div class="driver-log-toolbar">
@@ -216,7 +230,9 @@
         {{ $t('refresh') }}
       </el-button>
     </div>
-    <pre v-loading="driverEventsLoading" class="driver-log">{{ driverEventsText }}</pre>
+    <pre v-loading="driverEventsLoading" class="driver-log">{{
+      driverEventsText
+    }}</pre>
   </el-dialog>
 </template>
 
@@ -232,7 +248,7 @@
   import { ElMessage } from 'element-plus'
   import { useI18n } from 'vue-i18n'
   import { useTable } from '@/utils/use-table'
-  import SummaryBar from '@/components/summary-bar/index.vue'
+  import SummaryBar, { SummaryItem } from '@/components/summary-bar/index.vue'
   import { Router, useRouter } from 'vue-router'
   const { t } = useI18n()
   const {
@@ -302,7 +318,7 @@
     const idle = rows.filter(
       (r) => !isOwnerDown(r) && !r.exception && sessionStatus(r) === 'IDLE'
     ).length
-    const items = [
+    const items: SummaryItem[] = [
       { label: t('summary.total'), value: rows.length, type: 'default' },
       { label: t('summary.active'), value: active, type: 'success' },
       { label: t('summary.idle'), value: idle, type: 'info' },
@@ -385,7 +401,9 @@
     getBatchDriverPodEvents(driverEventsBatchId.value, 500)
       .then((res: any) => {
         const lines = res?.logRowSet || []
-        driverEventsText.value = lines.length ? lines.join('\n') : t('no_events')
+        driverEventsText.value = lines.length
+          ? lines.join('\n')
+          : t('no_events')
       })
       .catch(() => {
         driverEventsText.value = t('no_events')
