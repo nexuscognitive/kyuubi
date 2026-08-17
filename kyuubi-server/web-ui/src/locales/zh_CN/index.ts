@@ -103,7 +103,10 @@ export default {
   login: {
     invalid_credentials: '用户名或密码错误。',
     server_error: '服务器错误，请稍后重试。',
-    failed: '登录失败，请重试。'
+    failed: '登录失败，请重试。',
+    sso_hint: '该工作区使用单点登录。',
+    sso_button: '使用 SSO 登录',
+    signing_in: '正在登录…'
   },
   data_agent: {
     title: 'Data Agent',

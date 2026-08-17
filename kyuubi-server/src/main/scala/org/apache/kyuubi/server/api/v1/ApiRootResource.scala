@@ -56,10 +56,27 @@ private[v1] class ApiRootResource extends ApiRequestContext {
   @Path("webui/config")
   @Produces(Array(MediaType.APPLICATION_JSON))
   def webUIConfig(): java.util.Map[String, AnyRef] = {
-    Map[String, AnyRef](
+    val conf = fe.getConf
+    // Served without authentication so the Web UI can discover *how* to sign in
+    // before it has a token. Only values safe to publish belong here -- the Web UI
+    // is a public OAuth client, so there is no secret to leak, and none may be
+    // added.
+    val base = Map[String, AnyRef](
       "engineUIProxyEnabled" -> Boolean.box(
-        fe.getConf.get(FRONTEND_REST_ENGINE_UI_PROXY_ENABLED)))
-      .asJava
+        conf.get(FRONTEND_REST_ENGINE_UI_PROXY_ENABLED)),
+      "oidcEnabled" -> Boolean.box(conf.get(FRONTEND_REST_OIDC_ENABLED)))
+    // Only advertise the provider details when OIDC is actually on, so a
+    // half-configured server does not send the browser to a broken login.
+    val oidc =
+      if (conf.get(FRONTEND_REST_OIDC_ENABLED)) {
+        Map[String, AnyRef](
+          "oidcIssuer" -> conf.get(FRONTEND_REST_OIDC_ISSUER).orNull,
+          "oidcClientId" -> conf.get(FRONTEND_REST_OIDC_CLIENT_ID).orNull,
+          "oidcScopes" -> conf.get(FRONTEND_REST_OIDC_SCOPES))
+      } else {
+        Map.empty[String, AnyRef]
+      }
+    (base ++ oidc).asJava
   }
 
   @Path("sessions")

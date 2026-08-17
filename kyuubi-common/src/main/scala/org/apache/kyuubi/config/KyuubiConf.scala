@@ -782,6 +782,63 @@ object KyuubiConf {
       .toSequence()
       .createWithDefault(Nil)
 
+  /*
+   * OIDC settings for the Web UI.
+   *
+   * These describe how the browser should obtain a token; the server still
+   * validates whatever it is presented via the BEARER authentication handler and
+   * its configured TokenAuthenticationProvider. Turning this on does not by
+   * itself make the server accept tokens -- `kyuubi.authentication` and the token
+   * provider are what do that.
+   *
+   * Everything here is served to unauthenticated browsers by `GET
+   * /api/v1/webui/config`, so only values that are safe to publish belong here.
+   * The Web UI is a public OAuth client and uses authorization code + PKCE, so it
+   * holds no client secret and none must ever be added to this group.
+   */
+  val FRONTEND_REST_OIDC_ENABLED: ConfigEntry[Boolean] =
+    buildConf("kyuubi.frontend.rest.oidc.enabled")
+      .audience(SERVER)
+      .immutable
+      .doc("Whether the Web UI signs in through an OIDC provider (authorization " +
+        "code with PKCE) instead of prompting for a username and password. When " +
+        "disabled, the Web UI falls back to HTTP Basic.")
+      .version("1.12.0")
+      .booleanConf
+      .createWithDefault(false)
+
+  val FRONTEND_REST_OIDC_ISSUER: OptionalConfigEntry[String] =
+    buildConf("kyuubi.frontend.rest.oidc.issuer")
+      .audience(SERVER)
+      .immutable
+      .doc("The OIDC issuer URL, for example " +
+        "`https://keycloak.example.com/realms/main`. The Web UI discovers the " +
+        "authorization, token and end-session endpoints from this issuer's " +
+        "well-known configuration.")
+      .version("1.12.0")
+      .stringConf
+      .createOptional
+
+  val FRONTEND_REST_OIDC_CLIENT_ID: OptionalConfigEntry[String] =
+    buildConf("kyuubi.frontend.rest.oidc.client.id")
+      .audience(SERVER)
+      .immutable
+      .doc("The OIDC public client id the Web UI authenticates as. The client " +
+        "must permit the authorization code flow with PKCE and must list the Web " +
+        "UI origin as a valid redirect URI.")
+      .version("1.12.0")
+      .stringConf
+      .createOptional
+
+  val FRONTEND_REST_OIDC_SCOPES: ConfigEntry[String] =
+    buildConf("kyuubi.frontend.rest.oidc.scopes")
+      .audience(SERVER)
+      .immutable
+      .doc("Space-separated OIDC scopes requested by the Web UI.")
+      .version("1.12.0")
+      .stringConf
+      .createWithDefault("openid profile email")
+
   val FRONTEND_REST_JETTY_STOP_TIMEOUT: ConfigEntry[Long] =
     buildConf("kyuubi.frontend.rest.jetty.stopTimeout")
       .audience(SERVER)

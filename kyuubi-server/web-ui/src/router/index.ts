@@ -32,6 +32,13 @@ const routes = [
     }
   },
   {
+    // Outside the main layout: the user is not signed in yet, so the chrome
+    // (which loads cluster data) must not render.
+    path: '/auth/callback',
+    name: 'auth-callback',
+    component: () => import('@/views/auth/callback.vue')
+  },
+  {
     path: '/layout',
     name: 'layout',
     component: () => import('@/layout/index.vue'),

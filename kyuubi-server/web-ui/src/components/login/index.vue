@@ -25,7 +25,16 @@
       <img class="logo" src="@/assets/images/nx1-mark.svg" alt="Nexus One" />
       <p class="product">Spark<b>Engine</b></p>
     </div>
-    <el-form class="login-form">
+    <!--
+      When the server advertises OIDC there is no local password to collect --
+      showing the fields anyway would invite users to type their SSO credentials
+      into a form that cannot verify them.
+    -->
+    <div v-if="oidcEnabled" class="sso">
+      <p class="sso-hint">{{ $t('login.sso_hint') }}</p>
+      <p v-if="loginError" class="login-error">{{ loginError }}</p>
+    </div>
+    <el-form v-else class="login-form">
       <el-form-item>
         <el-input v-model="username" placeholder="Username" />
       </el-form-item>
@@ -39,6 +48,14 @@
     <template #footer>
       <div class="dialog-footer">
         <el-button
+          v-if="oidcEnabled"
+          type="primary"
+          :loading="redirecting"
+          @click="handleSsoLogin"
+          >{{ $t('login.sso_button') }}</el-button
+        >
+        <el-button
+          v-else
           type="primary"
           :disabled="isLoginDisabled"
           @click="handleLogin"
@@ -53,6 +70,7 @@
   import { ref, computed, onMounted } from 'vue'
   import { useI18n } from 'vue-i18n'
   import { useAuthStore } from '@/pinia/auth/auth'
+  import { getWebUIConfig } from '@/api/server'
 
   const { t } = useI18n()
   const authStore = useAuthStore()
@@ -60,6 +78,8 @@
   const username = ref('')
   const password = ref('')
   const loginError = ref('')
+  const oidcEnabled = ref(false)
+  const redirecting = ref(false)
 
   const isLoginDisabled = computed(() => {
     return (
@@ -84,11 +104,38 @@
     }
   }
 
-  onMounted(() => {
+  const handleSsoLogin = async () => {
+    redirecting.value = true
+    try {
+      await authStore.loginWithOidc()
+    } catch (error) {
+      // Only reached if discovery or the redirect fails; on success the document
+      // is replaced by the provider.
+      redirecting.value = false
+      loginError.value = (error as Error)?.message || t('login.failed')
+    }
+  }
+
+  onMounted(async () => {
     window.addEventListener('auth-required', () => {
       loginError.value = ''
       dialogVisible.value = true
     })
+    try {
+      const config = await getWebUIConfig()
+      if (config.oidcEnabled && config.oidcIssuer && config.oidcClientId) {
+        oidcEnabled.value = true
+        authStore.configureOidc({
+          issuer: config.oidcIssuer,
+          clientId: config.oidcClientId,
+          scopes: config.oidcScopes || 'openid profile email'
+        })
+      }
+    } catch {
+      // Leave the Basic form in place: an unreachable config endpoint should not
+      // strand the user with no way to sign in at all.
+      oidcEnabled.value = false
+    }
   })
 </script>
 
@@ -127,6 +174,17 @@
     font-size: 13px;
     margin-top: 10px;
     text-align: left;
+  }
+
+  .sso {
+    text-align: center;
+    padding: 4px 0 8px;
+  }
+
+  .sso-hint {
+    margin: 0;
+    color: var(--nx1-text-muted);
+    font-size: 14px;
   }
 
   .dialog-footer {

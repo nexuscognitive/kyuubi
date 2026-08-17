@@ -104,7 +104,10 @@ export default {
   login: {
     invalid_credentials: 'Invalid username or password.',
     server_error: 'Server error, please try again later.',
-    failed: 'Login failed, please try again.'
+    failed: 'Login failed, please try again.',
+    sso_hint: 'This workspace uses single sign-on.',
+    sso_button: 'Continue with SSO',
+    signing_in: 'Signing you in…'
   },
   data_agent: {
     title: 'Data Agent',

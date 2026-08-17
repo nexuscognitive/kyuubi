@@ -35,8 +35,13 @@ async function request(config: RequestConfig): Promise<unknown> {
     headers['Authorization'] = `Basic ${btoa(
       auth.username + ':' + auth.password
     )}`
-  } else if (authStore.isAuthenticated && authStore.authToken) {
-    headers['Authorization'] = authStore.authToken
+  } else {
+    // Renew an OIDC access token that is at or near expiry before using it,
+    // so a long-lived page does not start 401-ing mid-session. No-op for Basic.
+    await authStore.ensureFreshToken()
+    if (authStore.isAuthenticated && authStore.authToken) {
+      headers['Authorization'] = authStore.authToken
+    }
   }
 
   if (data !== undefined) {

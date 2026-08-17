@@ -189,7 +189,13 @@ object AuthenticationFilter {
   // REST paths (relative to any context prefix) that are served without authentication so they
   // can be used as health/version probes. Kept intentionally small - only static, side-effect-free
   // endpoints belong here.
-  final private val UNAUTHENTICATED_PATH_SUFFIXES = Seq("/v1/ping", "/v1/version")
+  //
+  // /v1/webui/config is included because it is how the Web UI learns which sign-in method to
+  // use: requiring a token to fetch it would leave the browser unable to discover how to get
+  // one. It returns only publishable settings - feature flags and the public OIDC client's
+  // issuer/clientId/scopes - never a secret.
+  final private val UNAUTHENTICATED_PATH_SUFFIXES =
+    Seq("/v1/ping", "/v1/version", "/v1/webui/config")
 
   def isUnauthenticatedPath(requestUri: String): Boolean = {
     val path = Option(requestUri).getOrElse("").stripSuffix("/")

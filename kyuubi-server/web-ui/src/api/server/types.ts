@@ -27,6 +27,11 @@ interface IServer {
 
 interface IWebUIConfig {
   engineUIProxyEnabled: boolean
+  oidcEnabled?: boolean
+  // Only sent when oidcEnabled is true.
+  oidcIssuer?: string
+  oidcClientId?: string
+  oidcScopes?: string
 }
 
 export { IServer, IWebUIConfig }
