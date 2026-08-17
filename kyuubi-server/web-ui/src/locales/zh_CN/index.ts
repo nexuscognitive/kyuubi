@@ -66,6 +66,23 @@ export default {
     error: '错误',
     reconnecting: '重连中'
   },
+  overview: {
+    eyebrow: 'Nexus One → SQL 引擎',
+    title: '集群概览',
+    subtitle: '实时展示支撑当前工作区的 Kyuubi 服务、引擎与会话。',
+    activity: '活动',
+    cluster: '集群',
+    servers: '服务节点',
+    engines: '引擎',
+    sessions: '会话',
+    running: '运行中',
+    failed: '失败',
+    version: '版本',
+    engine_types: '引擎类型',
+    active_users: '活跃用户',
+    instances: '实例',
+    unavailable: '暂时无法获取集群信息，请先登录。'
+  },
   follow: '跟随',
   log_truncated: '仅显示最新 {count} 行',
   previous: '上一页',

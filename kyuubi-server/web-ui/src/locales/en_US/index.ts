@@ -66,6 +66,24 @@ export default {
     error: 'Error',
     reconnecting: 'Reconnecting'
   },
+  overview: {
+    eyebrow: 'Nexus One → SQL Engine',
+    title: 'Cluster overview',
+    subtitle:
+      'Live view of the Kyuubi servers, engines and sessions backing this workspace.',
+    activity: 'Activity',
+    cluster: 'Cluster',
+    servers: 'Servers',
+    engines: 'Engines',
+    sessions: 'Sessions',
+    running: 'Running',
+    failed: 'Failed',
+    version: 'Version',
+    engine_types: 'Engine types',
+    active_users: 'Active users',
+    instances: 'Instances',
+    unavailable: 'Cluster details are unavailable. Sign in to view them.'
+  },
   follow: 'Follow',
   log_truncated: 'Only the latest {count} lines are shown',
   previous: 'Previous',
