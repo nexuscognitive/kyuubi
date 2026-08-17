@@ -69,12 +69,13 @@ private[authz] object AuthZUtils {
     }
   }
 
+  // NX1: upstream KYUUBI #7230 reads this key to skip the privilege check for a
+  // DataSourceV2Relation carrying neither catalog nor identifier. That reader is
+  // deliberately removed -- see DataSourceV2RelationTableExtractor. The key itself is
+  // kept only so AuthzConfigurationChecker keeps rejecting `SET` on it, which turns a
+  // silent no-op into a visible error for anyone carrying an upstream runbook.
   final val SKIP_CATALOGLESS_V2_RELATION_ENABLED_KEY =
     "spark.kyuubi.authz.skipCataloglessV2Relation.enabled"
-
-  def isSkipCataloglessV2RelationEnabled(spark: SparkSession): Boolean =
-    spark.conf.getOption(SKIP_CATALOGLESS_V2_RELATION_ENABLED_KEY)
-      .exists(_.equalsIgnoreCase("true"))
 
   lazy val isRanger21orGreater: Boolean = {
     try {

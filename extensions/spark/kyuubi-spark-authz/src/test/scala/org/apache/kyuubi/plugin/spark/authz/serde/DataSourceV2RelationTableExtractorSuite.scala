@@ -65,10 +65,19 @@ class DataSourceV2RelationTableExtractorSuite extends KyuubiFunSuite {
     assert(maybeTable.get.database.isEmpty)
   }
 
-  test("skip relation without catalog and identifier when skip conf is enabled") {
+  // NX1 hardening: upstream KYUUBI #7230 lets this conf suppress the privilege object
+  // entirely, which also suppresses the Ranger request and its audit event. We removed
+  // that reader, so the conf must have no effect -- setting it must NOT yield an empty
+  // extraction. This is the regression guard for the bypass.
+  test("skip conf does not bypass privilege extraction") {
     spark.conf.set(skipConfKey, "true")
     try {
-      assert(extractor.apply(spark, cataloglessRelation).isEmpty)
+      val maybeTable = extractor.apply(spark, cataloglessRelation)
+      assert(
+        maybeTable.nonEmpty,
+        s"$skipConfKey must not suppress the privilege object -- a skipped relation is " +
+          "authorized against nothing and produces no audit event")
+      assert(maybeTable.get.table === "MongoTable()")
     } finally {
       spark.conf.unset(skipConfKey)
     }

@@ -26,7 +26,7 @@ import org.apache.ranger.plugin.policyengine.RangerAccessResourceImpl
 import org.apache.spark.sql.SparkSession
 import org.slf4j.LoggerFactory
 
-import org.apache.kyuubi.plugin.spark.authz.{ObjectType, PrivilegeObject}
+import org.apache.kyuubi.plugin.spark.authz.{AccessControlException, ObjectType, PrivilegeObject}
 import org.apache.kyuubi.plugin.spark.authz.ObjectType._
 import org.apache.kyuubi.plugin.spark.authz.OperationType.OperationType
 import org.apache.kyuubi.plugin.spark.authz.serde.{Database, Table}
@@ -180,6 +180,32 @@ object AccessResource {
   }
 
   /**
+   * Fail closed if a resource that must be catalog-scoped reached Ranger without a
+   * catalog level.
+   *
+   * Our policies are catalog-scoped, and Ranger's hierarchy matcher silently refuses to
+   * match a resource that is missing a parent level -- so a catalog-less resource would
+   * be evaluated as "no policy applies" rather than as an error. Depending on the
+   * surrounding call that reads either as a confusing deny or, for callers that treat an
+   * empty privilege set as "nothing to check", as a bypass. [[getEffectiveCatalog]]
+   * always yields a catalog, so this should be unreachable; it exists so that a future
+   * extractor or upstream merge that reintroduces a catalog-less path fails loudly here
+   * instead of degrading authorization silently.
+   */
+  private def requireCatalog(resource: AccessResource, objectType: ObjectType): Unit = {
+    // URI/url policies are intentionally catalog-free -- a path has no catalog.
+    if (resourceMode == MODE_CATALOG && objectType != URI) {
+      val catalog = resource.getCatalog
+      if (catalog == null || catalog.isEmpty) {
+        throw new AccessControlException(
+          s"Refusing to authorize a $objectType resource without a catalog while " +
+            s"$RESOURCE_MODE_KEY=$MODE_CATALOG. This is a bug in privilege-object " +
+            "extraction: the request cannot be matched against catalog-scoped policies.")
+      }
+    }
+  }
+
+  /**
    * Build a table resource for Ranger authorization.
    *
    * In catalog mode: catalog/schema/table/column
@@ -225,6 +251,7 @@ object AccessResource {
       }
     }
 
+    requireCatalog(resource, TABLE)
     resource
   }
 
@@ -245,6 +272,7 @@ object AccessResource {
       database.database.foreach(db => resource.setValue("database", db))
     }
 
+    requireCatalog(resource, DATABASE)
     resource
   }
 
@@ -279,6 +307,7 @@ object AccessResource {
     }
     resource.setValue("udf", functionName)
 
+    requireCatalog(resource, FUNCTION)
     resource
   }
 
@@ -350,6 +379,7 @@ object AccessResource {
           }
         resource.setValue("url", objectList)
     }
+    requireCatalog(resource, objectType)
     resource.setServiceDef(SparkRangerAdminPlugin.getServiceDef)
     owner.foreach(resource.setOwnerUser)
     if (LOG.isDebugEnabled) {

@@ -760,10 +760,14 @@ object KyuubiConf {
       .audience(SERVER)
       .immutable
       .doc("Whether to route Engine UI traffic via Kyuubi REST frontend proxy. When disabled, " +
-        "the Web UI links directly to the Kyuubi engine URL.")
+        "the Web UI links directly to the Kyuubi engine URL, which is typically unreachable " +
+        "from a browser outside the cluster. Enabled by default; note that proxying still " +
+        "requires `kyuubi.frontend.rest.engine.ui.proxy.hosts` to list the engine hosts, " +
+        "which is empty by default so that enabling the proxy cannot by itself turn the " +
+        "server into an open forwarder.")
       .version("1.12.0")
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val FRONTEND_REST_ENGINE_UI_PROXY_HOSTS: ConfigEntry[Seq[String]] =
     buildConf("kyuubi.frontend.rest.engine.ui.proxy.hosts")
