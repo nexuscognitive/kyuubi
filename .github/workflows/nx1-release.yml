@@ -160,7 +160,15 @@ jobs:
       # Flink IS bundled (~509MB) because it is on the roadmap. The Kyuubi engine
       # jars under externals/engines are included for every engine regardless, so
       # what these flags control is only the third-party distribution.
+      # EXTRA_SCALA_213_SPARK_PROFILE builds the Scala 2.13 Spark engine against Spark 4.2
+      # instead of the default Spark 3.5. The dist ships both engine jars, and Kyuubi picks
+      # one at runtime from the Scala version of the Spark in SPARK_HOME -- so a single
+      # kyuubi-base serves both the nx1 spark3 (2.12 / Spark 3.5) and spark4 (2.13 / Spark
+      # 4.2) server images. The server itself stays Scala 2.12, which keeps
+      # nx1-kyuubi's Scala kyuubi-keycloak-authentication extension binary-compatible.
       - name: Build binary distribution
+        env:
+          EXTRA_SCALA_213_SPARK_PROFILE: spark-4.2
         run: >-
           ./build/dist --tgz --web-ui
           --spark-provided --hive-provided
