@@ -1338,7 +1338,7 @@ class HiveCatalogPrivilegeBuilderSuite extends PrivilegesBuilderSuite {
       val po = out.head
       assert(po.actionType === PrivilegeObjectActionType.OTHER)
       assert(po.privilegeObjectType === PrivilegeObjectType.TABLE_OR_VIEW)
-      assert(po.catalog.isEmpty)
+      assertSessionCatalog(po.catalog)
       assertEqualsIgnoreCase(defaultDb)(po.dbname)
       assertEqualsIgnoreCase(t)(po.objectName)
       assert(po.columns.head === "pid")
@@ -1536,7 +1536,7 @@ class HiveCatalogPrivilegeBuilderSuite extends PrivilegesBuilderSuite {
       outputs.foreach { po =>
         assert(po.actionType === PrivilegeObjectActionType.INSERT)
         assert(po.privilegeObjectType === PrivilegeObjectType.TABLE_OR_VIEW)
-        assert(po.catalog.isEmpty)
+        assertSessionCatalog(po.catalog)
         assertEqualsIgnoreCase(defaultDb)(po.dbname)
         assertEqualsIgnoreCase(tableName)(po.objectName)
         checkTableOwner(po)
