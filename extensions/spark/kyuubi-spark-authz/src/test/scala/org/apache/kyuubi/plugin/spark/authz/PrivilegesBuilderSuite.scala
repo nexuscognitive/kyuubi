@@ -30,11 +30,24 @@ import org.apache.kyuubi.KyuubiFunSuite
 import org.apache.kyuubi.plugin.spark.authz.OperationType._
 import org.apache.kyuubi.plugin.spark.authz.RangerTestNamespace._
 import org.apache.kyuubi.plugin.spark.authz.RangerTestUsers._
+import org.apache.kyuubi.plugin.spark.authz.ranger.AccessResource
 import org.apache.kyuubi.plugin.spark.authz.ranger.AccessType
 import org.apache.kyuubi.plugin.spark.authz.util.AuthZUtils._
 import org.apache.kyuubi.util.AssertionUtils._
 
 abstract class PrivilegesBuilderSuite extends KyuubiFunSuite with SparkSessionProvider {
+
+  /**
+   * Authz runs in catalog mode, which is the deployed default: Ranger policies are
+   * catalog-scoped, so every privilege object carries its catalog rather than leaving
+   * it empty for the session catalog. See AccessResource.requireCatalog.
+   *
+   * This asserts the *raw* Spark catalog. The spark_catalog -> iceberg mapping that
+   * Ranger sees is applied later, in AccessResource.
+   */
+  protected def assertSessionCatalog(catalog: Option[String]): Unit = {
+    assert(catalog === Some(AccessResource.DEFAULT_SPARK_CATALOG))
+  }
 
   protected def withTable(t: String)(f: String => Unit): Unit = {
     try {
@@ -148,7 +161,7 @@ abstract class PrivilegesBuilderSuite extends KyuubiFunSuite with SparkSessionPr
         assert(out.size === 1)
         out.foreach { po =>
           assert(po.privilegeObjectType === PrivilegeObjectType.TABLE_OR_VIEW)
-          assert(po.catalog.isEmpty)
+          assertSessionCatalog(po.catalog)
           assertEqualsIgnoreCase(reusedDb)(po.dbname)
           assertExistsIgnoreCase(po.objectName)(Set(oldTableShort, "efg"))
           assert(po.columns.isEmpty)
@@ -213,7 +226,7 @@ abstract class PrivilegesBuilderSuite extends KyuubiFunSuite with SparkSessionPr
     val po = out.head
     assert(po.actionType === PrivilegeObjectActionType.OTHER)
     assert(po.privilegeObjectType === PrivilegeObjectType.TABLE_OR_VIEW)
-    assert(po.catalog.isEmpty)
+    assertSessionCatalog(po.catalog)
     assertEqualsIgnoreCase(reusedDb)(po.dbname)
     assertEqualsIgnoreCase(reusedPartTableShort)(po.objectName)
     assert(po.columns.head === "pid")
@@ -231,7 +244,7 @@ abstract class PrivilegesBuilderSuite extends KyuubiFunSuite with SparkSessionPr
     val po = out.head
     assert(po.actionType === PrivilegeObjectActionType.OTHER)
     assert(po.privilegeObjectType === PrivilegeObjectType.TABLE_OR_VIEW)
-    assert(po.catalog.isEmpty)
+    assertSessionCatalog(po.catalog)
     assertEqualsIgnoreCase(reusedDb)(po.dbname)
     assertEqualsIgnoreCase(reusedPartTableShort)(po.objectName)
     assert(po.columns.head === "pid")
@@ -252,7 +265,7 @@ abstract class PrivilegesBuilderSuite extends KyuubiFunSuite with SparkSessionPr
     val po = out.head
     assert(po.actionType === PrivilegeObjectActionType.OTHER)
     assert(po.privilegeObjectType === PrivilegeObjectType.TABLE_OR_VIEW)
-    assert(po.catalog.isEmpty)
+    assertSessionCatalog(po.catalog)
     assertEqualsIgnoreCase(reusedDb)(po.dbname)
     assertEqualsIgnoreCase(reusedPartTableShort)(po.objectName)
     assert(po.columns.head === "pid")
@@ -275,7 +288,7 @@ abstract class PrivilegesBuilderSuite extends KyuubiFunSuite with SparkSessionPr
     val po0 = out.head
     assert(po0.actionType === PrivilegeObjectActionType.OTHER)
     assert(po0.privilegeObjectType === PrivilegeObjectType.TABLE_OR_VIEW)
-    assert(po0.catalog.isEmpty)
+    assertSessionCatalog(po0.catalog)
     assertEqualsIgnoreCase(reusedDb)(po0.dbname)
     assertEqualsIgnoreCase(reusedPartTableShort)(po0.objectName)
     assert(po0.columns.head === "pid")
@@ -306,7 +319,7 @@ abstract class PrivilegesBuilderSuite extends KyuubiFunSuite with SparkSessionPr
       val po = out.head
       assert(po.actionType === PrivilegeObjectActionType.OTHER)
       assert(po.privilegeObjectType === PrivilegeObjectType.TABLE_OR_VIEW)
-      assert(po.catalog.isEmpty)
+      assertSessionCatalog(po.catalog)
       assertEqualsIgnoreCase(reusedDb)(po.dbname)
       assertEqualsIgnoreCase(reusedTableShort)(po.objectName)
       assert(po.columns.isEmpty)
@@ -337,7 +350,7 @@ abstract class PrivilegesBuilderSuite extends KyuubiFunSuite with SparkSessionPr
     val po = out.head
     assert(po.actionType === PrivilegeObjectActionType.OTHER)
     assert(po.privilegeObjectType === PrivilegeObjectType.TABLE_OR_VIEW)
-    assert(po.catalog.isEmpty)
+    assertSessionCatalog(po.catalog)
     assertEqualsIgnoreCase(defaultDb)(po.dbname)
     assertEqualsIgnoreCase("AlterViewAsCommand")(po.objectName)
     checkTableOwner(po)
@@ -515,7 +528,7 @@ abstract class PrivilegesBuilderSuite extends KyuubiFunSuite with SparkSessionPr
     val po = out.head
     assert(po.actionType === PrivilegeObjectActionType.OTHER)
     assert(po.privilegeObjectType === PrivilegeObjectType.TABLE_OR_VIEW)
-    assert(po.catalog.isEmpty)
+    assertSessionCatalog(po.catalog)
     assertEqualsIgnoreCase(defaultDb)(po.dbname)
     assertEqualsIgnoreCase("CreateViewCommand")(po.objectName)
     assert(po.columns.isEmpty)
@@ -720,7 +733,7 @@ abstract class PrivilegesBuilderSuite extends KyuubiFunSuite with SparkSessionPr
     val po = in.head
     assert(po.actionType === PrivilegeObjectActionType.OTHER)
     assert(po.privilegeObjectType === PrivilegeObjectType.TABLE_OR_VIEW)
-    assert(po.catalog.isEmpty)
+    assertSessionCatalog(po.catalog)
     assertEqualsIgnoreCase(reusedDb)(po.dbname)
     assertEqualsIgnoreCase(reusedTableShort)(po.objectName)
     assert(po.columns === Seq("key"))
@@ -739,7 +752,7 @@ abstract class PrivilegesBuilderSuite extends KyuubiFunSuite with SparkSessionPr
     val po = in.head
     assert(po.actionType === PrivilegeObjectActionType.OTHER)
     assert(po.privilegeObjectType === PrivilegeObjectType.TABLE_OR_VIEW)
-    assert(po.catalog.isEmpty)
+    assertSessionCatalog(po.catalog)
     assertEqualsIgnoreCase(reusedDb)(po.dbname)
     assertEqualsIgnoreCase(reusedTableShort)(po.objectName)
     assert(po.columns.isEmpty)
@@ -801,7 +814,7 @@ abstract class PrivilegesBuilderSuite extends KyuubiFunSuite with SparkSessionPr
     val po = out.head
     assert(po.actionType === PrivilegeObjectActionType.OTHER)
     assert(po.privilegeObjectType === PrivilegeObjectType.TABLE_OR_VIEW)
-    assert(po.catalog.isEmpty)
+    assertSessionCatalog(po.catalog)
     assertEqualsIgnoreCase(reusedDb)(po.dbname)
     assertEqualsIgnoreCase(reusedPartTableShort)(po.objectName)
     assert(po.columns.head === "pid")
@@ -906,7 +919,7 @@ abstract class PrivilegesBuilderSuite extends KyuubiFunSuite with SparkSessionPr
       outputs.foreach { po =>
         assert(po.actionType === PrivilegeObjectActionType.OTHER)
         assert(po.privilegeObjectType === PrivilegeObjectType.TABLE_OR_VIEW)
-        assert(po.catalog.isEmpty)
+        assertSessionCatalog(po.catalog)
         assertEqualsIgnoreCase(reusedDb)(po.dbname)
         assertEqualsIgnoreCase(tableName.split("\\.").last)(po.objectName)
         assert(po.columns.isEmpty)
@@ -1209,7 +1222,7 @@ abstract class PrivilegesBuilderSuite extends KyuubiFunSuite with SparkSessionPr
     val po = out.head
     assert(po.actionType === PrivilegeObjectActionType.OTHER)
     assert(po.privilegeObjectType === PrivilegeObjectType.TABLE_OR_VIEW)
-    assert(po.catalog.isEmpty)
+    assertSessionCatalog(po.catalog)
     assertEqualsIgnoreCase(reusedDb)(po.dbname)
     assertEqualsIgnoreCase(reusedTableShort)(po.objectName)
     assert(po.columns.head === "a")
@@ -1228,7 +1241,7 @@ abstract class PrivilegesBuilderSuite extends KyuubiFunSuite with SparkSessionPr
     val po = out.head
     assert(po.actionType === PrivilegeObjectActionType.OTHER)
     assert(po.privilegeObjectType === PrivilegeObjectType.TABLE_OR_VIEW)
-    assert(po.catalog.isEmpty)
+    assertSessionCatalog(po.catalog)
     assertEqualsIgnoreCase(reusedDb)(po.dbname)
     assertEqualsIgnoreCase(reusedTableShort)(po.objectName)
     assert(po.columns.head === "value")

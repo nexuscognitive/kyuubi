@@ -19,43 +19,62 @@ package org.apache.kyuubi.plugin.spark.authz.ranger
 
 import org.apache.kyuubi.KyuubiFunSuite
 import org.apache.kyuubi.plugin.spark.authz.ObjectType._
+import org.apache.kyuubi.plugin.spark.authz.SparkSessionProvider
 
-class AccessResourceSuite extends KyuubiFunSuite {
+class AccessResourceSuite extends KyuubiFunSuite with SparkSessionProvider {
+  override protected val catalogImpl: String = "in-memory"
+
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    // `spark` is lazy. AccessResource resolves catalog defaults and the Ranger catalog
+    // mapping through SparkSession.active, so the session has to exist before the first
+    // resource is built -- which is also how it works in production, on the driver.
+    assert(spark.sparkContext != null)
+  }
+
+  override def afterAll(): Unit = {
+    spark.stop()
+    super.afterAll()
+  }
+
   test("generate spark ranger resources") {
     val resource = AccessResource(DATABASE, "my_db_name", None)
+    // `catalog` is the raw input; getCatalog is what reaches Ranger, after the default
+    // catalog is applied and mapped. Catalogs are always enforced, so it is never empty.
     assert(resource.catalog.isEmpty)
-    assert(resource.getDatabase === "my_db_name")
+    assert(resource.getCatalog === AccessResource.DEFAULT_TARGET_CATALOG)
+    assert(resource.getSchema === "my_db_name")
     assert(resource.getTable === null)
     assert(resource.getColumn === null)
     assert(resource.getColumns.isEmpty)
 
     val resource1 =
       AccessResource(DATABASE, null, "my_table_name", "my_col_1,my_col_2", Some("Bob"))
-    assert(resource.catalog.isEmpty)
-    assert(resource1.getDatabase === null)
+    assert(resource1.catalog.isEmpty)
+    assert(resource1.getSchema === null)
     assert(resource1.getTable === null)
     assert(resource1.getColumn === null)
     assert(resource1.getColumns.isEmpty)
     assert(resource1.getOwnerUser === "Bob")
 
     val resource2 = AccessResource(FUNCTION, "my_db_name", "my_func_name", null)
-    assert(resource.catalog.isEmpty)
-    assert(resource2.getDatabase === "my_db_name")
+    assert(resource2.catalog.isEmpty)
+    assert(resource2.getSchema === "my_db_name")
     assert(resource2.getTable === null)
     assert(resource2.getValue("udf") === "my_func_name")
     assert(resource1.getColumn === null)
     assert(resource1.getColumns.isEmpty)
 
     val resource3 = AccessResource(TABLE, "my_db_name", "my_table_name", "my_col_1,my_col_2")
-    assert(resource.catalog.isEmpty)
-    assert(resource3.getDatabase === "my_db_name")
+    assert(resource3.catalog.isEmpty)
+    assert(resource3.getSchema === "my_db_name")
     assert(resource3.getTable === "my_table_name")
     assert(resource3.getColumn === null)
     assert(resource3.getColumns.isEmpty)
 
     val resource4 = AccessResource(COLUMN, "my_db_name", "my_table_name", "my_col_1,my_col_2")
-    assert(resource.catalog.isEmpty)
-    assert(resource4.getDatabase === "my_db_name")
+    assert(resource4.catalog.isEmpty)
+    assert(resource4.getSchema === "my_db_name")
     assert(resource4.getTable === "my_table_name")
     assert(resource4.getColumn === "my_col_1,my_col_2")
     assert(resource4.getColumns === Seq("my_col_1", "my_col_2"))
@@ -66,15 +85,15 @@ class AccessResourceSuite extends KyuubiFunSuite {
 
     val resource = AccessResource(DATABASE, "my_db_name", null, null, catalog = catalog)
     assert(resource.catalog.get === "my_cat")
-    assert(resource.getDatabase === "my_db_name")
+    assert(resource.getSchema === "my_db_name")
     assert(resource.getTable === null)
     assert(resource.getColumn === null)
     assert(resource.getColumns.isEmpty)
 
     val resource1 =
       AccessResource(COLUMN, "my_db_name", "my_table_name", "my_col_1,my_col_2", catalog = catalog)
-    assert(resource.catalog.get === "my_cat")
-    assert(resource1.getDatabase === "my_db_name")
+    assert(resource1.catalog.get === "my_cat")
+    assert(resource1.getSchema === "my_db_name")
     assert(resource1.getTable === "my_table_name")
     assert(resource1.getColumn === "my_col_1,my_col_2")
     assert(resource1.getColumns === Seq("my_col_1", "my_col_2"))
