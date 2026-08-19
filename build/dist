@@ -251,6 +251,10 @@ echo -e "\$ ${BUILD_COMMAND[@]}\n"
 
 FILTERED_ARGS=()
 EXTRA_SCALA_212_SPARK_PROFILE='spark-3.5'
+# NX1: the Scala 2.13 engine is what runs on our Spark 4 image, so it has to be built
+# against Spark 4, not against the default Spark 3.5. Opt-in and empty by default, so
+# an unset value keeps upstream behaviour exactly.
+EXTRA_SCALA_213_SPARK_PROFILE="${EXTRA_SCALA_213_SPARK_PROFILE:-}"
 # shellcheck disable=SC2045
 for arg in "$@"; do
   FILTERED_ARG="$arg"
@@ -272,7 +276,11 @@ done
 
 # shellcheck disable=SC2050
 if [ "$SCALA_VERSION" = "2.12" ]; then
-  EXTRA_SPARK_ENGINE_BUILD_COMMAND=("$MVN" install $MVN_DIST_OPT ${FILTERED_ARGS[@]} -Pscala-2.13 -pl :kyuubi-spark-sql-engine_2.13 -am)
+  EXTRA_SCALA_213_PROFILE_ARGS=()
+  if [ -n "$EXTRA_SCALA_213_SPARK_PROFILE" ]; then
+    EXTRA_SCALA_213_PROFILE_ARGS+=("-P$EXTRA_SCALA_213_SPARK_PROFILE")
+  fi
+  EXTRA_SPARK_ENGINE_BUILD_COMMAND=("$MVN" install $MVN_DIST_OPT ${FILTERED_ARGS[@]} ${EXTRA_SCALA_213_PROFILE_ARGS[@]+"${EXTRA_SCALA_213_PROFILE_ARGS[@]}"} -Pscala-2.13 -pl :kyuubi-spark-sql-engine_2.13 -am)
 else
   EXTRA_SPARK_ENGINE_BUILD_COMMAND=("$MVN" install $MVN_DIST_OPT ${FILTERED_ARGS[@]} -pl :kyuubi-spark-sql-engine_2.12 -am)
 fi
