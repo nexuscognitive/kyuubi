@@ -153,6 +153,32 @@
             <artifactId>kubernetes-httpclient-okhttp</artifactId>
         </dependency>
 
+        <!--
+          The Spark Connect frontend is a byte-level gRPC proxy: it needs the gRPC runtime and a
+          transport, but deliberately no protobuf stubs, since it never decodes a Spark Connect
+          message. These artifacts already reach the distribution transitively through jetcd in
+          kyuubi-ha, so declaring them here adds no jar to the assembly.
+        -->
+        <dependency>
+            <groupId>io.grpc</groupId>
+            <artifactId>grpc-api</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.grpc</groupId>
+            <artifactId>grpc-core</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.grpc</groupId>
+            <artifactId>grpc-netty</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-handler</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>io.swagger.core.v3</groupId>
             <artifactId>swagger-jaxrs2</artifactId>

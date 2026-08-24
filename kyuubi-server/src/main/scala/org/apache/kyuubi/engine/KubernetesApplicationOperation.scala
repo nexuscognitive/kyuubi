@@ -346,6 +346,21 @@ class KubernetesApplicationOperation extends ApplicationOperation with Logging {
    * Read directly from the driver pod via the Kubernetes API, so any Kyuubi instance can serve it
    * regardless of which one owns the batch session. Only available while the driver pod exists.
    */
+  /**
+   * The IP of the driver pod carrying `tag`, but only while the engine is actually serving.
+   *
+   * Read straight out of the informer-maintained [[appInfoStore]] -- no extra watch and no call
+   * to the API server on the request path. Spark driver pods run with `restartPolicy: Never`, so
+   * the IP does not change for the lifetime of the application.
+   *
+   * Returns [[None]] both for an unknown tag and for an engine that exists but is not `RUNNING`
+   * yet; callers cannot distinguish the two and should treat both as "not routable yet".
+   */
+  private[kyuubi] def getRunningEnginePodIpByTag(tag: String): Option[String] =
+    Option(appInfoStore.get(tag)).collect {
+      case (_, appInfo) if appInfo.state == RUNNING => appInfo.podIp
+    }.flatten
+
   private[kyuubi] def getDriverLogByTag(tag: String, size: Int): Seq[String] = {
     val maxLines = if (size <= 0) 1000 else size
     val result = kubernetesClients.values().asScala.iterator.flatMap { client =>
@@ -618,7 +633,8 @@ class KubernetesApplicationOperation extends ApplicationOperation with Logging {
               getPodAppUrl(sparkAppUrlSource, sparkAppUrlPattern, kubernetesInfo, pod)
             },
             error = appError,
-            podName = Some(pod.getMetadata.getName)))
+            podName = Some(pod.getMetadata.getName),
+            podIp = getPodIp(pod).orElse(appInfo.podIp)))
       }.getOrElse {
         appInfoStore.put(
           kyuubiUniqueKey,
@@ -628,7 +644,8 @@ class KubernetesApplicationOperation extends ApplicationOperation with Logging {
             state = appState,
             url = getPodAppUrl(sparkAppUrlSource, sparkAppUrlPattern, kubernetesInfo, pod),
             error = appError,
-            podName = Some(pod.getMetadata.getName)))
+            podName = Some(pod.getMetadata.getName),
+            podIp = getPodIp(pod)))
       }
     }
   }
@@ -888,6 +905,9 @@ object KubernetesApplicationOperation extends Logging {
   def getPodAppId(pod: Pod): String = {
     pod.getMetadata.getLabels.get(SPARK_APP_ID_LABEL)
   }
+
+  private[kyuubi] def getPodIp(pod: Pod): Option[String] =
+    Option(pod.getStatus).flatMap(status => Option(status.getPodIP)).filter(_.nonEmpty)
 
   private[kyuubi] def getPodAppUrl(
       sparkAppUrlSource: KubernetesApplicationUrlSource,
