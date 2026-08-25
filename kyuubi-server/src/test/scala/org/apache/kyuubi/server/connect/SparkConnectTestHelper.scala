@@ -26,7 +26,10 @@ import scala.collection.mutable.ListBuffer
 import io.grpc.{CallOptions, ClientCall, HandlerRegistry, ManagedChannel, Metadata, MethodDescriptor, Server, ServerCall, ServerCallHandler, ServerMethodDefinition, Status}
 import io.grpc.netty.{NettyChannelBuilder, NettyServerBuilder}
 
-/** Marshals messages as raw bytes so tests can assert on the exact payload that crossed the wire. */
+/**
+ * Marshals messages as raw bytes so tests can assert on the exact payload that
+ * crossed the wire.
+ */
 object ByteArrayMarshaller extends MethodDescriptor.Marshaller[Array[Byte]] {
 
   override def stream(value: Array[Byte]): InputStream = new ByteArrayInputStream(value)
