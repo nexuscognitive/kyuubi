@@ -61,5 +61,10 @@ export const MENUS = [
     label: 'Data Agent',
     icon: 'ChatDotRound',
     router: '/data-agent'
+  },
+  {
+    label: 'Spark Connect',
+    icon: 'Connection',
+    router: '/spark-connect'
   }
 ]

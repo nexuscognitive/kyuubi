@@ -22,6 +22,7 @@ import detailRoutes from './detail'
 import swaggerRoutes from './swagger'
 import editorRoutes from './editor'
 import dataAgentRoutes from './data-agent'
+import sparkConnectRoutes from './spark-connect'
 
 const routes = [
   {
@@ -49,7 +50,8 @@ const routes = [
       ...detailRoutes,
       ...swaggerRoutes,
       ...editorRoutes,
-      ...dataAgentRoutes
+      ...dataAgentRoutes,
+      ...sparkConnectRoutes
     ]
   }
 ]
