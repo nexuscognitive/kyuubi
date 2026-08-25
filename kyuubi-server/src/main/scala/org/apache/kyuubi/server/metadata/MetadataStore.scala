@@ -130,25 +130,33 @@ trait MetadataStore extends Closeable {
   def cleanupKubernetesEngineInfoByAge(maxAge: Long, limit: Int): Int
 
   /**
-   * Persist the routing record for a Spark Connect session.
+   * Persist the record binding a user to their Spark Connect engine.
    */
   def insertSparkConnectSession(sessionInfo: SparkConnectSessionInfo): Unit
 
   /**
-   * Look up a Spark Connect session by the SHA-256 hex digest of its bearer token.
-   * @return the record, or [[None]] when no session owns that token.
+   * Look up the Spark Connect engine bound to a user.
+   * @return the record, or [[None]] when the user has no engine.
    */
-  def getSparkConnectSessionByTokenId(tokenId: String): Option[SparkConnectSessionInfo]
+  def getSparkConnectSessionByUserName(userName: String): Option[SparkConnectSessionInfo]
 
   /**
-   * Drop the Spark Connect routing record for a Kyuubi session handle.
+   * Clear the session handle on a Spark Connect record, leaving the engine binding in place.
+   * Called when the session closes; the engine outlives it and the user's next session is handed
+   * the same driver by engine discovery.
    */
-  def cleanupSparkConnectSessionBySessionId(sessionId: String): Unit
+  def detachSparkConnectSessionBySessionId(sessionId: String): Unit
 
   /**
-   * Check and cleanup Spark Connect routing records with maxAge limitation. Records are dropped
-   * on session close, so this only reclaims rows orphaned by an instance that died mid-session.
-   * @param maxAge the routing record maximum age.
+   * Drop a user's Spark Connect record outright.
+   */
+  def cleanupSparkConnectSessionByUserName(userName: String): Unit
+
+  /**
+   * Check and cleanup Spark Connect records with maxAge limitation. An engine stops on its own
+   * once idle, so this reclaims bindings whose driver is long gone, as well as rows orphaned by
+   * an instance that died mid-session.
+   * @param maxAge the record maximum age.
    * @param limit the maximum number of records to be cleaned up.
    */
   def cleanupSparkConnectSessionByAge(maxAge: Long, limit: Int): Int

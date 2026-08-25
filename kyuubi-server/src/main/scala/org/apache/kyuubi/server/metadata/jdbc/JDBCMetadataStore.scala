@@ -600,28 +600,39 @@ class JDBCMetadataStore(conf: KyuubiConf) extends MetadataStore with Logging {
       execute(
         connection,
         query,
-        sessionInfo.tokenId,
-        sessionInfo.sessionId,
         sessionInfo.userName,
+        sessionInfo.sessionId,
         sessionInfo.engineTag,
+        sessionInfo.engineToken,
         sessionInfo.createTime)
     }
   }
 
-  override def getSparkConnectSessionByTokenId(tokenId: String): Option[SparkConnectSessionInfo] = {
+  override def getSparkConnectSessionByUserName(
+      userName: String): Option[SparkConnectSessionInfo] = {
+    // Newest first: a user has one binding, but ordering makes the answer deterministic if an
+    // instance died between the delete and the insert that replace it.
     val query = s"SELECT $SPARK_CONNECT_SESSION_COLUMNS_STR FROM" +
-      s" $SPARK_CONNECT_SESSION_TABLE WHERE token_id = ?"
+      s" $SPARK_CONNECT_SESSION_TABLE WHERE user_name = ? ORDER BY create_time DESC"
     JdbcUtils.withConnection { connection =>
-      withResultSet(connection, query, tokenId) { rs =>
+      withResultSet(connection, query, userName) { rs =>
         buildSparkConnectSessions(rs).headOption
       }
     }
   }
 
-  override def cleanupSparkConnectSessionBySessionId(sessionId: String): Unit = {
-    val query = s"DELETE FROM $SPARK_CONNECT_SESSION_TABLE WHERE session_id = ?"
+  override def detachSparkConnectSessionBySessionId(sessionId: String): Unit = {
+    val query =
+      s"UPDATE $SPARK_CONNECT_SESSION_TABLE SET session_id = '' WHERE session_id = ?"
     JdbcUtils.withConnection { connection =>
       execute(connection, query, sessionId)
+    }
+  }
+
+  override def cleanupSparkConnectSessionByUserName(userName: String): Unit = {
+    val query = s"DELETE FROM $SPARK_CONNECT_SESSION_TABLE WHERE user_name = ?"
+    JdbcUtils.withConnection { connection =>
+      execute(connection, query, userName)
     }
   }
 
@@ -643,10 +654,12 @@ class JDBCMetadataStore(conf: KyuubiConf) extends MetadataStore with Logging {
       val sessionInfoList = ListBuffer[SparkConnectSessionInfo]()
       while (resultSet.next()) {
         sessionInfoList += SparkConnectSessionInfo(
-          tokenId = resultSet.getString("token_id"),
-          sessionId = resultSet.getString("session_id"),
           userName = resultSet.getString("user_name"),
+          // Detaching writes an empty string, but a store that normalises it to NULL must still
+          // read back as "no session" rather than blow up on a null.
+          sessionId = Option(resultSet.getString("session_id")).getOrElse(""),
           engineTag = resultSet.getString("engine_tag"),
+          engineToken = resultSet.getString("engine_token"),
           createTime = resultSet.getLong("create_time"))
       }
       sessionInfoList
@@ -899,10 +912,10 @@ object JDBCMetadataStore {
   private val KUBERNETES_ENGINE_INFO_COLUMNS_STR = KUBERNETES_ENGINE_INFO_COLUMNS.mkString(",")
   private val SPARK_CONNECT_SESSION_TABLE = "spark_connect_session"
   private val SPARK_CONNECT_SESSION_COLUMNS = Seq(
-    "token_id",
-    "session_id",
     "user_name",
+    "session_id",
     "engine_tag",
+    "engine_token",
     "create_time")
   private val SPARK_CONNECT_SESSION_COLUMNS_STR = SPARK_CONNECT_SESSION_COLUMNS.mkString(",")
 }

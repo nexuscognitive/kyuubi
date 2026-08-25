@@ -22,23 +22,22 @@ import org.apache.commons.lang3.builder.ReflectionToStringBuilder;
 import org.apache.commons.lang3.builder.ToStringStyle;
 
 /**
- * A newly created Spark Connect session.
+ * The caller's Spark Connect session.
  *
  * <p>Spark Connect has no open-session RPC, so a client creates its session over REST and only then
- * points a {@code SparkSession} at the gRPC port. The token both routes the connection to this
- * session's engine and authenticates it, and is returned exactly once -- Kyuubi keeps only its
- * digest and cannot reissue it.
+ * points a {@code SparkSession} at the gRPC port. There is no token here: the gRPC port
+ * authenticates the same bearer credential this REST call was made with, and routes on the user it
+ * resolves to. A caller has one session, so creating one twice returns the same session rather than
+ * a second.
  */
 public class SparkConnectSession {
   private String sessionId;
-  private String token;
   private String connectUrl;
 
   public SparkConnectSession() {}
 
-  public SparkConnectSession(String sessionId, String token, String connectUrl) {
+  public SparkConnectSession(String sessionId, String connectUrl) {
     this.sessionId = sessionId;
-    this.token = token;
     this.connectUrl = connectUrl;
   }
 
@@ -48,14 +47,6 @@ public class SparkConnectSession {
 
   public void setSessionId(String sessionId) {
     this.sessionId = sessionId;
-  }
-
-  public String getToken() {
-    return token;
-  }
-
-  public void setToken(String token) {
-    this.token = token;
   }
 
   /** The {@code sc://} URL to hand to {@code SparkSession.builder.remote(...)}. */
@@ -80,11 +71,8 @@ public class SparkConnectSession {
     return Objects.hash(getSessionId());
   }
 
-  /** Deliberately omits the token so it cannot reach a log through a stray {@code toString}. */
   @Override
   public String toString() {
-    return new ReflectionToStringBuilder(this, ToStringStyle.JSON_STYLE)
-        .setExcludeFieldNames("token")
-        .toString();
+    return new ReflectionToStringBuilder(this, ToStringStyle.JSON_STYLE).toString();
   }
 }

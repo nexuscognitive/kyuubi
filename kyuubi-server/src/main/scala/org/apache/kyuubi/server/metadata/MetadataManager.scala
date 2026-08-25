@@ -248,12 +248,16 @@ class MetadataManager extends AbstractService("MetadataManager") {
     withMetadataRequestMetrics(_metadataStore.insertSparkConnectSession(sessionInfo))
   }
 
-  def getSparkConnectSessionByTokenId(tokenId: String): Option[SparkConnectSessionInfo] = {
-    withMetadataRequestMetrics(_metadataStore.getSparkConnectSessionByTokenId(tokenId))
+  def getSparkConnectSessionByUserName(userName: String): Option[SparkConnectSessionInfo] = {
+    withMetadataRequestMetrics(_metadataStore.getSparkConnectSessionByUserName(userName))
   }
 
-  def cleanupSparkConnectSessionBySessionId(sessionId: String): Unit = {
-    withMetadataRequestMetrics(_metadataStore.cleanupSparkConnectSessionBySessionId(sessionId))
+  def detachSparkConnectSessionBySessionId(sessionId: String): Unit = {
+    withMetadataRequestMetrics(_metadataStore.detachSparkConnectSessionBySessionId(sessionId))
+  }
+
+  def cleanupSparkConnectSessionByUserName(userName: String): Unit = {
+    withMetadataRequestMetrics(_metadataStore.cleanupSparkConnectSessionByUserName(userName))
   }
 
   private def startMetadataCleaner(): Unit = {

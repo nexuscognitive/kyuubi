@@ -1580,9 +1580,11 @@ object KyuubiConf {
     buildConf("kyuubi.session.spark.connect.token")
       .audience(SERVER)
       .internal
-      .doc("The per-session Spark Connect bearer token. Set by the Spark Connect session REST " +
-        "endpoint; any value supplied by a client is discarded. The <code>SERVER</code> " +
-        "audience keeps it out of the engine's Spark conf -- it reaches the driver through the " +
+      .doc("The credential Kyuubi presents to a Spark Connect engine, minted per engine by the " +
+        "Spark Connect session REST endpoint; any value supplied by a client is discarded. It is " +
+        "never returned to a client -- callers authenticate with their own bearer credential, " +
+        "which the frontend resolves and then drops before relaying. The <code>SERVER</code> " +
+        "audience keeps this out of the engine's Spark conf -- it reaches the driver through the " +
         "<code>SPARK_CONNECT_AUTHENTICATE_TOKEN</code> environment variable instead, so it " +
         "appears in neither the process command line nor the Spark UI environment page.")
       .version("1.12.0")

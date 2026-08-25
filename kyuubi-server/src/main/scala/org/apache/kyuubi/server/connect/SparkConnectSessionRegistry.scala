@@ -29,13 +29,16 @@ import org.apache.kyuubi.server.metadata.MetadataManager
 import org.apache.kyuubi.server.metadata.api.SparkConnectSessionInfo
 
 /**
- * Resolves a Spark Connect bearer token to the session -- and therefore the engine -- that owns
- * it.
+ * Resolves an authenticated user to the Spark Connect engine that serves them.
+ *
+ * One user has at most one engine, so the user name -- as the authentication chain resolved it --
+ * is the whole routing key. Nothing about the credential the caller presented is kept here: it is
+ * verified per call by [[SparkConnectAuthenticator]] and then discarded.
  *
  * Backed by the metadata store so that a Kyuubi restart, or a second HA replica that never saw
- * the `POST` which created the session, can still route for it. The in-memory cache in front is
- * only there to keep the store off the per-RPC path: PySpark issues a `ReleaseExecute` after
- * every response batch, so lookups are frequent.
+ * the `POST` which created the session, can still route. The in-memory cache in front is only
+ * there to keep the store off the per-RPC path: PySpark issues a `ReleaseExecute` after every
+ * response batch, so lookups are frequent.
  */
 class SparkConnectSessionRegistry(
     metadataManager: Option[MetadataManager],
@@ -43,14 +46,14 @@ class SparkConnectSessionRegistry(
     cacheExpirySeconds: Long = SparkConnectSessionRegistry.DEFAULT_CACHE_EXPIRY_SECONDS)
   extends Logging {
 
-  private val sessionsByTokenId: Cache[String, SparkConnectSessionInfo] = CacheBuilder.newBuilder()
+  private val bindingsByUserName: Cache[String, SparkConnectSessionInfo] = CacheBuilder.newBuilder()
     .maximumSize(maxCacheSize)
     .expireAfterWrite(cacheExpirySeconds, TimeUnit.SECONDS)
     .build[String, SparkConnectSessionInfo]()
 
   // Only holds sessions this instance created, so it is bounded by the local live session count.
   // A peer's sessions are reachable through the store, and are cleaned up by whoever closes them.
-  private val tokenIdsBySessionId = new ConcurrentHashMap[String, String]()
+  private val userNamesBySessionId = new ConcurrentHashMap[String, String]()
 
   private val closeListeners = new CopyOnWriteArrayList[String => Unit]()
 
@@ -61,62 +64,78 @@ class SparkConnectSessionRegistry(
   def onSessionClosed(listener: String => Unit): Unit = closeListeners.add(listener)
 
   /**
-   * Record a freshly created Spark Connect session and return its routing entry.
+   * Bind `userName` to the engine their new session opened, replacing any earlier binding.
    *
-   * The raw token is never stored -- only its digest -- so it is the caller's job to hand the
-   * token back to the client, once, in the response to the create call.
+   * `engineToken` is Kyuubi's own credential for that engine, not the caller's, and it is what
+   * the relay presents on the upstream hop. It has to survive here because a Kyuubi instance that
+   * did not launch the engine still has to authenticate to it.
    */
   def register(
-      token: String,
-      sessionId: String,
       userName: String,
-      engineTag: String): SparkConnectSessionInfo = {
-    val sessionInfo = SparkConnectSessionInfo(
-      tokenId = SparkConnect.tokenId(token),
-      sessionId = sessionId,
+      sessionId: String,
+      engineTag: String,
+      engineToken: String): SparkConnectSessionInfo = {
+    val binding = SparkConnectSessionInfo(
       userName = userName,
+      sessionId = sessionId,
       engineTag = engineTag,
+      engineToken = engineToken,
       createTime = System.currentTimeMillis())
-    metadataManager.foreach(_.insertSparkConnectSession(sessionInfo))
-    sessionsByTokenId.put(sessionInfo.tokenId, sessionInfo)
-    tokenIdsBySessionId.put(sessionId, sessionInfo.tokenId)
-    sessionInfo
+    metadataManager.foreach { manager =>
+      // A user has one engine, so the previous binding is replaced rather than accumulated.
+      manager.cleanupSparkConnectSessionByUserName(userName)
+      manager.insertSparkConnectSession(binding)
+    }
+    bindingsByUserName.put(userName, binding)
+    userNamesBySessionId.put(sessionId, userName)
+    binding
   }
 
   /**
-   * The session that owns `token`, or [[None]] if no session does.
+   * The engine bound to `userName`, whether or not a session is still open on it.
    *
-   * A miss is deliberately not cached. Caching negative lookups would let anyone who can reach
-   * the port grow the cache without bound simply by presenting fresh garbage tokens.
+   * A miss is deliberately not cached. Caching negative lookups would let anyone who can present
+   * a valid credential grow the cache without bound, and the store round trip only happens for
+   * users who have no engine -- whose calls are rejected rather than relayed.
    */
-  def lookup(token: String): Option[SparkConnectSessionInfo] = {
-    val id = SparkConnect.tokenId(token)
-    Option(sessionsByTokenId.getIfPresent(id)).orElse {
+  def lookup(userName: String): Option[SparkConnectSessionInfo] =
+    Option(bindingsByUserName.getIfPresent(userName)).orElse {
       val persisted =
         try {
-          metadataManager.flatMap(_.getSparkConnectSessionByTokenId(id))
+          metadataManager.flatMap(_.getSparkConnectSessionByUserName(userName))
         } catch {
           case NonFatal(e) =>
-            error(s"Failed to look up the Spark Connect session for token $id", e)
+            error(s"Failed to look up the Spark Connect engine binding for $userName", e)
             None
         }
-      persisted.foreach(sessionsByTokenId.put(id, _))
+      persisted.foreach(bindingsByUserName.put(userName, _))
       persisted
     }
-  }
+
+  /** The engine bound to `userName` while a Kyuubi session is still open on it. */
+  def liveSession(userName: String): Option[SparkConnectSessionInfo] =
+    lookup(userName).filter(_.hasLiveSession)
 
   /**
-   * Forget a session and tear down what was keyed to it.
+   * Forget the session on an engine, keeping the engine binding itself.
+   *
+   * The engine outlives its session: it is shared at `USER` level, so closing the session leaves
+   * a driver running that the user's next session will be handed straight back by engine
+   * discovery -- still carrying the `kyuubi-unique-tag` and the credential it was launched with.
+   * Dropping the binding here would lose both, and the next session would route to a tag that no
+   * pod carries. What is dropped is the session id, which is what makes the gRPC port answer
+   * "create a session first" instead of relaying into an engine nobody is holding open.
    *
    * Called for every closing session, Spark Connect or not, so it must stay cheap and silent for
    * the overwhelming majority that were never registered here.
    */
   def unregister(sessionId: String): Unit = {
-    val tokenId = tokenIdsBySessionId.remove(sessionId)
-    if (tokenId == null) {
+    val userName = userNamesBySessionId.remove(sessionId)
+    if (userName == null) {
       return
     }
-    sessionsByTokenId.invalidate(tokenId)
+    Option(bindingsByUserName.getIfPresent(userName))
+      .foreach(binding => bindingsByUserName.put(userName, binding.copy(sessionId = "")))
     closeListeners.asScala.foreach { listener =>
       try {
         listener(sessionId)
@@ -126,14 +145,27 @@ class SparkConnectSessionRegistry(
       }
     }
     try {
-      metadataManager.foreach(_.cleanupSparkConnectSessionBySessionId(sessionId))
+      metadataManager.foreach(_.detachSparkConnectSessionBySessionId(sessionId))
     } catch {
       case NonFatal(e) =>
-        error(s"Failed to remove the Spark Connect routing record for session $sessionId", e)
+        error(s"Failed to detach the Spark Connect routing record for session $sessionId", e)
     }
   }
 
-  private[connect] def cachedSessionCount: Long = sessionsByTokenId.size()
+  /** Drop the binding outright, for an engine that is known to be gone. */
+  def forget(userName: String): Unit = {
+    Option(bindingsByUserName.getIfPresent(userName))
+      .foreach(binding => userNamesBySessionId.remove(binding.sessionId))
+    bindingsByUserName.invalidate(userName)
+    try {
+      metadataManager.foreach(_.cleanupSparkConnectSessionByUserName(userName))
+    } catch {
+      case NonFatal(e) =>
+        error(s"Failed to remove the Spark Connect engine binding for $userName", e)
+    }
+  }
+
+  private[connect] def cachedBindingCount: Long = bindingsByUserName.size()
 }
 
 object SparkConnectSessionRegistry {

@@ -24,11 +24,11 @@ import org.apache.commons.lang3.builder.ToStringStyle;
 /**
  * One live Spark Connect session, as listed back to the user who owns it.
  *
- * <p>This deliberately has no {@code token} field, and never will. Kyuubi keeps only the token's
- * digest, so it could not reissue one even if listing it were desirable; more to the point, a
- * bearer token that a list endpoint hands out is a credential that leaks into every browser cache,
- * proxy log and screenshot of the page that renders it. The token is shown once, in the response to
- * the create call, and the UI tells the user so.
+ * <p>This deliberately has no {@code token} field, and never will. There is no per-session token to
+ * list: a caller reaches the gRPC port with the platform credential they already hold, and Kyuubi's
+ * own credential for the engine never leaves the gateway. A bearer token that a list endpoint hands
+ * out is a credential that leaks into every browser cache, proxy log and screenshot of the page
+ * that renders it.
  */
 public class SparkConnectSessionData {
   private String sessionId;

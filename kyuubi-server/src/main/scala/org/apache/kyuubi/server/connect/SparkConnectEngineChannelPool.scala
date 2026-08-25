@@ -56,7 +56,7 @@ class SparkConnectEngineChannelPool(
 
   private case class PooledChannel(
       sessionId: String,
-      tokenId: String,
+      engineTokenId: String,
       address: SparkConnectEngineAddress,
       channel: ManagedChannel)
 
@@ -68,33 +68,34 @@ class SparkConnectEngineChannelPool(
   /**
    * The connection for `sessionInfo`, creating it on first use.
    *
-   * Before handing back a pooled connection this re-checks that the presented token still matches
-   * the one the connection was opened for. Two sessions can never share a connection, so a token
-   * that resolves to session A can never be relayed over a connection that authenticated as
-   * session B -- even if a store or cache bug were to make two tokens resolve to the same session
-   * id. A pooled connection to a stale address is also discarded rather than reused, which is
-   * what makes an engine that came back at a new IP recover on the next call.
+   * Before handing back a pooled connection this re-checks that it was opened for the same engine
+   * credential. A session that was rebound to a different engine -- because the old driver went
+   * away and a new one was launched -- must not keep speaking over a connection authenticated to
+   * the old one, even if a store or cache bug were to leave the routing record looking unchanged.
+   * A pooled connection to a stale address is also discarded rather than reused, which is what
+   * makes an engine that came back at a new IP recover on the next call.
    */
   def acquire(
       sessionInfo: SparkConnectSessionInfo,
       address: SparkConnectEngineAddress): ManagedChannel = {
+    val engineTokenId = SparkConnect.tokenId(sessionInfo.engineToken)
     val pooled = channelsBySessionId.compute(
       sessionInfo.sessionId,
       (_, existing) => {
         if (existing == null) {
           PooledChannel(
             sessionInfo.sessionId,
-            sessionInfo.tokenId,
+            engineTokenId,
             address,
             channelFactory(address, channelConf))
-        } else if (!SparkConnect.tokenIdsMatch(existing.tokenId, sessionInfo.tokenId) ||
+        } else if (!SparkConnect.tokenIdsMatch(existing.engineTokenId, engineTokenId) ||
           existing.address != address) {
           warn(s"Discarding pooled Spark Connect channel to ${existing.address} for session" +
-            s" ${sessionInfo.sessionId}: it no longer matches the presented token and address")
+            s" ${sessionInfo.sessionId}: it no longer matches the engine credential and address")
           shutdownQuietly(existing.channel)
           PooledChannel(
             sessionInfo.sessionId,
-            sessionInfo.tokenId,
+            engineTokenId,
             address,
             channelFactory(address, channelConf))
         } else {
@@ -153,7 +154,7 @@ object SparkConnectEngineChannelPool {
   /**
    * Plaintext HTTP/2 to the driver pod.
    *
-   * The hop runs inside the cluster network and is authenticated by the per-session token, which
+   * The hop runs inside the cluster network and is authenticated by the per-engine token, which
    * the driver checks. Encrypting it as well would need a certificate per engine pod; that is
    * left to the service mesh, or to a later change.
    */

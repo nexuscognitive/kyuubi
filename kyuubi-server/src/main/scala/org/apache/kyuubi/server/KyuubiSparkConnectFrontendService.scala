@@ -40,10 +40,11 @@ import org.apache.kyuubi.util.JavaUtils
  * A frontend service that speaks the Spark Connect gRPC protocol.
  *
  * It owns no protocol logic of its own. Every RPC under `spark.connect.SparkConnectService` is
- * relayed, byte for byte, to the Spark engine identified by the caller's bearer token; see
- * [[SparkConnectRelay]]. Sessions are not created here -- Spark Connect has no open-session RPC,
- * so a client obtains its token from the REST API first and this port only attaches to an engine
- * that already exists or is on its way up.
+ * relayed, byte for byte, to the Spark engine that serves the authenticated caller; see
+ * [[SparkConnectRelay]]. The caller presents the platform credential they already hold, resolved
+ * through the same provider the HTTP frontend uses. Sessions are not created here -- Spark Connect
+ * has no open-session RPC, and provisioning an engine on the first call would block it for a
+ * minute or two -- so this port only attaches to a session the REST API already opened.
  */
 class KyuubiSparkConnectFrontendService(override val serverable: Serverable)
   extends AbstractFrontendService("KyuubiSparkConnectFrontendService") {
@@ -82,10 +83,9 @@ class KyuubiSparkConnectFrontendService(override val serverable: Serverable)
     sessionManager.sparkConnectSessionRegistry.onSessionClosed(channelPool.release)
 
     val relay = new SparkConnectRelay(
+      new SparkConnectAuthenticator(conf),
       sessionManager.sparkConnectSessionRegistry,
-      new KubernetesSparkConnectEngineLocator(
-        sessionManager.applicationManager,
-        conf.get(FRONTEND_SPARK_CONNECT_ENGINE_PORT)),
+      sessionManager.sparkConnectEngineLocator,
       channelPool)
 
     grpcServer = KyuubiSparkConnectFrontendService
@@ -172,6 +172,14 @@ object KyuubiSparkConnectFrontendService extends Logging {
       throw new KyuubiException(
         "The Spark Connect frontend requires the REST frontend, which is where Spark Connect" +
           " sessions are created; add REST to " + FRONTEND_PROTOCOLS.key + ".")
+    }
+    // Without a bearer provider the port would accept a connection and then reject every call as
+    // UNAUTHENTICATED, which looks like a broken deployment rather than an unconfigured one.
+    if (conf.get(AUTHENTICATION_CUSTOM_BEARER_CLASS).forall(_.trim.isEmpty)) {
+      throw new KyuubiException(
+        s"${AUTHENTICATION_CUSTOM_BEARER_CLASS.key} is required by the Spark Connect frontend:" +
+          " callers authenticate every gRPC call with the same bearer credential the HTTP" +
+          " frontends accept, and it is resolved through that provider.")
     }
   }
 

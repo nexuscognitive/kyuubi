@@ -36,7 +36,7 @@ import org.apache.kyuubi.metrics.MetricsConstants._
 import org.apache.kyuubi.metrics.MetricsSystem
 import org.apache.kyuubi.operation.{KyuubiOperationManager, OperationState}
 import org.apache.kyuubi.plugin.{GroupProvider, PluginLoader, SessionConfAdvisor}
-import org.apache.kyuubi.server.connect.SparkConnectSessionRegistry
+import org.apache.kyuubi.server.connect.{KubernetesSparkConnectEngineLocator, SparkConnectEngineLocator, SparkConnectSessionRegistry}
 import org.apache.kyuubi.server.metadata.{MetadataManager, MetadataRequestsRetryRef}
 import org.apache.kyuubi.server.metadata.api.{Metadata, MetadataFilter}
 import org.apache.kyuubi.service.TempFileService
@@ -59,10 +59,15 @@ class KyuubiSessionManager private (name: String) extends SessionManager(name) {
   var metadataManager: Option[MetadataManager] = None
   var applicationManager: KyuubiApplicationManager = _
 
-  // Shared by the REST endpoint that mints Spark Connect tokens and the Spark Connect frontend
-  // that spends them, so a token is routable the instant the create call returns.
+  // Shared by the REST endpoint that creates Spark Connect sessions and the Spark Connect frontend
+  // that routes to them, so a session is routable the instant the create call returns.
   private var _sparkConnectSessionRegistry: SparkConnectSessionRegistry = _
   def sparkConnectSessionRegistry: SparkConnectSessionRegistry = _sparkConnectSessionRegistry
+
+  // Shared for the same reason: the create endpoint asks it whether the engine a previous session
+  // left running is still there, and the frontend asks it where to send each call.
+  private var _sparkConnectEngineLocator: SparkConnectEngineLocator = _
+  def sparkConnectEngineLocator: SparkConnectEngineLocator = _sparkConnectEngineLocator
 
   // lazy is required for plugins since the conf is null when this class initialization
   lazy val sessionConfAdvisor: Seq[SessionConfAdvisor] = PluginLoader.loadSessionConfAdvisor(conf)
@@ -84,6 +89,9 @@ class KyuubiSessionManager private (name: String) extends SessionManager(name) {
     if (conf.isRESTEnabled) metadataManager = Some(new MetadataManager())
     _sparkConnectSessionRegistry = new SparkConnectSessionRegistry(metadataManager)
     applicationManager = new KyuubiApplicationManager(metadataManager)
+    _sparkConnectEngineLocator = new KubernetesSparkConnectEngineLocator(
+      applicationManager,
+      conf.get(KyuubiConf.FRONTEND_SPARK_CONNECT_ENGINE_PORT))
     addService(applicationManager)
     addService(credentialsManager)
     addService(tempFileService)

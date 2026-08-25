@@ -38,7 +38,7 @@ object SparkConnect {
   val SERVICE_PATH_PREFIX = "spark.connect.SparkConnectService/"
 
   /**
-   * Environment variable that carries the per-session token to the Spark driver.
+   * Environment variable that carries the per-engine token to the Spark driver.
    *
    * Spark reads it into `spark.connect.authenticate.token`. Passing it as an environment variable
    * rather than `--conf` keeps it out of the driver's command line and out of the Spark UI
@@ -63,9 +63,9 @@ object SparkConnect {
   /**
    * Headers that must not reach the engine.
    *
-   * The engine authenticates the hop with the per-session token that Kyuubi itself sets, so
-   * whatever credential the caller used to reach Kyuubi -- which may be a long-lived platform
-   * credential with far more authority than one Spark session -- is dropped here rather than
+   * The engine authenticates the hop with the per-engine token that Kyuubi itself sets, so
+   * whatever credential the caller used to reach Kyuubi -- which is now their long-lived platform
+   * credential, with far more authority than one Spark session -- is dropped here rather than
    * relayed into a user-controlled JVM.
    */
   private val STRIPPED_HEADER_NAMES =
@@ -75,7 +75,10 @@ object SparkConnect {
 
   private val secureRandom = new SecureRandom()
 
-  /** Mint a fresh session token: 256 bits of entropy, URL-safe so it survives an HTTP header. */
+  /**
+   * Mint the credential Kyuubi presents to one engine: 256 bits of entropy, URL-safe so it
+   * survives an HTTP header. It is Kyuubi's own and is never handed to a client.
+   */
   def generateToken(): String = {
     val bytes = new Array[Byte](TOKEN_BYTES)
     secureRandom.nextBytes(bytes)
@@ -83,10 +86,11 @@ object SparkConnect {
   }
 
   /**
-   * The store key for a token: its SHA-256 hex digest.
+   * The SHA-256 hex digest of a credential.
    *
-   * Only the digest is persisted, so someone who can read the metadata store still cannot present
-   * a valid bearer token.
+   * Used wherever a credential has to be named without being kept -- as a cache key, or as the
+   * identity of a pooled connection -- so that neither a heap dump nor a log line yields
+   * something presentable.
    */
   def tokenId(token: String): String = {
     val digest = MessageDigest.getInstance("SHA-256")
