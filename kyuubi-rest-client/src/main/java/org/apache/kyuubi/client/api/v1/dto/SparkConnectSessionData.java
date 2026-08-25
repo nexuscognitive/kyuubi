@@ -37,6 +37,7 @@ public class SparkConnectSessionData {
   private String state;
   private String engineId;
   private String engineUrl;
+  private String connectUrl;
 
   public SparkConnectSessionData() {}
 
@@ -46,13 +47,15 @@ public class SparkConnectSessionData {
       Long createTime,
       String state,
       String engineId,
-      String engineUrl) {
+      String engineUrl,
+      String connectUrl) {
     this.sessionId = sessionId;
     this.user = user;
     this.createTime = createTime;
     this.state = state;
     this.engineId = engineId;
     this.engineUrl = engineUrl;
+    this.connectUrl = connectUrl;
   }
 
   public String getSessionId() {
@@ -103,6 +106,20 @@ public class SparkConnectSessionData {
 
   public void setEngineUrl(String engineUrl) {
     this.engineUrl = engineUrl;
+  }
+
+  /**
+   * The {@code sc://} URL to hand to {@code SparkSession.builder.remote(...)}.
+   *
+   * <p>Listed rather than returned only on create, because the client needs it every time it
+   * connects and there is nothing secret about it -- it is the address this gateway advertises.
+   */
+  public String getConnectUrl() {
+    return connectUrl;
+  }
+
+  public void setConnectUrl(String connectUrl) {
+    this.connectUrl = connectUrl;
   }
 
   @Override

@@ -162,7 +162,8 @@ private[v1] class SparkConnectResource extends ApiRequestContext with Logging {
         endTime = event.map(_.endTime).getOrElse(-1L),
         failed = event.exists(_.exception.isDefined)),
       event.map(_.engineId).getOrElse(""),
-      event.map(_.engineUrl).getOrElse(""))
+      event.map(_.engineUrl).getOrElse(""),
+      connectUrl)
   }
 
   @ApiResponse(

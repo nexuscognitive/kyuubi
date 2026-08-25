@@ -20,15 +20,14 @@ import request from '@/utils/request'
 const SPARK_CONNECT_BASE_URL = 'api/v1/spark-connect'
 
 /**
- * A session that has just been created.
+ * The caller's session, as the create call returns it.
  *
- * `token` arrives exactly once, in this response. The server keeps only its digest and cannot
- * reissue it, so it must never be written anywhere that outlives the page: no localStorage, no
- * sessionStorage, no console.
+ * There is no token here, and there is no token anywhere else either: a client authenticates the
+ * gRPC port with the same credential it made this call with, and the server routes on the user it
+ * resolves to. Creating a session twice returns the same session rather than a second one.
  */
 export interface SparkConnectSession {
   sessionId: string
-  token: string
   connectUrl: string
 }
 
@@ -40,6 +39,7 @@ export interface SparkConnectSessionData {
   state: string
   engineId: string
   engineUrl: string
+  connectUrl: string
 }
 
 export function openSparkConnectSession(

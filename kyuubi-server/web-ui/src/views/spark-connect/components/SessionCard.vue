@@ -17,46 +17,57 @@
 -->
 
 <template>
-  <el-card class="credentials-card">
+  <el-card class="session-card">
     <template #header>
-      <div class="credentials-head">
+      <div class="session-head">
         <span class="nx1-section-label">{{
-          $t('spark_connect.credentials')
+          $t('spark_connect.your_session')
         }}</span>
-        <el-button text @click="emit('dismiss')">
-          {{ $t('spark_connect.dismiss') }}
-        </el-button>
+        <div class="session-actions">
+          <el-button icon="Refresh" text @click="emit('refresh')">
+            {{ $t('refresh') }}
+          </el-button>
+          <el-popconfirm
+            :title="$t('spark_connect.close_confirm')"
+            @confirm="emit('close', session.sessionId)">
+            <template #reference>
+              <el-button type="danger" text>
+                {{ $t('operation.close') }}
+              </el-button>
+            </template>
+          </el-popconfirm>
+        </div>
       </div>
     </template>
 
-    <el-alert
-      type="warning"
-      :closable="false"
-      show-icon
-      :title="$t('spark_connect.token_warning_title')"
-      :description="$t('spark_connect.token_warning_body')" />
-
     <dl class="field-list">
+      <dt>{{ $t('state') }}</dt>
+      <dd>
+        <el-tag :type="stateTagType" disable-transitions>
+          {{ session.state }}
+        </el-tag>
+        <span v-if="session.state === 'PENDING'" class="state-note">
+          {{ $t('spark_connect.pending_note') }}
+        </span>
+      </dd>
+
       <dt>{{ $t('session_id') }}</dt>
       <dd>
         <code class="field-value">{{ session.sessionId }}</code>
       </dd>
 
+      <dt>{{ $t('engine_id') }}</dt>
+      <dd>
+        <code class="field-value">{{ session.engineId || '-' }}</code>
+      </dd>
+
+      <dt>{{ $t('create_time') }}</dt>
+      <dd>{{ formattedCreateTime }}</dd>
+
       <dt>{{ $t('spark_connect.connect_url') }}</dt>
       <dd>
         <code class="field-value">{{ session.connectUrl }}</code>
         <el-button size="small" @click="emit('copy', session.connectUrl)">
-          {{ $t('spark_connect.copy') }}
-        </el-button>
-      </dd>
-
-      <dt>{{ $t('spark_connect.token') }}</dt>
-      <dd>
-        <code class="field-value token-value">{{ session.token }}</code>
-        <el-button
-          size="small"
-          type="primary"
-          @click="emit('copy', session.token)">
           {{ $t('spark_connect.copy') }}
         </el-button>
       </dd>
@@ -70,39 +81,62 @@
         {{ $t('spark_connect.copy_snippet') }}
       </el-button>
     </div>
+    <p class="snippet-note">{{ $t('spark_connect.credential_note') }}</p>
     <pre class="snippet">{{ snippet }}</pre>
   </el-card>
 </template>
 
 <script lang="ts" setup>
   import { computed } from 'vue'
-  import type { SparkConnectSession } from '@/api/spark-connect'
+  import { format } from 'date-fns'
+  import type { SparkConnectSessionData } from '@/api/spark-connect'
   import { buildPySparkSnippet } from '../utils/snippet'
 
-  const props = defineProps<{ session: SparkConnectSession }>()
+  const props = defineProps<{ session: SparkConnectSessionData }>()
   const emit = defineEmits<{
     copy: [text: string]
-    dismiss: []
+    refresh: []
+    close: [sessionId: string]
   }>()
 
-  const snippet = computed(() =>
-    buildPySparkSnippet(props.session.connectUrl, props.session.token)
+  const STATE_TAG_TYPES: Record<string, string> = {
+    RUNNING: 'success',
+    PENDING: 'warning',
+    FAILED: 'danger',
+    CLOSED: 'info'
+  }
+
+  const stateTagType = computed(
+    () => STATE_TAG_TYPES[props.session.state] ?? 'info'
   )
+
+  const formattedCreateTime = computed(() => {
+    const createTime = props.session.createTime
+    if (createTime == null || createTime <= 0) return '-'
+    return format(createTime, 'yyyy-MM-dd HH:mm:ss')
+  })
+
+  const snippet = computed(() => buildPySparkSnippet(props.session.connectUrl))
 </script>
 
 <style lang="scss" scoped>
-  .credentials-head,
+  .session-head,
   .snippet-head {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
   }
+  .session-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
   .snippet-head {
     margin: 20px 0 8px;
   }
   .field-list {
-    margin: 16px 0 0;
+    margin: 0;
     display: grid;
     grid-template-columns: minmax(120px, max-content) 1fr;
     gap: 8px 16px;
@@ -126,17 +160,20 @@
   .field-value {
     font-family: var(--nx1-font-mono, monospace);
     font-size: 13px;
-    // Tokens are long and must stay selectable, so they wrap rather than truncate.
     overflow-wrap: anywhere;
     min-width: 0;
   }
-  .token-value {
-    color: var(--el-color-danger);
+  .state-note,
+  .url-note,
+  .snippet-note {
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
   }
   .url-note {
     margin: 12px 0 0;
-    font-size: 12px;
-    color: var(--el-text-color-secondary);
+  }
+  .snippet-note {
+    margin: 0 0 8px;
   }
   .snippet {
     margin: 0;

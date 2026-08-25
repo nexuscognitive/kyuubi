@@ -17,13 +17,14 @@
 -->
 
 <template>
-  <el-card class="create-card">
+  <el-card v-loading="loading" class="create-card">
     <template #header>
       <span class="nx1-section-label">{{
         $t('spark_connect.new_session')
       }}</span>
     </template>
 
+    <p class="no-session">{{ $t('spark_connect.no_session') }}</p>
     <p class="conf-hint">{{ $t('spark_connect.conf_hint') }}</p>
 
     <div v-for="(entry, index) in entries" :key="index" class="conf-row">
@@ -63,7 +64,7 @@
     value: string
   }
 
-  defineProps<{ creating: boolean }>()
+  defineProps<{ creating: boolean; loading: boolean }>()
   const emit = defineEmits<{
     create: [configs: Record<string, string>]
   }>()
@@ -90,6 +91,9 @@
 </script>
 
 <style lang="scss" scoped>
+  .no-session {
+    margin: 0 0 12px;
+  }
   .conf-hint {
     margin: 0 0 12px;
     font-size: 13px;

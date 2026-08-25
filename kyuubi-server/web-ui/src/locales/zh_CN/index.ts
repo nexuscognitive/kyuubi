@@ -183,8 +183,9 @@ export default {
     eyebrow: 'Nexus One → SparkEngine',
     title: 'Spark Connect',
     subtitle:
-      '创建 Spark Connect 会话，并将 Spark 客户端指向本网关。每个会话拥有独立的引擎与独立的令牌。',
+      '使用你已有的凭据，将 Spark 客户端指向本网关。每位用户拥有一个会话，并独占其后端引擎。',
     new_session: '新建会话',
+    no_session: '你还没有 Spark Connect 会话。',
     conf_hint:
       '本会话的可选 Spark 配置。仅限 Kyuubi 设置的配置项将被服务端忽略。',
     conf_key_placeholder: 'spark.sql.shuffle.partitions',
@@ -193,20 +194,16 @@ export default {
     remove_conf: '删除配置',
     create_session: '创建会话',
     create_note: '引擎启动需要一两分钟，客户端会自动重试直至就绪。',
-    credentials: '连接信息',
-    dismiss: '关闭',
-    token_warning_title: '请立即复制令牌 — 仅显示一次',
-    token_warning_body:
-      'Kyuubi 仅保存令牌的摘要，无法再次展示。若丢失，请关闭该会话并重新创建。',
+    your_session: '我的会话',
+    pending_note: '引擎正在启动。',
     connect_url: '连接地址',
     connect_url_note:
       '这是服务端对外公布的地址。若运行 Spark 的环境无法访问它，请联系管理员配置 kyuubi.frontend.advertised.host。',
-    token: '令牌',
+    credential_note:
+      '请使用与访问 Kyuubi REST API 相同的凭据进行认证。Kyuubi 不会为 Spark Connect 单独签发令牌。',
     copy: '复制',
     snippet: 'PySpark',
     copy_snippet: '复制代码',
-    your_sessions: '我的会话',
-    no_sessions: '暂无 Spark Connect 会话',
     close_confirm: '确认关闭该会话并停止其引擎？',
     copied: '已复制',
     copy_failed: '复制失败 — 请手动选中并复制',
@@ -214,7 +211,7 @@ export default {
     create_failed: '创建会话失败：{message}',
     close_succeeded: '会话已关闭',
     close_failed: '关闭会话失败：{message}',
-    list_failed: '加载会话列表失败：{message}',
+    list_failed: '加载会话失败：{message}',
     unknown_error: '未知错误'
   },
   message: {
