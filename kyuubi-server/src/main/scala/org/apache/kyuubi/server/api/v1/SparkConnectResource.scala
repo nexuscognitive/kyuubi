@@ -22,17 +22,18 @@ import javax.ws.rs.core.{MediaType, Response}
 
 import scala.collection.JavaConverters._
 
-import io.swagger.v3.oas.annotations.media.{Content, Schema}
+import io.swagger.v3.oas.annotations.media.{ArraySchema, Content, Schema}
 import io.swagger.v3.oas.annotations.responses.ApiResponse
 import io.swagger.v3.oas.annotations.tags.Tag
 
 import org.apache.kyuubi.Logging
 import org.apache.kyuubi.client.api.v1.dto.{SessionOpenRequest, SparkConnectSession}
+import org.apache.kyuubi.client.api.v1.dto.SparkConnectSessionData
 import org.apache.kyuubi.config.KyuubiConf._
 import org.apache.kyuubi.config.KyuubiReservedKeys._
 import org.apache.kyuubi.server.api.ApiRequestContext
 import org.apache.kyuubi.server.connect.SparkConnect
-import org.apache.kyuubi.session.{KyuubiSessionManager, SessionHandle}
+import org.apache.kyuubi.session.{KyuubiSession, KyuubiSessionManager, SessionHandle}
 import org.apache.kyuubi.shaded.hive.service.rpc.thrift.TProtocolVersion
 
 /**
@@ -100,6 +101,44 @@ private[v1] class SparkConnectResource extends ApiRequestContext with Logging {
 
   @ApiResponse(
     responseCode = "200",
+    content = Array(new Content(
+      mediaType = MediaType.APPLICATION_JSON,
+      array = new ArraySchema(
+        schema = new Schema(implementation = classOf[SparkConnectSessionData])))),
+    description = "List the caller's live Spark Connect sessions, without their tokens")
+  @GET
+  @Path("sessions")
+  def listSessions(): Seq[SparkConnectSessionData] = {
+    val userName = fe.getSessionUser(Map.empty[String, String])
+    // Scoped to the caller rather than to administrators as well: unlike the close path, which an
+    // administrator has to be able to reach to clear up a stuck engine, listing someone else's
+    // sessions buys nothing that the ordinary session list does not already offer.
+    sessionManager.allSessions()
+      .collect { case session: KyuubiSession if isSparkConnectSession(session.conf) => session }
+      .filter(_.user == userName)
+      .map(sessionData)
+      .toSeq
+      .sortBy(session => -session.getCreateTime.longValue())
+  }
+
+  private def sessionData(session: KyuubiSession): SparkConnectSessionData = {
+    val event = session.getSessionEvent
+    // The token is knowingly absent -- see SparkConnectSessionData. Only its digest is stored, and
+    // a credential that a list call replays is a credential that ends up in caches and logs.
+    new SparkConnectSessionData(
+      session.handle.identifier.toString,
+      session.user,
+      session.createTime,
+      sessionState(
+        openedTime = event.map(_.openedTime).getOrElse(-1L),
+        endTime = event.map(_.endTime).getOrElse(-1L),
+        failed = event.exists(_.exception.isDefined)),
+      event.map(_.engineId).getOrElse(""),
+      event.map(_.engineUrl).getOrElse(""))
+  }
+
+  @ApiResponse(
+    responseCode = "200",
     content = Array(new Content(mediaType = MediaType.APPLICATION_JSON)),
     description = "Close a Spark Connect session and stop its engine")
   @DELETE
@@ -143,6 +182,40 @@ private[v1] object SparkConnectResource {
 
   private val DEFAULT_SESSION_PROTOCOL_VERSION =
     SessionsResource.DEFAULT_SESSION_PROTOCOL_VERSION
+
+  /** The engine has been asked for but has not reported in yet. */
+  private[v1] val STATE_PENDING = "PENDING"
+
+  /** The engine is up and the session is usable. */
+  private[v1] val STATE_RUNNING = "RUNNING"
+
+  private[v1] val STATE_CLOSED = "CLOSED"
+
+  private[v1] val STATE_FAILED = "FAILED"
+
+  /**
+   * Whether a session belongs to the Spark Connect frontend.
+   *
+   * Keyed off the conf this resource itself pins, so a session opened through any other frontend
+   * -- Thrift, the ordinary REST session API -- is never listed here even though it lives in the
+   * same session manager.
+   */
+  private[v1] def isSparkConnectSession(sessionConf: Map[String, String]): Boolean =
+    sessionConf.get(SESSION_SPARK_CONNECT_ENABLED.key).contains("true")
+
+  /**
+   * The lifecycle stage of a session, from the timestamps its event carries.
+   *
+   * `PENDING` is the interesting one: an engine takes a minute or two to come up, and until it
+   * does the gRPC port answers `UNAVAILABLE`. A user staring at a client that is quietly retrying
+   * needs to be able to tell "still starting" from "broken".
+   */
+  private[v1] def sessionState(openedTime: Long, endTime: Long, failed: Boolean): String = {
+    if (failed) STATE_FAILED
+    else if (endTime > 0) STATE_CLOSED
+    else if (openedTime > 0) STATE_RUNNING
+    else STATE_PENDING
+  }
 
   /**
    * Conf that only Kyuubi may set.
