@@ -27,7 +27,7 @@ import org.apache.kyuubi.{KyuubiException, KyuubiFunSuite, Utils}
 import org.apache.kyuubi.config.KyuubiConf
 import org.apache.kyuubi.engine.ApplicationState
 import org.apache.kyuubi.server.metadata.MetadataManager
-import org.apache.kyuubi.server.metadata.api.{KubernetesEngineInfo, Metadata, MetadataFilter}
+import org.apache.kyuubi.server.metadata.api.{KubernetesEngineInfo, Metadata, MetadataFilter, SparkConnectSessionInfo}
 import org.apache.kyuubi.server.metadata.jdbc.JDBCMetadataStoreConf._
 import org.apache.kyuubi.session.SessionType
 
@@ -474,5 +474,40 @@ class JDBCMetadataStoreSuite extends KyuubiFunSuite {
 
     jdbcMetadataStore.cleanupKubernetesEngineInfoByIdentifier(tag)
     assert(jdbcMetadataStore.getKubernetesMetaEngineInfo(tag) == null)
+  }
+
+  test("spark connect session routing records") {
+    val sessionId = UUID.randomUUID().toString
+    val sessionInfo = SparkConnectSessionInfo(
+      tokenId = "0" * 64,
+      sessionId = sessionId,
+      userName = "connect_user",
+      engineTag = sessionId,
+      createTime = System.currentTimeMillis())
+    jdbcMetadataStore.insertSparkConnectSession(sessionInfo)
+
+    val persisted = jdbcMetadataStore.getSparkConnectSessionByTokenId(sessionInfo.tokenId)
+    assert(persisted.contains(sessionInfo))
+    assert(jdbcMetadataStore.getSparkConnectSessionByTokenId("1" * 64).isEmpty)
+
+    jdbcMetadataStore.cleanupSparkConnectSessionBySessionId(sessionId)
+    assert(jdbcMetadataStore.getSparkConnectSessionByTokenId(sessionInfo.tokenId).isEmpty)
+  }
+
+  test("spark connect session routing records are reclaimed by age") {
+    val sessionId = UUID.randomUUID().toString
+    val tokenId = "2" * 64
+    jdbcMetadataStore.insertSparkConnectSession(SparkConnectSessionInfo(
+      tokenId = tokenId,
+      sessionId = sessionId,
+      userName = "connect_user",
+      engineTag = sessionId,
+      createTime = System.currentTimeMillis() - 60000))
+
+    assert(jdbcMetadataStore.cleanupSparkConnectSessionByAge(600000, Int.MaxValue) == 0)
+    assert(jdbcMetadataStore.getSparkConnectSessionByTokenId(tokenId).isDefined)
+
+    assert(jdbcMetadataStore.cleanupSparkConnectSessionByAge(1000, Int.MaxValue) == 1)
+    assert(jdbcMetadataStore.getSparkConnectSessionByTokenId(tokenId).isEmpty)
   }
 }

@@ -128,7 +128,9 @@ case class ApplicationInfo(
     url: Option[String] = None,
     error: Option[String] = None,
     // only used for K8s and still possible to be None for cases like NOT_FOUND state for K8s cases
-    podName: Option[String] = None) {
+    podName: Option[String] = None,
+    // only used for K8s, and only populated once the driver pod has been assigned an IP
+    podIp: Option[String] = None) {
 
   def toMap: Map[String, String] = {
     Map(
@@ -137,7 +139,8 @@ case class ApplicationInfo(
       "state" -> state.toString,
       "url" -> url.orNull,
       "error" -> error.orNull) ++
-      podName.map("podName" -> _).toMap
+      podName.map("podName" -> _).toMap ++
+      podIp.map("podIp" -> _).toMap
   }
 }
 

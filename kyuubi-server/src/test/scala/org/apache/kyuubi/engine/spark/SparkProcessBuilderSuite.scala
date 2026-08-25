@@ -34,6 +34,7 @@ import org.apache.kyuubi.engine.ProcBuilder.KYUUBI_ENGINE_LOG_PATH_KEY
 import org.apache.kyuubi.engine.spark.SparkProcessBuilder._
 import org.apache.kyuubi.ha.HighAvailabilityConf
 import org.apache.kyuubi.ha.client.AuthTypes
+import org.apache.kyuubi.server.connect.SparkConnect
 import org.apache.kyuubi.service.ServiceUtils
 import org.apache.kyuubi.util.AssertionUtils._
 import org.apache.kyuubi.util.command.CommandLineUtils._
@@ -586,6 +587,60 @@ class SparkProcessBuilderSuite extends KerberizedTestHelper with MockitoSugar {
     val commands1 = builder1.toString.split(' ')
     val toady = DateTimeFormatter.ofPattern("yyyyMMdd").format(LocalDate.now())
     assert(commands1.contains(s"spark.kubernetes.file.upload.path=hdfs:///spark-upload-$toady"))
+  }
+
+  test("Spark Connect conf is only applied to Spark Connect sessions") {
+    val conf = KyuubiConf(false)
+    val builder = new SparkProcessBuilder("connect_user", true, conf)
+    assert(builder.sparkConnectConf(Map.empty).isEmpty)
+    assert(!builder.env.contains(SparkConnect.AUTHENTICATE_TOKEN_ENV))
+  }
+
+  test("a Spark Connect session launches the engine with the Connect plugin") {
+    val conf = KyuubiConf(false)
+    conf.set(KyuubiConf.SESSION_SPARK_CONNECT_ENABLED, true)
+    val builder = new SparkProcessBuilder("connect_user", true, conf)
+
+    val connectConf = builder.sparkConnectConf(Map.empty)
+    assert(connectConf(SparkConnect.SPARK_PLUGINS_KEY) == SparkConnect.SPARK_CONNECT_PLUGIN)
+    assert(connectConf(SparkConnect.SPARK_CONNECT_BINDING_PORT_KEY) == "15002")
+  }
+
+  test("the Connect plugin is appended to plugins the operator already configured") {
+    val conf = KyuubiConf(false)
+    conf.set(KyuubiConf.SESSION_SPARK_CONNECT_ENABLED, true)
+    val builder = new SparkProcessBuilder("connect_user", true, conf)
+
+    // Overwriting an operator's plugins would be a silent, hard-to-diagnose failure.
+    val connectConf =
+      builder.sparkConnectConf(Map(SparkConnect.SPARK_PLUGINS_KEY -> "com.example.MetricsPlugin"))
+    assert(connectConf(SparkConnect.SPARK_PLUGINS_KEY) ==
+      s"com.example.MetricsPlugin,${SparkConnect.SPARK_CONNECT_PLUGIN}")
+
+    val alreadyPresent =
+      builder.sparkConnectConf(
+        Map(SparkConnect.SPARK_PLUGINS_KEY -> SparkConnect.SPARK_CONNECT_PLUGIN))
+    assert(alreadyPresent(SparkConnect.SPARK_PLUGINS_KEY) == SparkConnect.SPARK_CONNECT_PLUGIN)
+  }
+
+  test("the Spark Connect token reaches the driver by env, never on the command line") {
+    val conf = KyuubiConf(false)
+    conf.set("spark.master", "k8s://test:12345")
+    conf.set(KyuubiConf.SESSION_SPARK_CONNECT_ENABLED, true)
+    conf.set(KyuubiConf.SESSION_SPARK_CONNECT_TOKEN, "super-secret-token")
+    val builder = new SparkProcessBuilder("connect_user", true, conf)
+
+    assert(builder.env(SparkConnect.AUTHENTICATE_TOKEN_ENV) == "super-secret-token")
+    // Neither ps output nor the Spark UI environment page may show the token.
+    assert(!builder.commands.exists(_.contains("super-secret-token")))
+    assert(!builder.toString.contains("super-secret-token"))
+  }
+
+  test("the Spark Connect token is not passed to a session that did not ask for Connect") {
+    val conf = KyuubiConf(false)
+    conf.set(KyuubiConf.SESSION_SPARK_CONNECT_TOKEN, "stray-token")
+    val builder = new SparkProcessBuilder("connect_user", true, conf)
+    assert(!builder.env.contains(SparkConnect.AUTHENTICATE_TOKEN_ENV))
   }
 }
 

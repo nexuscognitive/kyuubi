@@ -36,7 +36,7 @@ import org.apache.kyuubi.{KyuubiException, Logging, Utils}
 import org.apache.kyuubi.config.KyuubiConf
 import org.apache.kyuubi.operation.OperationState
 import org.apache.kyuubi.server.metadata.MetadataStore
-import org.apache.kyuubi.server.metadata.api.{KubernetesEngineInfo, Metadata, MetadataFilter}
+import org.apache.kyuubi.server.metadata.api.{KubernetesEngineInfo, Metadata, MetadataFilter, SparkConnectSessionInfo}
 import org.apache.kyuubi.server.metadata.jdbc.DatabaseType._
 import org.apache.kyuubi.server.metadata.jdbc.JDBCMetadataStoreConf._
 import org.apache.kyuubi.session.SessionType
@@ -590,6 +590,71 @@ class JDBCMetadataStore(conf: KyuubiConf) extends MetadataStore with Logging {
     }
   }
 
+  override def insertSparkConnectSession(sessionInfo: SparkConnectSessionInfo): Unit = {
+    val query =
+      s"""
+         |INSERT INTO $SPARK_CONNECT_SESSION_TABLE ($SPARK_CONNECT_SESSION_COLUMNS_STR)
+         |VALUES (?, ?, ?, ?, ?)
+         |""".stripMargin
+    JdbcUtils.withConnection { connection =>
+      execute(
+        connection,
+        query,
+        sessionInfo.tokenId,
+        sessionInfo.sessionId,
+        sessionInfo.userName,
+        sessionInfo.engineTag,
+        sessionInfo.createTime)
+    }
+  }
+
+  override def getSparkConnectSessionByTokenId(tokenId: String): Option[SparkConnectSessionInfo] = {
+    val query = s"SELECT $SPARK_CONNECT_SESSION_COLUMNS_STR FROM" +
+      s" $SPARK_CONNECT_SESSION_TABLE WHERE token_id = ?"
+    JdbcUtils.withConnection { connection =>
+      withResultSet(connection, query, tokenId) { rs =>
+        buildSparkConnectSessions(rs).headOption
+      }
+    }
+  }
+
+  override def cleanupSparkConnectSessionBySessionId(sessionId: String): Unit = {
+    val query = s"DELETE FROM $SPARK_CONNECT_SESSION_TABLE WHERE session_id = ?"
+    JdbcUtils.withConnection { connection =>
+      execute(connection, query, sessionId)
+    }
+  }
+
+  override def cleanupSparkConnectSessionByAge(maxAge: Long, limit: Int): Int = {
+    val minCreateTime = System.currentTimeMillis() - maxAge
+    val query = s"DELETE FROM $SPARK_CONNECT_SESSION_TABLE WHERE create_time < ?" +
+      s" ${dialect.deleteFromLimitClause(limit)}"
+    JdbcUtils.withConnection { connection =>
+      withUpdateCount(connection, query, minCreateTime) { count =>
+        info(s"Cleaned up $count records older than $maxAge ms from" +
+          s" $SPARK_CONNECT_SESSION_TABLE limit $limit.")
+        count
+      }
+    }
+  }
+
+  private def buildSparkConnectSessions(resultSet: ResultSet): Seq[SparkConnectSessionInfo] = {
+    try {
+      val sessionInfoList = ListBuffer[SparkConnectSessionInfo]()
+      while (resultSet.next()) {
+        sessionInfoList += SparkConnectSessionInfo(
+          tokenId = resultSet.getString("token_id"),
+          sessionId = resultSet.getString("session_id"),
+          userName = resultSet.getString("user_name"),
+          engineTag = resultSet.getString("engine_tag"),
+          createTime = resultSet.getLong("create_time"))
+      }
+      sessionInfoList
+    } finally {
+      Utils.tryLogNonFatalError(resultSet.close())
+    }
+  }
+
   private def buildMetadata(resultSet: ResultSet): Seq[Metadata] = {
     try {
       val metadataList = ListBuffer[Metadata]()
@@ -832,4 +897,12 @@ object JDBCMetadataStore {
     "engine_error",
     "update_time")
   private val KUBERNETES_ENGINE_INFO_COLUMNS_STR = KUBERNETES_ENGINE_INFO_COLUMNS.mkString(",")
+  private val SPARK_CONNECT_SESSION_TABLE = "spark_connect_session"
+  private val SPARK_CONNECT_SESSION_COLUMNS = Seq(
+    "token_id",
+    "session_id",
+    "user_name",
+    "engine_tag",
+    "create_time")
+  private val SPARK_CONNECT_SESSION_COLUMNS_STR = SPARK_CONNECT_SESSION_COLUMNS.mkString(",")
 }

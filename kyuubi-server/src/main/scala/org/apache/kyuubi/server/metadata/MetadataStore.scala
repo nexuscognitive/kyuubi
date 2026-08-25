@@ -19,7 +19,7 @@ package org.apache.kyuubi.server.metadata
 
 import java.io.Closeable
 
-import org.apache.kyuubi.server.metadata.api.{KubernetesEngineInfo, Metadata, MetadataFilter}
+import org.apache.kyuubi.server.metadata.api.{KubernetesEngineInfo, Metadata, MetadataFilter, SparkConnectSessionInfo}
 
 trait MetadataStore extends Closeable {
 
@@ -128,4 +128,28 @@ trait MetadataStore extends Closeable {
    * @param limit the maximum number of kubernetes engine info to be cleaned up.
    */
   def cleanupKubernetesEngineInfoByAge(maxAge: Long, limit: Int): Int
+
+  /**
+   * Persist the routing record for a Spark Connect session.
+   */
+  def insertSparkConnectSession(sessionInfo: SparkConnectSessionInfo): Unit
+
+  /**
+   * Look up a Spark Connect session by the SHA-256 hex digest of its bearer token.
+   * @return the record, or [[None]] when no session owns that token.
+   */
+  def getSparkConnectSessionByTokenId(tokenId: String): Option[SparkConnectSessionInfo]
+
+  /**
+   * Drop the Spark Connect routing record for a Kyuubi session handle.
+   */
+  def cleanupSparkConnectSessionBySessionId(sessionId: String): Unit
+
+  /**
+   * Check and cleanup Spark Connect routing records with maxAge limitation. Records are dropped
+   * on session close, so this only reclaims rows orphaned by an instance that died mid-session.
+   * @param maxAge the routing record maximum age.
+   * @param limit the maximum number of records to be cleaned up.
+   */
+  def cleanupSparkConnectSessionByAge(maxAge: Long, limit: Int): Int
 }

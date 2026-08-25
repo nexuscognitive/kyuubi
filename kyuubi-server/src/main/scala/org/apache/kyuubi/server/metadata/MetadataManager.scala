@@ -33,7 +33,7 @@ import org.apache.kyuubi.engine.{ApplicationInfo, ApplicationState}
 import org.apache.kyuubi.engine.spark.SparkBatchProcessBuilder
 import org.apache.kyuubi.metrics.{MetricsConstants, MetricsSystem}
 import org.apache.kyuubi.operation.OperationState
-import org.apache.kyuubi.server.metadata.api.{KubernetesEngineInfo, Metadata, MetadataFilter}
+import org.apache.kyuubi.server.metadata.api.{KubernetesEngineInfo, Metadata, MetadataFilter, SparkConnectSessionInfo}
 import org.apache.kyuubi.service.AbstractService
 import org.apache.kyuubi.session.SessionType
 import org.apache.kyuubi.util.{ClassUtils, JdbcUtils, ThreadUtils}
@@ -244,6 +244,18 @@ class MetadataManager extends AbstractService("MetadataManager") {
     withMetadataRequestMetrics(_metadataStore.cleanupKubernetesEngineInfoByIdentifier(identifier))
   }
 
+  def insertSparkConnectSession(sessionInfo: SparkConnectSessionInfo): Unit = {
+    withMetadataRequestMetrics(_metadataStore.insertSparkConnectSession(sessionInfo))
+  }
+
+  def getSparkConnectSessionByTokenId(tokenId: String): Option[SparkConnectSessionInfo] = {
+    withMetadataRequestMetrics(_metadataStore.getSparkConnectSessionByTokenId(tokenId))
+  }
+
+  def cleanupSparkConnectSessionBySessionId(sessionId: String): Unit = {
+    withMetadataRequestMetrics(_metadataStore.cleanupSparkConnectSessionBySessionId(sessionId))
+  }
+
   private def startMetadataCleaner(): Unit = {
     val stateMaxAge = conf.get(METADATA_MAX_AGE)
     val interval = conf.get(KyuubiConf.METADATA_CLEANER_INTERVAL)
@@ -271,10 +283,12 @@ class MetadataManager extends AbstractService("MetadataManager") {
   private[metadata] def cleanupMetadata(maxAge: Long, batchSize: Int, batchInterval: Long): Unit = {
     var needToCleanMetadata = true
     var needToCleanKubernetesInfo = true
+    var needToCleanSparkConnectSession = true
     var cleanupLoop = 0
 
     val MAX_CLEANUP_LOOPS = 100 // a guard in case it runs into an infinite loop
-    while ((needToCleanMetadata || needToCleanKubernetesInfo) && cleanupLoop < MAX_CLEANUP_LOOPS) {
+    while ((needToCleanMetadata || needToCleanKubernetesInfo || needToCleanSparkConnectSession) &&
+      cleanupLoop < MAX_CLEANUP_LOOPS) {
       cleanupLoop += 1
       if (needToCleanMetadata) {
         needToCleanMetadata =
@@ -288,7 +302,13 @@ class MetadataManager extends AbstractService("MetadataManager") {
             maxAge,
             batchSize)) >= batchSize
       }
-      if (needToCleanMetadata || needToCleanKubernetesInfo) {
+      if (needToCleanSparkConnectSession) {
+        needToCleanSparkConnectSession =
+          withMetadataRequestMetrics(_metadataStore.cleanupSparkConnectSessionByAge(
+            maxAge,
+            batchSize)) >= batchSize
+      }
+      if (needToCleanMetadata || needToCleanKubernetesInfo || needToCleanSparkConnectSession) {
         if (cleanupLoop < MAX_CLEANUP_LOOPS) {
           info(s"Sleep $batchInterval ms before next batch of metadata cleaning.")
           Thread.sleep(batchInterval)

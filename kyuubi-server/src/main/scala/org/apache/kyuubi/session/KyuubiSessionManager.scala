@@ -36,6 +36,7 @@ import org.apache.kyuubi.metrics.MetricsConstants._
 import org.apache.kyuubi.metrics.MetricsSystem
 import org.apache.kyuubi.operation.{KyuubiOperationManager, OperationState}
 import org.apache.kyuubi.plugin.{GroupProvider, PluginLoader, SessionConfAdvisor}
+import org.apache.kyuubi.server.connect.SparkConnectSessionRegistry
 import org.apache.kyuubi.server.metadata.{MetadataManager, MetadataRequestsRetryRef}
 import org.apache.kyuubi.server.metadata.api.{Metadata, MetadataFilter}
 import org.apache.kyuubi.service.TempFileService
@@ -58,6 +59,11 @@ class KyuubiSessionManager private (name: String) extends SessionManager(name) {
   var metadataManager: Option[MetadataManager] = None
   var applicationManager: KyuubiApplicationManager = _
 
+  // Shared by the REST endpoint that mints Spark Connect tokens and the Spark Connect frontend
+  // that spends them, so a token is routable the instant the create call returns.
+  private var _sparkConnectSessionRegistry: SparkConnectSessionRegistry = _
+  def sparkConnectSessionRegistry: SparkConnectSessionRegistry = _sparkConnectSessionRegistry
+
   // lazy is required for plugins since the conf is null when this class initialization
   lazy val sessionConfAdvisor: Seq[SessionConfAdvisor] = PluginLoader.loadSessionConfAdvisor(conf)
   lazy val groupProvider: GroupProvider = PluginLoader.loadGroupProvider(conf)
@@ -76,6 +82,7 @@ class KyuubiSessionManager private (name: String) extends SessionManager(name) {
   override def initialize(conf: KyuubiConf): Unit = {
     this.conf = conf
     if (conf.isRESTEnabled) metadataManager = Some(new MetadataManager())
+    _sparkConnectSessionRegistry = new SparkConnectSessionRegistry(metadataManager)
     applicationManager = new KyuubiApplicationManager(metadataManager)
     addService(applicationManager)
     addService(credentialsManager)
@@ -133,6 +140,8 @@ class KyuubiSessionManager private (name: String) extends SessionManager(name) {
     try {
       super.closeSession(sessionHandle)
     } finally {
+      // A no-op unless the session was created through the Spark Connect endpoint.
+      _sparkConnectSessionRegistry.unregister(sessionHandle.identifier.toString)
       session match {
         case _: KyuubiBatchSession =>
           batchLimiter.foreach(_.decrement(UserIpAddress(session.user, session.ipAddress)))

@@ -25,7 +25,7 @@ import org.apache.hadoop.security.UserGroupInformation
 
 import org.apache.kyuubi._
 import org.apache.kyuubi.config.KyuubiConf
-import org.apache.kyuubi.config.KyuubiConf.{FRONTEND_PROTOCOLS, FrontendProtocols, KYUUBI_KUBERNETES_CONF_PREFIX}
+import org.apache.kyuubi.config.KyuubiConf.{FRONTEND_PROTOCOLS, FRONTEND_SPARK_CONNECT_ENABLED, FrontendProtocols, KYUUBI_KUBERNETES_CONF_PREFIX}
 import org.apache.kyuubi.config.KyuubiConf.FrontendProtocols._
 import org.apache.kyuubi.events.{EventBus, KyuubiServerInfoEvent, ServerEventHandlerRegister}
 import org.apache.kyuubi.ha.HighAvailabilityConf._
@@ -187,8 +187,17 @@ class KyuubiServer(name: String) extends Serverable(name) {
   override val backendService: AbstractBackendService =
     new KyuubiBackendService() with BackendServiceMetric
 
-  override lazy val frontendServices: Seq[AbstractFrontendService] =
-    conf.get(FRONTEND_PROTOCOLS).map(FrontendProtocols.withName).map {
+  override lazy val frontendServices: Seq[AbstractFrontendService] = {
+    val requestedProtocols = conf.get(FRONTEND_PROTOCOLS).map(FrontendProtocols.withName)
+    // `kyuubi.frontend.spark.connect.enabled` is the switch operators reach for, but the protocol
+    // list stays authoritative, so either way of asking for it yields exactly one instance.
+    val protocols =
+      if (conf.get(FRONTEND_SPARK_CONNECT_ENABLED)) {
+        (requestedProtocols :+ SPARK_CONNECT).distinct
+      } else {
+        requestedProtocols
+      }
+    protocols.map {
       case THRIFT_BINARY => new KyuubiTBinaryFrontendService(this)
       case THRIFT_HTTP => new KyuubiTHttpFrontendService(this)
       case REST =>
@@ -197,9 +206,13 @@ class KyuubiServer(name: String) extends Serverable(name) {
       case TRINO =>
         warn("Trino frontend protocol is experimental.")
         new KyuubiTrinoFrontendService(this)
+      case SPARK_CONNECT =>
+        warn("Spark Connect frontend protocol is experimental.")
+        new KyuubiSparkConnectFrontendService(this)
       case other =>
         throw new UnsupportedOperationException(s"Frontend protocol $other is not supported yet.")
     }
+  }
 
   override def initialize(conf: KyuubiConf): Unit = synchronized {
     val kinit = new KinitAuxiliaryService()

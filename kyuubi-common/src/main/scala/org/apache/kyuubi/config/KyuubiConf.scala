@@ -499,7 +499,7 @@ object KyuubiConf {
 
   object FrontendProtocols extends Enumeration {
     type FrontendProtocol = Value
-    val THRIFT_BINARY, THRIFT_HTTP, REST, TRINO = Value
+    val THRIFT_BINARY, THRIFT_HTTP, REST, TRINO, SPARK_CONNECT = Value
   }
 
   val FRONTEND_PROTOCOLS: ConfigEntry[Seq[String]] =
@@ -512,6 +512,7 @@ object KyuubiConf {
         " <li>THRIFT_HTTP - HiveServer2 compatible thrift http protocol.</li>" +
         " <li>REST - Kyuubi defined REST API(experimental).</li> " +
         " <li>TRINO - Trino compatible http protocol(experimental).</li> " +
+        " <li>SPARK_CONNECT - Spark Connect compatible gRPC protocol(experimental).</li> " +
         "</ul>")
       .version("1.4.0")
       .stringConf
@@ -1433,6 +1434,158 @@ object KyuubiConf {
       .version("1.8.1")
       .timeConf
       .createWithDefaultString("PT5S")
+
+  val FRONTEND_SPARK_CONNECT_ENABLED: ConfigEntry[Boolean] =
+    buildConf("kyuubi.frontend.spark.connect.enabled")
+      .audience(SERVER)
+      .immutable
+      .doc("Whether to start the Spark Connect frontend service. The service proxies Spark " +
+        "Connect gRPC traffic to the Spark engine that owns the bearer token presented by the " +
+        "client. Listing <code>SPARK_CONNECT</code> in " +
+        "<code>kyuubi.frontend.protocols</code> has the same effect.")
+      .version("1.12.0")
+      .booleanConf
+      .createWithDefault(false)
+
+  val FRONTEND_SPARK_CONNECT_BIND_HOST: ConfigEntry[Option[String]] =
+    buildConf("kyuubi.frontend.spark.connect.bind.host")
+      .audience(SERVER)
+      .immutable
+      .doc("Hostname or IP of the machine on which to run the Spark Connect frontend service.")
+      .version("1.12.0")
+      .fallbackConf(FRONTEND_BIND_HOST)
+
+  val FRONTEND_SPARK_CONNECT_BIND_PORT: ConfigEntry[Int] =
+    buildConf("kyuubi.frontend.spark.connect.bind.port")
+      .audience(SERVER)
+      .immutable
+      .doc("Port of the machine on which to run the Spark Connect frontend service.")
+      .version("1.12.0")
+      .intConf
+      .checkValue(p => p == 0 || (p > 1024 && p < 65535), "Invalid Port number")
+      .createWithDefault(15002)
+
+  val FRONTEND_SPARK_CONNECT_MAX_MESSAGE_SIZE: ConfigEntry[Int] =
+    buildConf("kyuubi.frontend.spark.connect.max.message.size")
+      .audience(SERVER)
+      .immutable
+      .doc("Maximum size in bytes of a single inbound gRPC message accepted by the Spark " +
+        "Connect frontend service.")
+      .version("1.12.0")
+      .intConf
+      .checkValue(_ > 0, "must be positive")
+      .createWithDefault(128 * 1024 * 1024)
+
+  val FRONTEND_SPARK_CONNECT_SSL_ENABLED: ConfigEntry[Boolean] =
+    buildConf("kyuubi.frontend.spark.connect.ssl.enabled")
+      .audience(SERVER)
+      .immutable
+      .doc("Whether to enable TLS on the Spark Connect frontend service. Spark Connect clients " +
+        "upgrade to a secure channel as soon as a bearer token is configured for a non-loopback " +
+        "host, so a plaintext listener is unusable in practice and the frontend refuses to " +
+        "start without TLS.")
+      .version("1.12.0")
+      .booleanConf
+      .createWithDefault(false)
+
+  val FRONTEND_SPARK_CONNECT_SSL_KEYSTORE_PATH: OptionalConfigEntry[String] =
+    buildConf("kyuubi.frontend.spark.connect.ssl.keystore.path")
+      .audience(SERVER)
+      .immutable
+      .doc("Local path to the keystore holding the Spark Connect frontend service TLS " +
+        "certificate and private key.")
+      .version("1.12.0")
+      .stringConf
+      .createOptional
+
+  val FRONTEND_SPARK_CONNECT_SSL_KEYSTORE_PASSWORD: OptionalConfigEntry[String] =
+    buildConf("kyuubi.frontend.spark.connect.ssl.keystore.password")
+      .audience(SERVER)
+      .immutable
+      .doc("Password of the keystore configured by " +
+        "<code>kyuubi.frontend.spark.connect.ssl.keystore.path</code>.")
+      .version("1.12.0")
+      .stringConf
+      .createOptional
+
+  val FRONTEND_SPARK_CONNECT_SSL_KEYSTORE_TYPE: ConfigEntry[String] =
+    buildConf("kyuubi.frontend.spark.connect.ssl.keystore.type")
+      .audience(SERVER)
+      .immutable
+      .doc("Type of the keystore configured by " +
+        "<code>kyuubi.frontend.spark.connect.ssl.keystore.path</code>.")
+      .version("1.12.0")
+      .stringConf
+      .createWithDefault("JKS")
+
+  val FRONTEND_SPARK_CONNECT_ENGINE_PORT: ConfigEntry[Int] =
+    buildConf("kyuubi.frontend.spark.connect.engine.port")
+      .audience(SERVER)
+      .immutable
+      .doc("Port that the Spark Connect gRPC server binds to inside the Spark driver pod. The " +
+        "frontend dials the driver pod IP on this port, and the same value is passed to the " +
+        "engine as <code>spark.connect.grpc.binding.port</code>.")
+      .version("1.12.0")
+      .intConf
+      .checkValue(p => p > 1024 && p < 65535, "Invalid Port number")
+      .createWithDefault(15002)
+
+  val FRONTEND_SPARK_CONNECT_ENGINE_MAX_MESSAGE_SIZE: ConfigEntry[Int] =
+    buildConf("kyuubi.frontend.spark.connect.engine.max.message.size")
+      .audience(SERVER)
+      .immutable
+      .doc("Maximum size in bytes of a single inbound gRPC message accepted on the channel from " +
+        "the Spark Connect frontend service to the engine.")
+      .version("1.12.0")
+      .intConf
+      .checkValue(_ > 0, "must be positive")
+      .createWithDefault(128 * 1024 * 1024)
+
+  val FRONTEND_SPARK_CONNECT_ENGINE_KEEPALIVE_TIME: ConfigEntry[Long] =
+    buildConf("kyuubi.frontend.spark.connect.engine.keepalive.time")
+      .audience(SERVER)
+      .immutable
+      .doc("Interval between HTTP/2 keepalive pings sent on the channel from the Spark Connect " +
+        "frontend service to the engine.")
+      .version("1.12.0")
+      .timeConf
+      .checkValue(_ > 0, "must be positive")
+      .createWithDefaultString("PT1M")
+
+  val FRONTEND_SPARK_CONNECT_ENGINE_KEEPALIVE_TIMEOUT: ConfigEntry[Long] =
+    buildConf("kyuubi.frontend.spark.connect.engine.keepalive.timeout")
+      .audience(SERVER)
+      .immutable
+      .doc("How long the Spark Connect frontend service waits for a keepalive ping " +
+        "acknowledgement from the engine before tearing the channel down.")
+      .version("1.12.0")
+      .timeConf
+      .checkValue(_ > 0, "must be positive")
+      .createWithDefaultString("PT20S")
+
+  val SESSION_SPARK_CONNECT_ENABLED: ConfigEntry[Boolean] =
+    buildConf("kyuubi.session.spark.connect.enabled")
+      .audience(SERVER)
+      .internal
+      .doc("Marks a session as a Spark Connect session, which makes the Spark engine launch " +
+        "with the Spark Connect plugin enabled. Set by the Spark Connect session REST endpoint; " +
+        "any value supplied by a client is discarded.")
+      .version("1.12.0")
+      .booleanConf
+      .createWithDefault(false)
+
+  val SESSION_SPARK_CONNECT_TOKEN: OptionalConfigEntry[String] =
+    buildConf("kyuubi.session.spark.connect.token")
+      .audience(SERVER)
+      .internal
+      .doc("The per-session Spark Connect bearer token. Set by the Spark Connect session REST " +
+        "endpoint; any value supplied by a client is discarded. The <code>SERVER</code> " +
+        "audience keeps it out of the engine's Spark conf -- it reaches the driver through the " +
+        "<code>SPARK_CONNECT_AUTHENTICATE_TOKEN</code> environment variable instead, so it " +
+        "appears in neither the process command line nor the Spark UI environment page.")
+      .version("1.12.0")
+      .stringConf
+      .createOptional
 
   val KUBERNETES_CONTEXT: OptionalConfigEntry[String] =
     buildConf("kyuubi.kubernetes.context")

@@ -42,6 +42,7 @@ import org.apache.kyuubi.ha.HighAvailabilityConf.HA_ZK_ENGINE_AUTH_TYPE
 import org.apache.kyuubi.ha.client.AuthTypes
 import org.apache.kyuubi.operation.log.OperationLog
 import org.apache.kyuubi.server.KyuubiServer
+import org.apache.kyuubi.server.connect.SparkConnect
 import org.apache.kyuubi.util.{JavaUtils, KubernetesUtils, Validator}
 import org.apache.kyuubi.util.command.CommandLineUtils._
 
@@ -75,11 +76,36 @@ class SparkProcessBuilder(
    */
   override def env: Map[String, String] = {
     val baseEnv = super.env
-    if (baseEnv.contains("SPARK_USER")) {
-      baseEnv
-    } else {
-      baseEnv + ("SPARK_USER" -> proxyUser)
+    val withSparkUser =
+      if (baseEnv.contains("SPARK_USER")) baseEnv else baseEnv + ("SPARK_USER" -> proxyUser)
+    // The Spark Connect token travels as an environment variable rather than `--conf` so that it
+    // stays out of the driver's command line and out of the Spark UI environment page.
+    conf.get(SESSION_SPARK_CONNECT_TOKEN)
+      .filter(_ => conf.get(SESSION_SPARK_CONNECT_ENABLED))
+      .map(token => withSparkUser + (SparkConnect.AUTHENTICATE_TOKEN_ENV -> token))
+      .getOrElse(withSparkUser)
+  }
+
+  /**
+   * Turn the driver into a Spark Connect server, for Spark Connect sessions only.
+   *
+   * `spark.plugins` is appended to rather than overwritten: an operator may already be loading
+   * plugins for metrics or scheduling, and silently dropping them here would be a hard failure to
+   * diagnose. The port is Kyuubi's to choose because Kyuubi is the only thing that dials it --
+   * the driver's Connect server is never exposed outside the pod.
+   */
+  private[kyuubi] def sparkConnectConf(allConf: Map[String, String]): Map[String, String] = {
+    if (!conf.get(SESSION_SPARK_CONNECT_ENABLED)) {
+      return Map.empty
     }
+    val existingPlugins = allConf.get(SparkConnect.SPARK_PLUGINS_KEY)
+      .map(_.split(",").map(_.trim).filter(_.nonEmpty).toSeq)
+      .getOrElse(Seq.empty)
+    val plugins = (existingPlugins :+ SparkConnect.SPARK_CONNECT_PLUGIN).distinct
+    Map(
+      SparkConnect.SPARK_PLUGINS_KEY -> plugins.mkString(","),
+      SparkConnect.SPARK_CONNECT_BINDING_PORT_KEY ->
+        conf.get(FRONTEND_SPARK_CONNECT_ENGINE_PORT).toString)
   }
 
   /**
@@ -167,6 +193,7 @@ class SparkProcessBuilder(
       appendPodNameConf(allConf) ++
       appendYuniKornUserInfoConf(allConf) ++
       prepareK8sFileUploadPath() ++
+      sparkConnectConf(allConf) ++
       engineWaitCompletionConf).foreach {
       case (k, v) => buffer ++= confKeyValue(convertConfigKey(k), v)
     }
