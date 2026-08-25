@@ -26,7 +26,7 @@ class SparkConnectSuite extends KyuubiFunSuite {
   private def asciiKey(name: String): Metadata.Key[String] =
     Metadata.Key.of(name, Metadata.ASCII_STRING_MARSHALLER)
 
-  test("tokens are unique and URL safe") {
+  test("engine credentials are unique and URL safe") {
     val tokens = (1 to 200).map(_ => SparkConnect.generateToken()).toSet
     assert(tokens.size == 200)
     tokens.foreach { token =>
@@ -54,7 +54,7 @@ class SparkConnectSuite extends KyuubiFunSuite {
     assert(!SparkConnect.tokenIdsMatch(id, id.dropRight(1)))
   }
 
-  test("bearer tokens are extracted from the Authorization header") {
+  test("bearer credentials are extracted from the Authorization header") {
     def headersWith(value: String): Metadata = {
       val headers = new Metadata()
       headers.put(SparkConnect.AUTHORIZATION_HEADER, value)
@@ -71,7 +71,7 @@ class SparkConnectSuite extends KyuubiFunSuite {
     assert(SparkConnect.bearerToken(new Metadata()).isEmpty)
   }
 
-  test("upstream headers carry Kyuubi's token, not the caller's credential") {
+  test("upstream headers carry Kyuubi's engine credential, not the caller's") {
     val headers = new Metadata()
     headers.put(SparkConnect.AUTHORIZATION_HEADER, "Bearer the-platform-credential")
     headers.put(asciiKey("cookie"), "session=platform-secret")
@@ -79,9 +79,9 @@ class SparkConnectSuite extends KyuubiFunSuite {
     headers.put(asciiKey("x-spark-connect-client"), "pyspark/4.2.0")
     headers.put(asciiKey("user-agent"), "grpc-python/1.76")
 
-    val upstream = SparkConnect.upstreamHeaders(headers, "the-session-token")
+    val upstream = SparkConnect.upstreamHeaders(headers, "the-engine-credential")
 
-    assert(upstream.get(SparkConnect.AUTHORIZATION_HEADER) == "Bearer the-session-token")
+    assert(upstream.get(SparkConnect.AUTHORIZATION_HEADER) == "Bearer the-engine-credential")
     assert(upstream.get(asciiKey("cookie")) == null)
     assert(upstream.get(asciiKey("proxy-authorization")) == null)
     // Anything else passes through untouched, which is what keeps the proxy protocol-agnostic.

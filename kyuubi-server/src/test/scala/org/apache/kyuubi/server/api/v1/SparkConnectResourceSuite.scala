@@ -29,21 +29,25 @@ import org.apache.kyuubi.server.http.util.HttpAuthUtils.{basicAuthorizationHeade
 
 class SparkConnectResourceSuite extends KyuubiFunSuite with RestFrontendTestHelper {
 
-  test("a Spark Connect session gets its own engine") {
-    val conf = SparkConnectResource.serverControlledConf("a-token")
+  test("a Spark Connect session gets an engine of its user's own") {
+    val conf = SparkConnectResource.serverControlledConf("an-engine-credential")
     assert(conf(SESSION_SPARK_CONNECT_ENABLED.key) == "true")
-    assert(conf(SESSION_SPARK_CONNECT_TOKEN.key) == "a-token")
+    assert(conf(SESSION_SPARK_CONNECT_TOKEN.key) == "an-engine-credential")
     assert(conf(ENGINE_TYPE.key) == "SPARK_SQL")
-    // Spark Connect sessions carry state -- artifacts, temp views, cached frames -- and the token
-    // is minted per engine, so the engine must not be shared with another session.
-    assert(conf(ENGINE_SHARE_LEVEL.key) == "CONNECTION")
+    // The engine serves exactly one user, so state that outlives a session -- artifacts, temp
+    // views, cached frames -- is that user's own rather than someone else's leaking across.
+    assert(conf(ENGINE_SHARE_LEVEL.key) == "USER")
+    // Without a subdomain of its own, a Spark Connect session would be handed the same user's
+    // ordinary Thrift engine, which was launched without the Spark Connect plugin.
+    assert(conf(ENGINE_SHARE_LEVEL_SUBDOMAIN.key) == SparkConnectResource.ENGINE_SUBDOMAIN)
   }
 
-  test("a client cannot declare its own token or engine sharing") {
+  test("a client cannot declare its own engine credential or engine sharing") {
     val requested = Map(
       SESSION_SPARK_CONNECT_TOKEN.key -> "a-token-i-chose",
       SESSION_SPARK_CONNECT_ENABLED.key -> "true",
-      ENGINE_SHARE_LEVEL.key -> "USER",
+      ENGINE_SHARE_LEVEL.key -> "SERVER",
+      ENGINE_SHARE_LEVEL_SUBDOMAIN.key -> "somebody-elses-engine",
       ENGINE_TYPE.key -> "FLINK_SQL",
       "spark.sql.shuffle.partitions" -> "42")
 
@@ -52,25 +56,29 @@ class SparkConnectResourceSuite extends KyuubiFunSuite with RestFrontendTestHelp
     assert(!accepted.contains(SESSION_SPARK_CONNECT_TOKEN.key))
     assert(!accepted.contains(SESSION_SPARK_CONNECT_ENABLED.key))
     assert(!accepted.contains(ENGINE_SHARE_LEVEL.key))
+    assert(!accepted.contains(ENGINE_SHARE_LEVEL_SUBDOMAIN.key))
     assert(!accepted.contains(ENGINE_TYPE.key))
     // Ordinary Spark conf is still the caller's to set.
     assert(accepted("spark.sql.shuffle.partitions") == "42")
   }
 
   test("server controlled conf wins over anything the client sent") {
-    val requested = Map(ENGINE_SHARE_LEVEL.key -> "SERVER")
+    val requested = Map(
+      ENGINE_SHARE_LEVEL.key -> "SERVER",
+      ENGINE_SHARE_LEVEL_SUBDOMAIN.key -> "somebody-elses-engine")
     val effective =
-      SparkConnectResource.serverControlledConf("a-token") ++
+      SparkConnectResource.serverControlledConf("an-engine-credential") ++
         SparkConnectResource.clientControlledConf(requested)
-    assert(effective(ENGINE_SHARE_LEVEL.key) == "CONNECTION")
+    assert(effective(ENGINE_SHARE_LEVEL.key) == "USER")
+    assert(effective(ENGINE_SHARE_LEVEL_SUBDOMAIN.key) == SparkConnectResource.ENGINE_SUBDOMAIN)
   }
 
-  test("the session DTO keeps the token out of its string form") {
-    val session = new SparkConnectSession("a-session-id", "a-secret-token", "sc://host:15002")
-    // The DTO is logged in places a token must never reach.
-    assert(!session.toString.contains("a-secret-token"))
+  test("the session DTO has no token to leak") {
+    val session = new SparkConnectSession("a-session-id", "sc://host:15002")
     assert(session.toString.contains("a-session-id"))
-    assert(session.getToken == "a-secret-token")
+    // Nothing to hand out: the caller authenticates the gRPC port with the credential they
+    // already have, and Kyuubi's own engine credential never leaves the gateway.
+    assert(!classOf[SparkConnectSession].getMethods.exists(_.getName == "getToken"))
   }
 
   test("a session is PENDING until its engine reports in") {
@@ -113,22 +121,58 @@ class SparkConnectResourceSuite extends KyuubiFunSuite with RestFrontendTestHelp
     }
   }
 
-  test("the session list never carries a token") {
+  test("creating a session twice gives the caller the one session they have") {
+    val first = openSparkConnectSession("alice")
+    try {
+      val second = openSparkConnectSession("alice")
+
+      // A second session would be unreachable: the gRPC port routes on who is calling, not on
+      // which session id they meant.
+      assert(second.getSessionId == first.getSessionId)
+      assert(listSparkConnectSessions("alice").map(_.getSessionId) == Seq(first.getSessionId))
+    } finally {
+      closeSparkConnectSession("alice", first.getSessionId)
+    }
+  }
+
+  test("two users each get their own session") {
+    val alice = openSparkConnectSession("alice")
+    val bob = openSparkConnectSession("bob")
+    try {
+      assert(alice.getSessionId != bob.getSessionId)
+    } finally {
+      closeSparkConnectSession("alice", alice.getSessionId)
+      closeSparkConnectSession("bob", bob.getSessionId)
+    }
+  }
+
+  test("neither the create response nor the session list carries a token") {
     val alice = openSparkConnectSession("alice")
     try {
-      assert(alice.getToken.nonEmpty)
-
-      val body = webTarget.path("api/v1/spark-connect/sessions")
+      val listBody = webTarget.path("api/v1/spark-connect/sessions")
         .request(MediaType.APPLICATION_JSON_TYPE)
         .header(AUTHORIZATION_HEADER, basicAuthorizationHeader("alice"))
         .get()
         .readEntity(classOf[String])
 
-      // Asserted against the raw body rather than the DTO, because a token could only leak through
-      // a field the DTO does not model -- which is exactly what a typed read would hide.
-      assert(!body.contains(alice.getToken))
-      assert(!body.toLowerCase.contains("token"))
-      assert(body.contains(alice.getSessionId))
+      // Asserted against the raw body rather than the DTO, because a credential could only leak
+      // through a field the DTO does not model -- which a typed read is exactly what would hide.
+      assert(!listBody.toLowerCase.contains("token"))
+      assert(listBody.contains(alice.getSessionId))
+
+      val createBody = webTarget.path("api/v1/spark-connect/sessions")
+        .request(MediaType.APPLICATION_JSON_TYPE)
+        .header(AUTHORIZATION_HEADER, basicAuthorizationHeader("bob"))
+        .post(Entity.entity(
+          new SessionOpenRequest(Collections.emptyMap[String, String]()),
+          MediaType.APPLICATION_JSON_TYPE))
+        .readEntity(classOf[String])
+      try {
+        assert(!createBody.toLowerCase.contains("token"))
+      } finally {
+        listSparkConnectSessions("bob").foreach(session =>
+          closeSparkConnectSession("bob", session.getSessionId))
+      }
     } finally {
       closeSparkConnectSession("alice", alice.getSessionId)
     }

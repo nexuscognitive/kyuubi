@@ -33,35 +33,48 @@ import org.apache.kyuubi.server.connect.SparkConnectTestHelper._
 /**
  * End-to-end coverage of the proxy over real gRPC: a client, the frontend's relay, and a stand-in
  * engine, each on their own socket. No Spark and no Kubernetes are involved -- engine discovery is
- * replaced by a locator the test drives directly.
+ * replaced by a locator the test drives directly, and the deployment's bearer provider by one that
+ * knows a fixed handful of credentials.
  */
 class SparkConnectRelaySuite extends KyuubiFunSuite {
 
-  private val engineTag = UUID.randomUUID().toString
-  private val sessionId = engineTag
+  private val aliceCredential = "alice-platform-credential"
+  private val bobCredential = "bob-platform-credential"
 
-  private var engine: FakeSparkConnectEngine = _
+  private val aliceSessionId = UUID.randomUUID().toString
+  private val bobSessionId = UUID.randomUUID().toString
+  private val aliceEngineToken = SparkConnect.generateToken()
+  private val bobEngineToken = SparkConnect.generateToken()
+
+  private var aliceEngine: FakeSparkConnectEngine = _
+  private var bobEngine: FakeSparkConnectEngine = _
   private var proxyServer: Server = _
   private var clientChannelToProxy: ManagedChannel = _
   private var registry: SparkConnectSessionRegistry = _
   private var channelPool: SparkConnectEngineChannelPool = _
-  private var token: String = _
+  private var authenticationProvider: FakeTokenAuthenticationProvider = _
+  private var authenticator: SparkConnectAuthenticator = _
 
-  /** Set per test to decide how the engine answers. */
+  /** Set per test to decide how an engine answers. */
   private var engineReply: (String, Seq[Array[Byte]]) => FakeEngineReply = _
 
-  /** Set per test to decide whether the engine is discoverable. */
-  private var locatedAddress: Option[SparkConnectEngineAddress] = None
+  /** Set per test to decide whether Alice's engine is discoverable. */
+  private var aliceEngineIsServing: Boolean = true
 
   override def beforeEach(): Unit = {
     super.beforeEach()
     engineReply = (_, requests) => FakeEngineReply(responses = requests)
-    engine = new FakeSparkConnectEngine((method, requests) => engineReply(method, requests))
-    locatedAddress = Some(engine.address)
+    aliceEngine = new FakeSparkConnectEngine((method, requests) => engineReply(method, requests))
+    bobEngine = new FakeSparkConnectEngine((method, requests) => engineReply(method, requests))
+    aliceEngineIsServing = true
 
     registry = new SparkConnectSessionRegistry(None)
-    token = SparkConnect.generateToken()
-    registry.register(token, sessionId, "connect_user", engineTag)
+    registry.register("alice", aliceSessionId, aliceSessionId, aliceEngineToken)
+    registry.register("bob", bobSessionId, bobSessionId, bobEngineToken)
+
+    authenticationProvider = new FakeTokenAuthenticationProvider(
+      Map(aliceCredential -> "alice", bobCredential -> "bob"))
+    authenticator = authenticatorFor(authenticationProvider)
 
     channelPool = new SparkConnectEngineChannelPool(
       SparkConnectEngineChannelConf(
@@ -70,11 +83,14 @@ class SparkConnectRelaySuite extends KyuubiFunSuite {
         keepAliveTimeoutMillis = 20000))
 
     val locator = new SparkConnectEngineLocator {
-      override def locate(tag: String): Option[SparkConnectEngineAddress] =
-        if (tag == engineTag) locatedAddress else None
+      override def locate(tag: String): Option[SparkConnectEngineAddress] = tag match {
+        case `aliceSessionId` if aliceEngineIsServing => Some(aliceEngine.address)
+        case `bobSessionId` => Some(bobEngine.address)
+        case _ => None
+      }
     }
 
-    val relay = new SparkConnectRelay(registry, locator, channelPool)
+    val relay = new SparkConnectRelay(authenticator, registry, locator, channelPool)
     proxyServer = NettyServerBuilder.forPort(0)
       .fallbackHandlerRegistry(new SparkConnectHandlerRegistry(relay))
       .build()
@@ -89,7 +105,8 @@ class SparkConnectRelaySuite extends KyuubiFunSuite {
       proxyServer.shutdownNow()
       proxyServer.awaitTermination(5, TimeUnit.SECONDS)
     }
-    if (engine != null) engine.stop()
+    if (aliceEngine != null) aliceEngine.stop()
+    if (bobEngine != null) bobEngine.stop()
     super.afterEach()
   }
 
@@ -97,27 +114,47 @@ class SparkConnectRelaySuite extends KyuubiFunSuite {
 
   private def text(value: Array[Byte]): String = new String(value, StandardCharsets.UTF_8)
 
-  test("relay forwards a call to the engine and returns its response verbatim") {
+  test("an authenticated user's call reaches their own engine") {
     val result = call(
       clientChannelToProxy,
       EXECUTE_PLAN_METHOD,
       Seq(bytes("a plan")),
-      bearerHeaders(token))
+      bearerHeaders(aliceCredential))
 
     assert(result.status.getCode == Status.Code.OK)
     assert(result.responses.map(text) == Seq("a plan"))
-    assert(engine.callCount == 1)
+    assert(aliceEngine.callCount == 1)
+    assert(bobEngine.callCount == 0)
   }
 
-  test("relay presents its own token upstream and drops the caller's credential") {
+  test("two users issuing the same call each reach their own engine") {
+    // Both send an identical payload and name the same Spark Connect session id inside it. The
+    // frontend never opens the payload, so the only thing separating them is who they are.
+    val sharedPayload = Seq(bytes("session_id: the-same-name"))
+    call(clientChannelToProxy, EXECUTE_PLAN_METHOD, sharedPayload, bearerHeaders(aliceCredential))
+    call(clientChannelToProxy, EXECUTE_PLAN_METHOD, sharedPayload, bearerHeaders(bobCredential))
+
+    assert(aliceEngine.callCount == 1)
+    assert(bobEngine.callCount == 1)
+    assert(aliceEngine.receivedHeaders.get(SparkConnect.AUTHORIZATION_HEADER) ==
+      s"Bearer $aliceEngineToken")
+    assert(bobEngine.receivedHeaders.get(SparkConnect.AUTHORIZATION_HEADER) ==
+      s"Bearer $bobEngineToken")
+  }
+
+  test("the upstream hop carries Kyuubi's engine credential, not the caller's") {
     call(
       clientChannelToProxy,
       EXECUTE_PLAN_METHOD,
       Seq(bytes("a plan")),
-      bearerHeaders(token, Map("cookie" -> "session=platform-secret", "x-trace-id" -> "trace-1")))
+      bearerHeaders(
+        aliceCredential,
+        Map("cookie" -> "session=platform-secret", "x-trace-id" -> "trace-1")))
 
-    val upstream = engine.receivedHeaders
-    assert(upstream.get(SparkConnect.AUTHORIZATION_HEADER) == s"Bearer $token")
+    val upstream = aliceEngine.receivedHeaders
+    assert(upstream.get(SparkConnect.AUTHORIZATION_HEADER) == s"Bearer $aliceEngineToken")
+    // The whole point: a long-lived platform credential must not reach a JVM the user controls.
+    assert(!upstream.get(SparkConnect.AUTHORIZATION_HEADER).contains(aliceCredential))
     assert(upstream.get(Metadata.Key.of("cookie", Metadata.ASCII_STRING_MARSHALLER)) == null)
     // Headers the proxy knows nothing about still reach the engine; that is what lets it stay
     // ignorant of the Spark Connect protocol.
@@ -125,43 +162,89 @@ class SparkConnectRelaySuite extends KyuubiFunSuite {
       upstream.get(Metadata.Key.of("x-trace-id", Metadata.ASCII_STRING_MARSHALLER)) == "trace-1")
   }
 
-  test("a call with no bearer token is rejected with a trailers-only UNAUTHENTICATED") {
+  test("a call with no bearer credential is rejected with a trailers-only UNAUTHENTICATED") {
     val result =
       call(clientChannelToProxy, EXECUTE_PLAN_METHOD, Seq(bytes("a plan")), new Metadata())
 
     assert(result.status.getCode == Status.Code.UNAUTHENTICATED)
     assert(result.isTrailersOnly)
-    assert(engine.callCount == 0)
+    assert(aliceEngine.callCount == 0)
   }
 
-  test("an unknown token is rejected with a trailers-only UNAUTHENTICATED") {
+  test("a credential the provider does not know is rejected with UNAUTHENTICATED") {
     val result = call(
       clientChannelToProxy,
       EXECUTE_PLAN_METHOD,
       Seq(bytes("a plan")),
-      bearerHeaders(SparkConnect.generateToken()))
+      bearerHeaders("a-credential-from-nowhere"))
 
     assert(result.status.getCode == Status.Code.UNAUTHENTICATED)
     assert(result.isTrailersOnly)
-    assert(engine.callCount == 0)
-    // An unknown token must not be admitted to the cache, or the port becomes a memory leak.
-    assert(registry.cachedSessionCount == 1)
+    assert(aliceEngine.callCount == 0)
+    assert(bobEngine.callCount == 0)
+    // A rejected credential must not become a cache entry anyone can plant.
+    assert(authenticator.cachedPrincipalCount == 0)
   }
 
-  test("an engine that is not serving yet yields a trailers-only UNAVAILABLE") {
-    locatedAddress = None
+  test("an authenticated user with no session is told how to create one") {
+    registry.forget("alice")
 
     val result = call(
       clientChannelToProxy,
       EXECUTE_PLAN_METHOD,
       Seq(bytes("a plan")),
-      bearerHeaders(token))
+      bearerHeaders(aliceCredential))
+
+    // Deliberately not UNAVAILABLE: a Spark Connect client retries that for minutes, and no
+    // amount of retrying creates a session. The user has to read the message.
+    assert(result.status.getCode == Status.Code.FAILED_PRECONDITION)
+    assert(result.status.getDescription.contains("/api/v1/spark-connect/sessions"))
+    assert(result.status.getDescription.contains("web UI"))
+    assert(aliceEngine.callCount == 0)
+  }
+
+  test("a user whose session has closed is told to create one, not routed to the stale engine") {
+    registry.unregister(aliceSessionId)
+
+    val result = call(
+      clientChannelToProxy,
+      EXECUTE_PLAN_METHOD,
+      Seq(bytes("a plan")),
+      bearerHeaders(aliceCredential))
+
+    assert(result.status.getCode == Status.Code.FAILED_PRECONDITION)
+    assert(aliceEngine.callCount == 0)
+  }
+
+  test("an engine that is not serving yet yields a trailers-only UNAVAILABLE") {
+    aliceEngineIsServing = false
+
+    val result = call(
+      clientChannelToProxy,
+      EXECUTE_PLAN_METHOD,
+      Seq(bytes("a plan")),
+      bearerHeaders(aliceCredential))
 
     // UNAVAILABLE is what makes a slow engine start look like a slow connect to the client: Spark
     // Connect's default retry policy backs off and retries for minutes on this code.
     assert(result.status.getCode == Status.Code.UNAVAILABLE)
     assert(result.isTrailersOnly)
-    assert(engine.callCount == 0)
+    assert(aliceEngine.callCount == 0)
+  }
+
+  test("a credential is resolved once, not on every relayed call") {
+    // PySpark issues a ReleaseExecute after every response batch, so a provider round trip per
+    // RPC would put the deployment's identity service on the hot path of every query.
+    (1 to 20).foreach { index =>
+      call(
+        clientChannelToProxy,
+        EXECUTE_PLAN_METHOD,
+        Seq(bytes(s"plan-$index")),
+        bearerHeaders(aliceCredential))
+    }
+
+    assert(aliceEngine.callCount == 20)
+    assert(authenticationProvider.callCount == 1)
   }
 
   test("an engine error is relayed with its status, message and trailers intact") {
@@ -178,7 +261,7 @@ class SparkConnectRelaySuite extends KyuubiFunSuite {
       clientChannelToProxy,
       EXECUTE_PLAN_METHOD,
       Seq(bytes("a plan")),
-      bearerHeaders(token))
+      bearerHeaders(aliceCredential))
 
     assert(result.status.getCode == Status.Code.INTERNAL)
     assert(result.status.getDescription == "TABLE_OR_VIEW_NOT_FOUND")
@@ -195,7 +278,7 @@ class SparkConnectRelaySuite extends KyuubiFunSuite {
       clientChannelToProxy,
       EXECUTE_PLAN_METHOD,
       Seq(bytes("a plan")),
-      bearerHeaders(token))
+      bearerHeaders(aliceCredential))
 
     assert(result.status.getCode == Status.Code.OK)
     assert(result.responses.map(text) == batches.map(text))
@@ -211,7 +294,7 @@ class SparkConnectRelaySuite extends KyuubiFunSuite {
             clientChannelToProxy,
             methods(index % methods.size),
             Seq(bytes(s"request-$index")),
-            bearerHeaders(token))
+            bearerHeaders(aliceCredential))
         }
       }
       val results = executor.invokeAll(tasks.asJava).asScala.map(_.get(60, TimeUnit.SECONDS))
@@ -222,7 +305,7 @@ class SparkConnectRelaySuite extends KyuubiFunSuite {
       executor.shutdownNow()
     }
 
-    assert(engine.callCount == 16)
+    assert(aliceEngine.callCount == 16)
     // gRPC multiplexes streams, so sixteen concurrent RPCs need exactly one connection.
     assert(channelPool.pooledSessionCount == 1)
   }
@@ -255,7 +338,7 @@ class SparkConnectRelaySuite extends KyuubiFunSuite {
         clientChannelToProxy,
         SparkConnect.SERVICE_PATH_PREFIX + rpc,
         Seq(bytes(rpc)),
-        bearerHeaders(token))
+        bearerHeaders(aliceCredential))
       assert(result.status.getCode == Status.Code.OK, s"$rpc was not relayed")
       assert(result.responses.map(text) == Seq(rpc))
     }
@@ -267,24 +350,23 @@ class SparkConnectRelaySuite extends KyuubiFunSuite {
       clientChannelToProxy,
       "some.other.Service/Method",
       Seq(bytes("payload")),
-      bearerHeaders(token))
+      bearerHeaders(aliceCredential))
 
     assert(result.status.getCode == Status.Code.UNIMPLEMENTED)
-    assert(engine.callCount == 0)
+    assert(aliceEngine.callCount == 0)
   }
 
   test("closing a session tears down its upstream connection") {
-    call(clientChannelToProxy, EXECUTE_PLAN_METHOD, Seq(bytes("a plan")), bearerHeaders(token))
+    call(
+      clientChannelToProxy,
+      EXECUTE_PLAN_METHOD,
+      Seq(bytes("a plan")),
+      bearerHeaders(aliceCredential))
     assert(channelPool.pooledSessionCount == 1)
 
     registry.onSessionClosed(channelPool.release)
-    registry.unregister(sessionId)
+    registry.unregister(aliceSessionId)
 
     assert(channelPool.pooledSessionCount == 0)
-    // The token no longer routes, so a client that kept using it is told so rather than reaching
-    // whatever now sits at the old address.
-    val result =
-      call(clientChannelToProxy, EXECUTE_PLAN_METHOD, Seq(bytes("a plan")), bearerHeaders(token))
-    assert(result.status.getCode == Status.Code.UNAUTHENTICATED)
   }
 }
