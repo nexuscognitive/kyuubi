@@ -445,6 +445,10 @@ class JDBCMetadataStoreSuite extends KyuubiFunSuite {
       engineName = "appName2",
       engineState = "FAILED",
       engineError = Some("appError2"))
+    // update_time is stamped with the wall clock at write time, so back-to-back
+    // upserts can land in the same millisecond and leave updateTime unchanged.
+    // Wait for the clock to advance so the refresh below is observable.
+    Thread.sleep(2)
     jdbcMetadataStore.upsertKubernetesEngineInfo(metadata3)
 
     val metadata4 = jdbcMetadataStore.getKubernetesMetaEngineInfo(tag)
