@@ -37,11 +37,15 @@ class KyuubiSparkConnectFrontendServiceSuite extends KyuubiFunSuite {
 
   private val keystorePassword = "kyuubi-test"
 
+  private val bearerProviderClass =
+    classOf[org.apache.kyuubi.service.authentication.AnonymousAuthenticationProviderImpl].getName
+
   private def baseConf: KyuubiConf = KyuubiConf(loadSysDefault = false)
     .set(FRONTEND_PROTOCOLS, Seq(FrontendProtocols.REST.toString))
     .set(FRONTEND_SPARK_CONNECT_ENABLED, true)
     .set(FRONTEND_SPARK_CONNECT_SSL_ENABLED, true)
     .set(FRONTEND_SPARK_CONNECT_SSL_KEYSTORE_PATH, "/tmp/spark-connect-keystore.jks")
+    .set(AUTHENTICATION_CUSTOM_BEARER_CLASS, bearerProviderClass)
 
   test("a fully configured Spark Connect frontend passes validation") {
     KyuubiSparkConnectFrontendService.validateConf(baseConf)
@@ -70,10 +74,18 @@ class KyuubiSparkConnectFrontendServiceSuite extends KyuubiFunSuite {
 
   test("the frontend refuses to start without the REST frontend") {
     // Spark Connect has no open-session RPC, so without REST there is no way to create a session
-    // and every token presented on the gRPC port would be unroutable.
+    // and every authenticated caller on the gRPC port would have nowhere to be routed.
     val conf = baseConf.set(FRONTEND_PROTOCOLS, Seq(FrontendProtocols.THRIFT_BINARY.toString))
     val e = intercept[KyuubiException](KyuubiSparkConnectFrontendService.validateConf(conf))
     assert(e.getMessage.contains("REST"))
+  }
+
+  test("the frontend refuses to start without a bearer authentication provider") {
+    // Otherwise the port accepts connections and answers every call UNAUTHENTICATED, which reads
+    // as a broken deployment rather than an unconfigured one.
+    val conf = baseConf.unset(AUTHENTICATION_CUSTOM_BEARER_CLASS)
+    val e = intercept[KyuubiException](KyuubiSparkConnectFrontendService.validateConf(conf))
+    assert(e.getMessage.contains(AUTHENTICATION_CUSTOM_BEARER_CLASS.key))
   }
 
   test("building an SSL context fails clearly when the keystore is absent") {
@@ -98,8 +110,8 @@ class KyuubiSparkConnectFrontendServiceSuite extends KyuubiFunSuite {
     val conf = baseConf.set(FRONTEND_SPARK_CONNECT_SSL_ENABLED, false)
     withFrontendTransport(conf) { port =>
       withChannel(plaintextChannel(port)) { channel =>
-        // A tokenless call is rejected by the relay, which means the whole plaintext path --
-        // HTTP/2 framing, method dispatch, trailers -- ran to completion.
+        // A call with no credential is rejected by the relay, which means the whole plaintext
+        // path -- HTTP/2 framing, method dispatch, trailers -- ran to completion.
         val result = call(channel, EXECUTE_PLAN_METHOD, Seq(Array[Byte](1)), new Metadata)
         assert(result.status.getCode == Status.Code.UNAUTHENTICATED)
         assert(result.isTrailersOnly)
@@ -141,9 +153,9 @@ class KyuubiSparkConnectFrontendServiceSuite extends KyuubiFunSuite {
     assert(conf.get(FRONTEND_SPARK_CONNECT_MAX_MESSAGE_SIZE) == 128 * 1024 * 1024)
     assert(conf.get(FRONTEND_SPARK_CONNECT_ENGINE_MAX_MESSAGE_SIZE) == 128 * 1024 * 1024)
 
-    // The token must never reach the engine as a Spark conf; the SERVER audience is what keeps it
-    // out of the driver command line and the Spark UI environment page.
-    conf.set(SESSION_SPARK_CONNECT_TOKEN, "a-secret-token")
+    // The engine credential must never reach the engine as a Spark conf; the SERVER audience is
+    // what keeps it out of the driver command line and the Spark UI environment page.
+    conf.set(SESSION_SPARK_CONNECT_TOKEN, "an-engine-credential")
     conf.set(SESSION_SPARK_CONNECT_ENABLED, true)
     val engineConf = conf.getEngineConf(org.apache.kyuubi.engine.EngineType.SPARK_SQL)
     assert(!engineConf.contains(SESSION_SPARK_CONNECT_TOKEN.key))
@@ -159,6 +171,7 @@ class KyuubiSparkConnectFrontendServiceSuite extends KyuubiFunSuite {
    */
   private def withFrontendTransport(conf: KyuubiConf)(f: Int => Unit): Unit = {
     val relay = new SparkConnectRelay(
+      new SparkConnectAuthenticator(conf),
       new SparkConnectSessionRegistry(None),
       new SparkConnectEngineLocator {
         override def locate(engineTag: String): Option[SparkConnectEngineAddress] = None

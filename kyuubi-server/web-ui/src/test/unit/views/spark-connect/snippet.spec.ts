@@ -18,7 +18,8 @@
 import { describe, it, expect } from 'vitest'
 import {
   buildRemoteUrl,
-  buildPySparkSnippet
+  buildPySparkSnippet,
+  CREDENTIAL_ENV_VAR
 } from '@/views/spark-connect/utils/snippet'
 
 const TOKEN = 'Zm9vYmFyLWJhei1xdXV4'
@@ -84,13 +85,18 @@ describe('buildRemoteUrl', () => {
 })
 
 describe('buildPySparkSnippet', () => {
-  it('is a complete, runnable program', () => {
-    expect(buildPySparkSnippet('sc://host:15002', TOKEN)).toBe(
+  it('is a complete, runnable program the user only has to supply a credential to', () => {
+    expect(buildPySparkSnippet('sc://host:15002')).toBe(
       [
+        'import os',
+        '',
         'from pyspark.sql import SparkSession',
         '',
+        '# The same credential you use for the Kyuubi REST API.',
+        `token = os.environ["${CREDENTIAL_ENV_VAR}"]`,
+        '',
         'spark = SparkSession.builder.remote(',
-        `    "sc://host:15002/;use_ssl=true;token=${TOKEN}"`,
+        '    f"sc://host:15002/;use_ssl=true;token={token}"',
         ').getOrCreate()',
         '',
         'spark.sql("SELECT 1").show()'
@@ -98,10 +104,19 @@ describe('buildPySparkSnippet', () => {
     )
   })
 
+  it('interpolates the credential rather than embedding one', () => {
+    // The server issues no Spark Connect token, so there is nothing to bake in here. An f-string
+    // keeps the credential in the user's environment and out of anything they paste around.
+    const snippet = buildPySparkSnippet('sc://host:15002')
+
+    expect(snippet).toContain('.remote(\n    f"')
+    expect(snippet).toContain('token={token}')
+    expect(snippet).not.toMatch(/token=[A-Za-z0-9_-]{20,}/)
+  })
+
   it('quotes the remote URL so the shell-unfriendly semicolons survive a paste', () => {
-    const snippet = buildPySparkSnippet('sc://host:15002', TOKEN)
-    expect(snippet).toContain(
-      `.remote(\n    "sc://host:15002/;use_ssl=true;token=${TOKEN}"\n)`
+    expect(buildPySparkSnippet('sc://host:15002')).toContain(
+      '.remote(\n    f"sc://host:15002/;use_ssl=true;token={token}"\n)'
     )
   })
 })

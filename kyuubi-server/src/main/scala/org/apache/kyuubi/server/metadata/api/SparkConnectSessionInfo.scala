@@ -18,23 +18,39 @@
 package org.apache.kyuubi.server.metadata.api
 
 /**
- * The routing record for one Spark Connect session.
+ * The record binding one user to their Spark Connect engine.
  *
  * Persisting this lets any Kyuubi instance route Spark Connect traffic for a session it did not
  * create, which is what makes a restart or a second HA replica transparent to a connected client.
  * The engine's network location is intentionally absent: it is rediscovered from the Kubernetes
  * API server by each instance's own driver pod informer, so it never goes stale in the store.
  *
- * @param tokenId SHA-256 hex digest of the bearer token. Only the digest is persisted, so a
- *                reader of the metadata store cannot impersonate a live session.
- * @param sessionId the Kyuubi session handle that owns the engine.
- * @param userName the user the session was opened for.
+ * Nothing here derives from the caller's own credential. Callers authenticate every gRPC call with
+ * the platform credential they already hold, and that credential is resolved through Kyuubi's
+ * authentication chain rather than looked up here, so it is neither stored nor digested.
+ *
+ * @param userName the user this engine belongs to, and the key the frontend routes on.
+ * @param sessionId the Kyuubi session handle that opened the engine, or empty once that session
+ *                  has closed while the engine itself is still up. An empty value is what the
+ *                  frontend answers with "create a session first" rather than routing.
  * @param engineTag value of the engine's `kyuubi-unique-tag` pod label.
- * @param createTime when the session was created.
+ * @param engineToken the credential Kyuubi presents to this engine, which the driver checks as
+ *                    `spark.connect.authenticate.token`. It is Kyuubi's own, minted per engine
+ *                    and never shown to a client.
+ * @param createTime when the binding was created.
  */
 case class SparkConnectSessionInfo(
-    tokenId: String,
-    sessionId: String,
     userName: String,
+    sessionId: String,
     engineTag: String,
-    createTime: Long = 0L)
+    engineToken: String,
+    createTime: Long = 0L) {
+
+  /** Whether a Kyuubi session is still open on this engine, as opposed to the engine alone. */
+  def hasLiveSession: Boolean = sessionId.nonEmpty
+
+  /** Redacts the engine credential, which would otherwise reach any log that prints a record. */
+  override def toString: String =
+    s"SparkConnectSessionInfo(userName=$userName, sessionId=$sessionId," +
+      s" engineTag=$engineTag, engineToken=***, createTime=$createTime)"
+}

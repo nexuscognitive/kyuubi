@@ -18,13 +18,18 @@
 package org.apache.kyuubi.server.connect
 
 import java.io.{ByteArrayInputStream, ByteArrayOutputStream, InputStream}
+import java.security.Principal
 import java.util.concurrent.{CountDownLatch, TimeUnit}
 import java.util.concurrent.atomic.AtomicInteger
+import javax.security.sasl.AuthenticationException
 
 import scala.collection.mutable.ListBuffer
 
 import io.grpc.{CallOptions, ClientCall, HandlerRegistry, ManagedChannel, Metadata, MethodDescriptor, Server, ServerCall, ServerCallHandler, ServerMethodDefinition, Status}
 import io.grpc.netty.{NettyChannelBuilder, NettyServerBuilder}
+
+import org.apache.kyuubi.config.KyuubiConf
+import org.apache.kyuubi.service.authentication.{BasicPrincipal, TokenAuthenticationProvider, TokenCredential}
 
 /**
  * Marshals messages as raw bytes so tests can assert on the exact payload that
@@ -43,6 +48,28 @@ object ByteArrayMarshaller extends MethodDescriptor.Marshaller[Array[Byte]] {
       read = stream.read(chunk)
     }
     buffer.toByteArray
+  }
+}
+
+/**
+ * A stand-in for the deployment's bearer provider: it knows a fixed set of credentials and the
+ * user each one belongs to, and rejects everything else.
+ *
+ * Counts its calls so a test can tell a credential that was resolved once from one that was
+ * resolved on every message of a stream.
+ */
+class FakeTokenAuthenticationProvider(usersByCredential: Map[String, String])
+  extends TokenAuthenticationProvider {
+
+  private val callCounter = new AtomicInteger(0)
+
+  def callCount: Int = callCounter.get()
+
+  override def authenticate(credential: TokenCredential): Principal = {
+    callCounter.incrementAndGet()
+    usersByCredential.get(credential.token)
+      .map(new BasicPrincipal(_))
+      .getOrElse(throw new AuthenticationException("unknown credential"))
   }
 }
 
@@ -143,6 +170,10 @@ object SparkConnectTestHelper {
 
   def clientChannel(port: Int): ManagedChannel =
     NettyChannelBuilder.forAddress("127.0.0.1", port).usePlaintext().build()
+
+  /** An authenticator wired to `provider` instead of to whatever the conf names. */
+  def authenticatorFor(provider: TokenAuthenticationProvider): SparkConnectAuthenticator =
+    new SparkConnectAuthenticator(KyuubiConf(loadSysDefault = false), () => provider)
 
   /** Drive one call to completion and report everything the client saw. */
   def call(

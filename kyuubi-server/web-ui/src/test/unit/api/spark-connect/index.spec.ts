@@ -52,15 +52,17 @@ describe('spark-connect api', () => {
     )
   })
 
-  it('returns the created session as the server sent it', async () => {
+  it('returns the created session as the server sent it, with no token in it', async () => {
     const created = {
       sessionId: 'a-session-id',
-      token: 'a-token',
       connectUrl: 'sc://host:15002'
     }
     request.mockResolvedValue(created)
 
-    await expect(openSparkConnectSession()).resolves.toEqual(created)
+    const session = await openSparkConnectSession()
+
+    expect(session).toEqual(created)
+    expect(Object.keys(session)).not.toContain('token')
   })
 
   it('gets the session list from the same path', async () => {
@@ -82,13 +84,17 @@ describe('spark-connect api', () => {
         createTime: 1,
         state: 'RUNNING',
         engineId: 'app-1',
-        engineUrl: 'http://engine:4040'
+        engineUrl: 'http://engine:4040',
+        connectUrl: 'sc://host:15002'
       }
     ])
 
     const sessions = await listSparkConnectSessions()
 
     expect(Object.keys(sessions[0])).not.toContain('token')
+    // The connect URL is listed, because a client needs it every time it connects and there is
+    // nothing secret about the address this gateway advertises.
+    expect(sessions[0].connectUrl).toBe('sc://host:15002')
   })
 
   it('deletes by session id', async () => {

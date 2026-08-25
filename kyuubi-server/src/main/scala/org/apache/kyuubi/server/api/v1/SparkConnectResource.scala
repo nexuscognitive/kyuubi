@@ -45,6 +45,9 @@ import org.apache.kyuubi.shaded.hive.service.rpc.thrift.TProtocolVersion
  * would look hung. Creating the session out of band lets the caller be told immediately that the
  * engine is on its way, while the gRPC port answers `UNAVAILABLE` -- which Spark Connect clients
  * retry with backoff -- until it is serving.
+ *
+ * Nothing here issues a credential. A caller reaches both this endpoint and the gRPC port with the
+ * platform credential they already hold, so the only thing a session gives them is an engine.
  */
 @Tag(name = "SparkConnect")
 @Produces(Array(MediaType.APPLICATION_JSON))
@@ -60,7 +63,7 @@ private[v1] class SparkConnectResource extends ApiRequestContext with Logging {
     content = Array(new Content(
       mediaType = MediaType.APPLICATION_JSON,
       schema = new Schema(implementation = classOf[SparkConnectSession]))),
-    description = "Create a Spark Connect session and return its bearer token")
+    description = "Create the caller's Spark Connect session, or return the one they already have")
   @POST
   @Path("sessions")
   def openSession(request: SessionOpenRequest): SparkConnectSession = {
@@ -69,9 +72,35 @@ private[v1] class SparkConnectResource extends ApiRequestContext with Logging {
     // The caller is authenticated by the REST frontend's own auth chain before reaching here;
     // getSessionUser additionally resolves any permitted proxy-user request.
     val userName = fe.getSessionUser(requestedConf)
-    val ipAddress = fe.getIpAddress
+    val registry = sessionManager.sparkConnectSessionRegistry
 
-    val token = SparkConnect.generateToken()
+    // One session per user. The gRPC port routes on the caller's identity, so a second session
+    // would be unreachable -- and the conf on this request cannot be applied to an engine that is
+    // already running anyway, which is why it is dropped rather than quietly half-honoured.
+    registry.liveSession(userName) match {
+      case Some(existing) =>
+        info(s"Returning the existing Spark Connect session ${existing.sessionId} for $userName")
+        new SparkConnectSession(existing.sessionId, connectUrl)
+      case None => createSession(userName, requestedConf, request)
+    }
+  }
+
+  private def createSession(
+      userName: String,
+      requestedConf: Map[String, String],
+      request: SessionOpenRequest): SparkConnectSession = {
+    val registry = sessionManager.sparkConnectSessionRegistry
+
+    // The engine is shared at USER level, so one left running by a previous session of this
+    // user's is handed straight back by engine discovery instead of being relaunched. It keeps
+    // the `kyuubi-unique-tag` and the credential it was launched with, both of which the new
+    // session has to inherit: the tag is what the frontend routes on, and the token in the
+    // driver's environment cannot be changed from out here.
+    val reusableEngine = registry.lookup(userName)
+      .filter(engine => sessionManager.sparkConnectEngineLocator.locate(engine.engineTag).nonEmpty)
+    val engineToken = reusableEngine.map(_.engineToken).getOrElse(SparkConnect.generateToken())
+
+    val ipAddress = fe.getIpAddress
     val handle = fe.be.openSession(
       Option(request).flatMap(r => Option(r.getProtocolVersion))
         .map(version => TProtocolVersion.findByValue(version.intValue))
@@ -79,7 +108,7 @@ private[v1] class SparkConnectResource extends ApiRequestContext with Logging {
       userName,
       "",
       ipAddress,
-      serverControlledConf(token) ++ Map(
+      serverControlledConf(engineToken) ++ Map(
         KYUUBI_CLIENT_IP_KEY -> ipAddress,
         KYUUBI_SERVER_IP_KEY -> fe.host,
         KYUUBI_SESSION_CONNECTION_URL_KEY -> fe.connectionUrl,
@@ -87,16 +116,17 @@ private[v1] class SparkConnectResource extends ApiRequestContext with Logging {
         clientControlledConf(requestedConf))
 
     val sessionId = handle.identifier.toString
-    // For a CONNECTION-level engine -- which is forced above -- the `kyuubi-unique-tag` pod label
-    // is the session id, because that is the engine reference id Kyuubi tags the driver with.
-    sessionManager.sparkConnectSessionRegistry.register(
-      token = token,
-      sessionId = sessionId,
+    // A newly launched engine carries this session's id as its `kyuubi-unique-tag` pod label,
+    // because that is the engine reference id Kyuubi tags the driver with.
+    val engineTag = reusableEngine.map(_.engineTag).getOrElse(sessionId)
+    registry.register(
       userName = userName,
-      engineTag = sessionId)
-    info(s"Created Spark Connect session $sessionId for $userName")
+      sessionId = sessionId,
+      engineTag = engineTag,
+      engineToken = engineToken)
+    info(s"Created Spark Connect session $sessionId for $userName on engine $engineTag")
 
-    new SparkConnectSession(sessionId, token, connectUrl)
+    new SparkConnectSession(sessionId, connectUrl)
   }
 
   @ApiResponse(
@@ -105,7 +135,7 @@ private[v1] class SparkConnectResource extends ApiRequestContext with Logging {
       mediaType = MediaType.APPLICATION_JSON,
       array = new ArraySchema(
         schema = new Schema(implementation = classOf[SparkConnectSessionData])))),
-    description = "List the caller's live Spark Connect sessions, without their tokens")
+    description = "List the caller's live Spark Connect sessions")
   @GET
   @Path("sessions")
   def listSessions(): Seq[SparkConnectSessionData] = {
@@ -123,8 +153,6 @@ private[v1] class SparkConnectResource extends ApiRequestContext with Logging {
 
   private def sessionData(session: KyuubiSession): SparkConnectSessionData = {
     val event = session.getSessionEvent
-    // The token is knowingly absent -- see SparkConnectSessionData. Only its digest is stored, and
-    // a credential that a list call replays is a credential that ends up in caches and logs.
     new SparkConnectSessionData(
       session.handle.identifier.toString,
       session.user,
@@ -134,7 +162,8 @@ private[v1] class SparkConnectResource extends ApiRequestContext with Logging {
         endTime = event.map(_.endTime).getOrElse(-1L),
         failed = event.exists(_.exception.isDefined)),
       event.map(_.engineId).getOrElse(""),
-      event.map(_.engineUrl).getOrElse(""))
+      event.map(_.engineUrl).getOrElse(""),
+      connectUrl)
   }
 
   @ApiResponse(
@@ -218,32 +247,50 @@ private[v1] object SparkConnectResource {
   }
 
   /**
+   * The subdomain that keeps a Spark Connect engine to itself.
+   *
+   * At `USER` share level the engine space is keyed by user and subdomain, so without this a
+   * Spark Connect session would be handed whatever ordinary Thrift or REST engine the same user
+   * already had -- a driver launched without the Spark Connect plugin, which answers nothing on
+   * the gRPC port. It also keeps the reverse from happening to an unsuspecting Thrift session.
+   */
+  private[v1] val ENGINE_SUBDOMAIN = "spark-connect"
+
+  /**
    * Conf that only Kyuubi may set.
    *
-   * The engine share level is pinned to `CONNECTION` for two reasons that both matter. A Spark
-   * Connect session is stateful -- artifacts, temporary views, cached frames -- so sharing an
-   * engine between sessions would leak that state across users. And the token is minted per
-   * engine, so a shared engine would have to accept several tokens, which would turn the token
-   * from a routing key into a set membership test.
+   * The engine share level is `USER`, with a subdomain of its own. A Spark Connect session is
+   * stateful -- artifacts, temporary views, cached frames -- so the engine cannot be shared
+   * across users; within one user it can be, because there is at most one Spark Connect session
+   * per user and the state that survives between two of their own sessions is their own. Sharing
+   * it that far is what lets a user who closes a session and opens another get their engine back
+   * in a second rather than waiting out another cold start.
+   *
+   * The token is Kyuubi's credential for the engine, minted when the engine is launched and
+   * reused for as long as that driver lives. It is never returned to a client: callers
+   * authenticate with their own platform credential, which terminates at the frontend.
    */
-  private[v1] def serverControlledConf(token: String): Map[String, String] = Map(
+  private[v1] def serverControlledConf(engineToken: String): Map[String, String] = Map(
     SESSION_SPARK_CONNECT_ENABLED.key -> "true",
-    SESSION_SPARK_CONNECT_TOKEN.key -> token,
+    SESSION_SPARK_CONNECT_TOKEN.key -> engineToken,
     ENGINE_TYPE.key -> "SPARK_SQL",
-    ENGINE_SHARE_LEVEL.key -> "CONNECTION")
+    ENGINE_SHARE_LEVEL.key -> "USER",
+    ENGINE_SHARE_LEVEL_SUBDOMAIN.key -> ENGINE_SUBDOMAIN)
 
   private[v1] val SERVER_CONTROLLED_KEYS: Set[String] = Set(
     SESSION_SPARK_CONNECT_ENABLED.key,
     SESSION_SPARK_CONNECT_TOKEN.key,
     ENGINE_TYPE.key,
-    ENGINE_SHARE_LEVEL.key)
+    ENGINE_SHARE_LEVEL.key,
+    ENGINE_SHARE_LEVEL_SUBDOMAIN.key)
 
   /**
    * The caller's conf, minus anything only Kyuubi may set.
    *
    * Stripping rather than rejecting keeps a client that echoes a previous session's conf working,
-   * and a self-declared token would be inert anyway -- routing goes through the token store, which
-   * only this endpoint writes -- but letting one through would still be a needless surprise.
+   * and a self-declared engine token would be inert anyway -- the frontend presents the one from
+   * the routing record, which only this endpoint writes -- but letting one through would still be
+   * a needless surprise.
    */
   private[v1] def clientControlledConf(requestedConf: Map[String, String]): Map[String, String] =
     requestedConf -- SERVER_CONTROLLED_KEYS

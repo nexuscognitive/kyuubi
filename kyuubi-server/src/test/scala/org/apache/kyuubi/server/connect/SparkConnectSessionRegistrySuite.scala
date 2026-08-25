@@ -28,59 +28,86 @@ class SparkConnectSessionRegistrySuite extends KyuubiFunSuite {
   private def newRegistry(): SparkConnectSessionRegistry =
     new SparkConnectSessionRegistry(metadataManager = None)
 
-  test("a registered token resolves to its session and engine") {
+  test("a user resolves to their own session and engine") {
     val registry = newRegistry()
     val sessionId = UUID.randomUUID().toString
-    val token = SparkConnect.generateToken()
+    val engineToken = SparkConnect.generateToken()
 
-    val registered = registry.register(token, sessionId, "connect_user", sessionId)
-    assert(registered.tokenId == SparkConnect.tokenId(token))
+    val registered = registry.register("connect_user", sessionId, sessionId, engineToken)
+    assert(registered.userName == "connect_user")
     assert(registered.engineTag == sessionId)
 
-    val resolved = registry.lookup(token)
+    val resolved = registry.liveSession("connect_user")
     assert(resolved.map(_.sessionId).contains(sessionId))
-    assert(resolved.map(_.userName).contains("connect_user"))
     assert(resolved.map(_.engineTag).contains(sessionId))
+    assert(resolved.map(_.engineToken).contains(engineToken))
   }
 
-  test("one session's token never resolves to another session") {
+  test("one user's binding never resolves to another user's engine") {
     val registry = newRegistry()
     val firstSession = UUID.randomUUID().toString
     val secondSession = UUID.randomUUID().toString
-    val firstToken = SparkConnect.generateToken()
-    val secondToken = SparkConnect.generateToken()
-    registry.register(firstToken, firstSession, "user_a", firstSession)
-    registry.register(secondToken, secondSession, "user_b", secondSession)
+    registry.register("user_a", firstSession, firstSession, SparkConnect.generateToken())
+    registry.register("user_b", secondSession, secondSession, SparkConnect.generateToken())
 
-    assert(registry.lookup(firstToken).map(_.sessionId).contains(firstSession))
-    assert(registry.lookup(secondToken).map(_.sessionId).contains(secondSession))
+    assert(registry.liveSession("user_a").map(_.sessionId).contains(firstSession))
+    assert(registry.liveSession("user_b").map(_.sessionId).contains(secondSession))
+    assert(registry.liveSession("user_a").map(_.engineTag) !=
+      registry.liveSession("user_b").map(_.engineTag))
   }
 
-  test("an unknown token resolves to nothing and is not cached") {
+  test("a user with no binding resolves to nothing and is not cached") {
     val registry = newRegistry()
-    registry.register(SparkConnect.generateToken(), UUID.randomUUID().toString, "user", "tag")
-    assert(registry.cachedSessionCount == 1)
+    registry.register("connect_user", UUID.randomUUID().toString, "tag", "token")
+    assert(registry.cachedBindingCount == 1)
 
-    // Anyone who can reach the port can present garbage; caching those would make the cache grow
-    // without bound on demand.
-    (1 to 500).foreach(_ => assert(registry.lookup(SparkConnect.generateToken()).isEmpty))
-    assert(registry.cachedSessionCount == 1)
+    // Every miss would otherwise be an entry someone can create on demand.
+    (1 to 500).foreach(index => assert(registry.lookup(s"stranger-$index").isEmpty))
+    assert(registry.cachedBindingCount == 1)
   }
 
-  test("unregistering a session stops its token routing and fires close listeners") {
+  test("registering again replaces the user's binding rather than adding one") {
+    val registry = newRegistry()
+    val firstSession = UUID.randomUUID().toString
+    val secondSession = UUID.randomUUID().toString
+    registry.register("connect_user", firstSession, firstSession, "first-token")
+    registry.register("connect_user", secondSession, secondSession, "second-token")
+
+    assert(registry.cachedBindingCount == 1)
+    assert(registry.liveSession("connect_user").map(_.sessionId).contains(secondSession))
+    assert(registry.liveSession("connect_user").map(_.engineToken).contains("second-token"))
+  }
+
+  test("closing a session stops routing but keeps the engine binding") {
     val registry = newRegistry()
     val closed = ListBuffer[String]()
     registry.onSessionClosed(closed += _)
 
     val sessionId = UUID.randomUUID().toString
-    val token = SparkConnect.generateToken()
-    registry.register(token, sessionId, "connect_user", sessionId)
+    registry.register("connect_user", sessionId, sessionId, "engine-token")
 
     registry.unregister(sessionId)
 
     assert(closed.toSeq == Seq(sessionId))
-    assert(registry.lookup(token).isEmpty)
-    assert(registry.cachedSessionCount == 0)
+    // Nothing routes: the gRPC port has to answer "create a session first".
+    assert(registry.liveSession("connect_user").isEmpty)
+    // The engine survives its session, and the next session has to inherit its tag and credential
+    // -- a relaunch would tag a new pod, but a reused driver keeps the old tag and old token.
+    val binding = registry.lookup("connect_user")
+    assert(binding.map(_.engineTag).contains(sessionId))
+    assert(binding.map(_.engineToken).contains("engine-token"))
+    assert(binding.exists(!_.hasLiveSession))
+  }
+
+  test("forgetting a user drops the engine binding outright") {
+    val registry = newRegistry()
+    val sessionId = UUID.randomUUID().toString
+    registry.register("connect_user", sessionId, sessionId, "engine-token")
+
+    registry.forget("connect_user")
+
+    assert(registry.lookup("connect_user").isEmpty)
+    assert(registry.cachedBindingCount == 0)
   }
 
   test("unregistering an unrelated session is a silent no-op") {
@@ -101,11 +128,20 @@ class SparkConnectSessionRegistrySuite extends KyuubiFunSuite {
     registry.onSessionClosed(closed += _)
 
     val sessionId = UUID.randomUUID().toString
-    val token = SparkConnect.generateToken()
-    registry.register(token, sessionId, "connect_user", sessionId)
+    registry.register("connect_user", sessionId, sessionId, "engine-token")
     registry.unregister(sessionId)
 
     assert(closed.toSeq == Seq(sessionId))
-    assert(registry.lookup(token).isEmpty)
+    assert(registry.liveSession("connect_user").isEmpty)
+  }
+
+  test("a binding never prints its engine credential") {
+    val registry = newRegistry()
+    val sessionId = UUID.randomUUID().toString
+    val binding = registry.register("connect_user", sessionId, sessionId, "a-secret-token")
+
+    // The record reaches logs through ordinary string interpolation, so toString is the boundary.
+    assert(!binding.toString.contains("a-secret-token"))
+    assert(binding.toString.contains("connect_user"))
   }
 }

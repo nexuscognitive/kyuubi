@@ -476,38 +476,61 @@ class JDBCMetadataStoreSuite extends KyuubiFunSuite {
     assert(jdbcMetadataStore.getKubernetesMetaEngineInfo(tag) == null)
   }
 
-  test("spark connect session routing records") {
+  test("spark connect engine bindings are stored per user") {
     val sessionId = UUID.randomUUID().toString
     val sessionInfo = SparkConnectSessionInfo(
-      tokenId = "0" * 64,
-      sessionId = sessionId,
       userName = "connect_user",
+      sessionId = sessionId,
       engineTag = sessionId,
+      engineToken = "an-engine-credential",
       createTime = System.currentTimeMillis())
     jdbcMetadataStore.insertSparkConnectSession(sessionInfo)
 
-    val persisted = jdbcMetadataStore.getSparkConnectSessionByTokenId(sessionInfo.tokenId)
+    val persisted = jdbcMetadataStore.getSparkConnectSessionByUserName("connect_user")
     assert(persisted.contains(sessionInfo))
-    assert(jdbcMetadataStore.getSparkConnectSessionByTokenId("1" * 64).isEmpty)
+    assert(jdbcMetadataStore.getSparkConnectSessionByUserName("somebody_else").isEmpty)
 
-    jdbcMetadataStore.cleanupSparkConnectSessionBySessionId(sessionId)
-    assert(jdbcMetadataStore.getSparkConnectSessionByTokenId(sessionInfo.tokenId).isEmpty)
+    jdbcMetadataStore.cleanupSparkConnectSessionByUserName("connect_user")
+    assert(jdbcMetadataStore.getSparkConnectSessionByUserName("connect_user").isEmpty)
   }
 
-  test("spark connect session routing records are reclaimed by age") {
+  test("closing a session detaches it but leaves the engine binding") {
     val sessionId = UUID.randomUUID().toString
-    val tokenId = "2" * 64
-    jdbcMetadataStore.insertSparkConnectSession(SparkConnectSessionInfo(
-      tokenId = tokenId,
+    val sessionInfo = SparkConnectSessionInfo(
+      userName = "detaching_user",
       sessionId = sessionId,
-      userName = "connect_user",
       engineTag = sessionId,
+      engineToken = "an-engine-credential",
+      createTime = System.currentTimeMillis())
+    jdbcMetadataStore.insertSparkConnectSession(sessionInfo)
+
+    jdbcMetadataStore.detachSparkConnectSessionBySessionId(sessionId)
+
+    // The engine outlives its session, and the user's next session inherits its tag and
+    // credential -- a reused driver keeps both, and neither can be changed from outside it.
+    val detached = jdbcMetadataStore.getSparkConnectSessionByUserName("detaching_user")
+    assert(detached.exists(!_.hasLiveSession))
+    assert(detached.map(_.engineTag).contains(sessionId))
+    assert(detached.map(_.engineToken).contains("an-engine-credential"))
+
+    jdbcMetadataStore.cleanupSparkConnectSessionByUserName("detaching_user")
+  }
+
+  test("spark connect engine bindings are reclaimed by age") {
+    val sessionId = UUID.randomUUID().toString
+    jdbcMetadataStore.insertSparkConnectSession(SparkConnectSessionInfo(
+      userName = "ageing_user",
+      sessionId = sessionId,
+      engineTag = sessionId,
+      engineToken = "an-engine-credential",
       createTime = System.currentTimeMillis() - 60000))
 
-    assert(jdbcMetadataStore.cleanupSparkConnectSessionByAge(600000, Int.MaxValue) == 0)
-    assert(jdbcMetadataStore.getSparkConnectSessionByTokenId(tokenId).isDefined)
+    // Asserted on this row rather than on a row count: a detached binding lingers until this
+    // sweep reaches it, so any earlier suite sharing the store contributes rows of its own.
+    jdbcMetadataStore.cleanupSparkConnectSessionByAge(600000, Int.MaxValue)
+    assert(jdbcMetadataStore.getSparkConnectSessionByUserName("ageing_user").isDefined)
 
-    assert(jdbcMetadataStore.cleanupSparkConnectSessionByAge(1000, Int.MaxValue) == 1)
-    assert(jdbcMetadataStore.getSparkConnectSessionByTokenId(tokenId).isEmpty)
+    assert(jdbcMetadataStore.cleanupSparkConnectSessionByAge(1000, Int.MaxValue) >= 1)
+    assert(jdbcMetadataStore.getSparkConnectSessionByUserName("ageing_user").isEmpty)
   }
 }

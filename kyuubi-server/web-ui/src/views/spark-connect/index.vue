@@ -24,19 +24,18 @@
       <p class="page-sub">{{ $t('spark_connect.subtitle') }}</p>
     </header>
 
-    <SessionCredentials
-      v-if="createdSession"
-      :session="createdSession"
+    <SessionCard
+      v-if="session"
+      :session="session"
       @copy="copy"
-      @dismiss="forgetCreatedSession" />
-
-    <CreateSessionCard :creating="creating" @create="createSession" />
-
-    <SessionsTable
-      :sessions="sessions"
-      :loading="loadingSessions"
-      @refresh="loadSessions"
+      @refresh="loadSession"
       @close="closeSession" />
+
+    <CreateSessionCard
+      v-else
+      :creating="creating"
+      :loading="loadingSession"
+      @create="createSession" />
   </main>
 </template>
 
@@ -45,35 +44,26 @@
 </script>
 
 <script lang="ts" setup>
-  import { onMounted, onUnmounted, ref, shallowRef } from 'vue'
+  import { onMounted, ref, shallowRef } from 'vue'
   import { useI18n } from 'vue-i18n'
   import { ElMessage } from 'element-plus'
   import {
     closeSparkConnectSession,
     listSparkConnectSessions,
     openSparkConnectSession,
-    type SparkConnectSession,
     type SparkConnectSessionData
   } from '@/api/spark-connect'
   import CreateSessionCard from './components/CreateSessionCard.vue'
-  import SessionCredentials from './components/SessionCredentials.vue'
-  import SessionsTable from './components/SessionsTable.vue'
+  import SessionCard from './components/SessionCard.vue'
   import { copyToClipboard } from './utils/clipboard'
 
   const { t } = useI18n()
 
-  const sessions = ref<SparkConnectSessionData[]>([])
-  const loadingSessions = ref(false)
+  // A user has one Spark Connect session, so this is a session rather than a list. The server
+  // enforces that; the page only has to render whichever one comes back.
+  const session = shallowRef<SparkConnectSessionData | null>(null)
+  const loadingSession = ref(false)
   const creating = ref(false)
-
-  // The freshly minted session, token and all. It lives in a component ref and nowhere else: not
-  // in a store, not in localStorage or sessionStorage, and never logged. Cleared when the user
-  // dismisses the panel and when the page unmounts, so navigating away drops the credential.
-  const createdSession = shallowRef<SparkConnectSession | null>(null)
-
-  function forgetCreatedSession() {
-    createdSession.value = null
-  }
 
   function errorMessage(error: unknown): string {
     return error instanceof Error && error.message
@@ -81,47 +71,48 @@
       : t('spark_connect.unknown_error')
   }
 
-  async function loadSessions() {
-    loadingSessions.value = true
+  async function loadSession() {
+    loadingSession.value = true
     try {
       const result = await listSparkConnectSessions()
-      sessions.value = Array.isArray(result) ? result : []
+      session.value =
+        Array.isArray(result) && result.length > 0 ? result[0] : null
     } catch (error) {
       ElMessage.error(
         t('spark_connect.list_failed', { message: errorMessage(error) })
       )
     } finally {
-      loadingSessions.value = false
+      loadingSession.value = false
     }
   }
 
   async function createSession(configs: Record<string, string>) {
     creating.value = true
     try {
-      createdSession.value = await openSparkConnectSession(configs)
+      await openSparkConnectSession(configs)
       ElMessage.success(t('spark_connect.create_succeeded'))
-      await loadSessions()
     } catch (error) {
       ElMessage.error(
         t('spark_connect.create_failed', { message: errorMessage(error) })
       )
     } finally {
       creating.value = false
+      // Reloaded rather than filled in from the create response, because that response carries no
+      // state or engine: those arrive once the engine reports in.
+      await loadSession()
     }
   }
 
   async function closeSession(sessionId: string) {
     try {
       await closeSparkConnectSession(sessionId)
-      // Closing the session the panel is showing makes its token dead; stop displaying it.
-      if (createdSession.value?.sessionId === sessionId) forgetCreatedSession()
       ElMessage.success(t('spark_connect.close_succeeded'))
     } catch (error) {
       ElMessage.error(
         t('spark_connect.close_failed', { message: errorMessage(error) })
       )
     } finally {
-      await loadSessions()
+      await loadSession()
     }
   }
 
@@ -133,8 +124,7 @@
     }
   }
 
-  onMounted(loadSessions)
-  onUnmounted(forgetCreatedSession)
+  onMounted(loadSession)
 </script>
 
 <style lang="scss" scoped>

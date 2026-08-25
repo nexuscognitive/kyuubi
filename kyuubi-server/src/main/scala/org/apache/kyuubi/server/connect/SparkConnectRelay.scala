@@ -18,11 +18,12 @@
 package org.apache.kyuubi.server.connect
 
 import java.io.{ByteArrayInputStream, ByteArrayOutputStream, InputStream}
+import java.net.InetSocketAddress
 import java.util.concurrent.atomic.AtomicBoolean
 
 import scala.util.control.NonFatal
 
-import io.grpc.{CallOptions, ClientCall, HandlerRegistry, Metadata, MethodDescriptor, ServerCall, ServerCallHandler, ServerMethodDefinition, Status}
+import io.grpc.{CallOptions, ClientCall, Grpc, HandlerRegistry, Metadata, MethodDescriptor, ServerCall, ServerCallHandler, ServerMethodDefinition, Status}
 
 import org.apache.kyuubi.Logging
 import org.apache.kyuubi.server.metadata.api.SparkConnectSessionInfo
@@ -86,10 +87,16 @@ private[kyuubi] class SparkConnectHandlerRegistry(relay: SparkConnectRelay)
 }
 
 /**
- * Relays one Spark Connect RPC to the engine that owns the caller's token, in both directions,
- * without interpreting the payload.
+ * Relays one Spark Connect RPC to the engine that serves the authenticated caller, in both
+ * directions, without interpreting the payload.
+ *
+ * The caller presents the platform credential they already hold; there is no Spark Connect token
+ * to obtain, and no token to lose. That credential is resolved to a user through Kyuubi's own
+ * authentication chain and then stops here -- the upstream hop carries Kyuubi's per-engine
+ * credential instead, so nothing the caller sent reaches a JVM they control.
  */
 private[kyuubi] class SparkConnectRelay(
+    authenticator: SparkConnectAuthenticator,
     sessionRegistry: SparkConnectSessionRegistry,
     engineLocator: SparkConnectEngineLocator,
     channelPool: SparkConnectEngineChannelPool)
@@ -103,25 +110,52 @@ private[kyuubi] class SparkConnectRelay(
     val method = serverCall.getMethodDescriptor.getFullMethodName
     SparkConnect.bearerToken(headers) match {
       case None =>
-        debug(s"Rejecting $method: no bearer token")
-        reject(serverCall, Status.UNAUTHENTICATED.withDescription(MISSING_TOKEN_MESSAGE))
-      case Some(token) =>
-        sessionRegistry.lookup(token) match {
+        debug(s"Rejecting $method: no bearer credential")
+        reject(serverCall, Status.UNAUTHENTICATED.withDescription(MISSING_CREDENTIAL_MESSAGE))
+      case Some(credential) =>
+        authenticator.authenticate(credential, clientIpAddress(serverCall)) match {
           case None =>
-            debug(s"Rejecting $method: the bearer token matches no Spark Connect session")
-            reject(serverCall, Status.UNAUTHENTICATED.withDescription(UNKNOWN_TOKEN_MESSAGE))
-          case Some(sessionInfo) =>
-            engineLocator.locate(sessionInfo.engineTag) match {
-              case None =>
-                debug(s"Deferring $method for session ${sessionInfo.sessionId}:" +
-                  s" engine ${sessionInfo.engineTag} is not serving yet")
-                reject(serverCall, Status.UNAVAILABLE.withDescription(ENGINE_NOT_READY_MESSAGE))
-              case Some(address) =>
-                relay(serverCall, headers, token, sessionInfo, address)
-            }
+            debug(s"Rejecting $method: the bearer credential did not resolve to a user")
+            reject(
+              serverCall,
+              Status.UNAUTHENTICATED.withDescription(UNRESOLVED_CREDENTIAL_MESSAGE))
+          case Some(userName) => route(serverCall, headers, userName, method)
         }
     }
   }
+
+  private def route(
+      serverCall: ServerCall[Array[Byte], Array[Byte]],
+      headers: Metadata,
+      userName: String,
+      method: String): ServerCall.Listener[Array[Byte]] =
+    sessionRegistry.liveSession(userName) match {
+      case None =>
+        debug(s"Rejecting $method: $userName has no live Spark Connect session")
+        // Not UNAVAILABLE: that is what a Spark Connect client retries with backoff for minutes,
+        // and no amount of retrying creates a session. FAILED_PRECONDITION surfaces the message
+        // to the user on the first call instead.
+        reject(serverCall, Status.FAILED_PRECONDITION.withDescription(NO_SESSION_MESSAGE))
+      case Some(sessionInfo) =>
+        engineLocator.locate(sessionInfo.engineTag) match {
+          case None =>
+            debug(s"Deferring $method for session ${sessionInfo.sessionId}:" +
+              s" engine ${sessionInfo.engineTag} is not serving yet")
+            reject(serverCall, Status.UNAVAILABLE.withDescription(ENGINE_NOT_READY_MESSAGE))
+          case Some(address) => relay(serverCall, headers, sessionInfo, address)
+        }
+    }
+
+  /**
+   * The caller's address, for the authentication provider that wants to see it.
+   *
+   * Taken from the transport rather than from a forwarded header: a header is the caller's to
+   * write, and an authorisation decision must not turn on something they choose.
+   */
+  private def clientIpAddress(serverCall: ServerCall[Array[Byte], Array[Byte]]): Option[String] =
+    Option(serverCall.getAttributes.get(Grpc.TRANSPORT_ATTR_REMOTE_ADDR)).collect {
+      case inetAddress: InetSocketAddress => inetAddress.getAddress
+    }.flatMap(Option(_)).map(_.getHostAddress)
 
   /**
    * Answer with a trailers-only response: HTTP 200, `content-type: application/grpc`, and the
@@ -141,7 +175,6 @@ private[kyuubi] class SparkConnectRelay(
   private def relay(
       serverCall: ServerCall[Array[Byte], Array[Byte]],
       headers: Metadata,
-      token: String,
       sessionInfo: SparkConnectSessionInfo,
       address: SparkConnectEngineAddress): ServerCall.Listener[Array[Byte]] = {
     val clientCall =
@@ -154,7 +187,9 @@ private[kyuubi] class SparkConnectRelay(
           return reject(serverCall, Status.UNAVAILABLE.withDescription(ENGINE_NOT_READY_MESSAGE))
       }
     val relayState = new RelayState(serverCall, clientCall)
-    clientCall.start(relayState.clientListener, SparkConnect.upstreamHeaders(headers, token))
+    // The engine's own credential, not the caller's: the caller's terminates at this hop.
+    val upstreamHeaders = SparkConnect.upstreamHeaders(headers, sessionInfo.engineToken)
+    clientCall.start(relayState.clientListener, upstreamHeaders)
     relayState.start()
     relayState.serverListener
   }
@@ -162,10 +197,14 @@ private[kyuubi] class SparkConnectRelay(
 
 private[connect] object SparkConnectRelay {
 
-  private val MISSING_TOKEN_MESSAGE =
-    "Spark Connect requires a bearer token; create a session first and pass its token"
-  private val UNKNOWN_TOKEN_MESSAGE =
-    "The bearer token does not identify a Spark Connect session"
+  private val MISSING_CREDENTIAL_MESSAGE =
+    "Spark Connect requires a bearer credential; pass the same credential you use for the" +
+      " Kyuubi REST API"
+  private val UNRESOLVED_CREDENTIAL_MESSAGE =
+    "The bearer credential was not accepted"
+  private[connect] val NO_SESSION_MESSAGE =
+    "You have no Spark Connect session. Create one with POST /api/v1/spark-connect/sessions, or" +
+      " from the Spark Connect page of the Kyuubi web UI, and connect again once it is running."
   private val ENGINE_NOT_READY_MESSAGE =
     "The Spark engine for this session is still starting; retrying shortly will succeed"
 

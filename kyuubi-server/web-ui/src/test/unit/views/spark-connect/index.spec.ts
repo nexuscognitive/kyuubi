@@ -18,61 +18,91 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
-import SessionCredentials from '@/views/spark-connect/components/SessionCredentials.vue'
+import SessionCard from '@/views/spark-connect/components/SessionCard.vue'
 import { createI18n } from '@/test/unit/utils'
 import en_US from '@/locales/en_US'
 import zh_CN from '@/locales/zh_CN'
 
 const SESSION = {
   sessionId: 'a-session-id',
-  token: 'a-secret-token',
+  user: 'alice',
+  createTime: 1700000000000,
+  state: 'RUNNING',
+  engineId: 'spark-application-1',
+  engineUrl: 'http://engine:4040',
   connectUrl: 'sc://kyuubi.example.com:15002'
 }
 
-function mountCredentials() {
-  return mount(SessionCredentials, {
-    props: { session: SESSION },
+function mountCard(overrides: Partial<typeof SESSION> = {}) {
+  return mount(SessionCard, {
+    props: { session: { ...SESSION, ...overrides } },
     global: { plugins: [createI18n(), ElementPlus] }
   })
 }
 
-describe('SessionCredentials', () => {
+describe('SessionCard', () => {
   beforeEach(() => {
     localStorage.clear()
     sessionStorage.clear()
   })
 
-  it('shows the token together with the warning that it is shown once', () => {
-    const text = mountCredentials().text()
+  it('shows the state, the session and the engine behind it', () => {
+    const text = mountCard().text()
 
-    expect(text).toContain(SESSION.token)
-    expect(text).toContain(en_US.spark_connect.token_warning_title)
+    expect(text).toContain('RUNNING')
+    expect(text).toContain(SESSION.sessionId)
+    expect(text).toContain(SESSION.engineId)
   })
 
-  it('renders the ready-to-paste snippet', () => {
-    expect(mountCredentials().text()).toContain(
-      `sc://kyuubi.example.com:15002/;use_ssl=true;token=${SESSION.token}`
+  it('says an engine is still starting rather than leaving PENDING bare', () => {
+    expect(mountCard({ state: 'PENDING' }).text()).toContain(
+      en_US.spark_connect.pending_note
     )
+  })
+
+  it('renders a snippet that reads the credential from the environment', () => {
+    const text = mountCard().text()
+
+    expect(text).toContain('os.environ["KYUUBI_TOKEN"]')
+    expect(text).toContain(
+      'f"sc://kyuubi.example.com:15002/;use_ssl=true;token={token}"'
+    )
+  })
+
+  it('renders nothing that could be mistaken for a token the server issued', () => {
+    const text = mountCard().text()
+
+    // A plausible-looking string here is worse than none: someone pastes it and then has to work
+    // out why it was rejected. The only credential mentioned is the user's own.
+    expect(text).toContain(en_US.spark_connect.credential_note)
+    expect(text).not.toMatch(/token=[A-Za-z0-9_-]{20,}/)
   })
 
   it('shows the advertised connect URL verbatim', () => {
     // A wrong advertised host has to be visible, so the raw value is rendered rather than fixed up.
-    expect(mountCredentials().text()).toContain(SESSION.connectUrl)
+    expect(mountCard().text()).toContain(SESSION.connectUrl)
   })
 
-  it('never writes the token to web storage', () => {
-    mountCredentials()
+  it('emits a close request rather than closing anything itself', async () => {
+    const wrapper = mountCard()
+    const closeButton = wrapper
+      .findAll('button')
+      .find((button) => button.text() === en_US.operation.close)
 
-    expect(JSON.stringify(localStorage)).not.toContain(SESSION.token)
-    expect(JSON.stringify(sessionStorage)).not.toContain(SESSION.token)
+    await closeButton?.trigger('click')
+    // The popconfirm sits between the button and the emit, so the request is confirmed first.
+    expect(wrapper.emitted('close')).toBeFalsy()
   })
 
-  it('emits the token for copying rather than storing it anywhere', async () => {
-    const wrapper = mountCredentials()
-    const copyButtons = wrapper.findAll('button')
-    await copyButtons[copyButtons.length - 1].trigger('click')
+  it('emits the connect URL for copying', async () => {
+    const wrapper = mountCard()
+    const copyButtons = wrapper
+      .findAll('button')
+      .filter((button) => button.text() === en_US.spark_connect.copy)
 
-    expect(wrapper.emitted('copy')).toBeTruthy()
+    await copyButtons[0].trigger('click')
+
+    expect(wrapper.emitted('copy')?.[0]).toEqual([SESSION.connectUrl])
   })
 })
 
@@ -80,6 +110,13 @@ describe('spark_connect locales', () => {
   it('carries every key in both locales the repo ships', () => {
     expect(Object.keys(zh_CN.spark_connect).sort()).toEqual(
       Object.keys(en_US.spark_connect).sort()
+    )
+  })
+
+  it('no longer offers a token to display', () => {
+    expect(Object.keys(en_US.spark_connect)).not.toContain('token')
+    expect(Object.keys(en_US.spark_connect)).not.toContain(
+      'token_warning_title'
     )
   })
 })

@@ -191,8 +191,9 @@ export default {
     eyebrow: 'Nexus One → SparkEngine',
     title: 'Spark Connect',
     subtitle:
-      'Create a Spark Connect session and point a Spark client at this gateway. Each session gets its own engine and its own bearer token.',
+      'Point a Spark client at this gateway using the credential you already have. You get one session, with an engine of your own behind it.',
     new_session: 'New session',
+    no_session: 'You have no Spark Connect session yet.',
     conf_hint:
       'Optional Spark configuration for this session. Keys that only Kyuubi may set are ignored by the server.',
     conf_key_placeholder: 'spark.sql.shuffle.partitions',
@@ -202,20 +203,16 @@ export default {
     create_session: 'Create session',
     create_note:
       'The engine takes a minute or two to start. The client retries until it is ready.',
-    credentials: 'Connection details',
-    dismiss: 'Dismiss',
-    token_warning_title: 'Copy the token now — it is shown only once',
-    token_warning_body:
-      'Kyuubi stores only a digest of this token and cannot show it again. If you lose it, close the session and create a new one.',
+    your_session: 'Your session',
+    pending_note: 'The engine is still starting.',
     connect_url: 'Connect URL',
     connect_url_note:
       'This is the address the server advertises. If it is not reachable from where you run Spark, ask your administrator to set kyuubi.frontend.advertised.host.',
-    token: 'Token',
+    credential_note:
+      'Authenticate with the same credential you use for the Kyuubi REST API. Kyuubi issues no token of its own for Spark Connect.',
     copy: 'Copy',
     snippet: 'PySpark',
     copy_snippet: 'Copy snippet',
-    your_sessions: 'Your sessions',
-    no_sessions: 'You have no Spark Connect sessions yet',
     close_confirm: 'Close this session and stop its engine?',
     copied: 'Copied',
     copy_failed: 'Copy failed — select the text and copy it manually',
@@ -223,7 +220,7 @@ export default {
     create_failed: 'Failed to create session: {message}',
     close_succeeded: 'Session closed',
     close_failed: 'Failed to close session: {message}',
-    list_failed: 'Failed to load sessions: {message}',
+    list_failed: 'Failed to load your session: {message}',
     unknown_error: 'Unknown error'
   },
   message: {

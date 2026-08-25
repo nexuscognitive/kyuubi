@@ -56,12 +56,12 @@ class SparkConnectEngineChannelPoolSuite extends KyuubiFunSuite {
 
   private def sessionInfo(
       sessionId: String = UUID.randomUUID().toString,
-      token: String = SparkConnect.generateToken()): SparkConnectSessionInfo =
+      engineToken: String = SparkConnect.generateToken()): SparkConnectSessionInfo =
     SparkConnectSessionInfo(
-      tokenId = SparkConnect.tokenId(token),
-      sessionId = sessionId,
       userName = "connect_user",
+      sessionId = sessionId,
       engineTag = sessionId,
+      engineToken = engineToken,
       createTime = System.currentTimeMillis())
 
   test("one session reuses a single connection across calls") {
@@ -112,14 +112,14 @@ class SparkConnectEngineChannelPoolSuite extends KyuubiFunSuite {
     }
   }
 
-  test("a pooled connection is discarded when the presented token no longer matches") {
+  test("a pooled connection is discarded when the engine credential no longer matches") {
     val pool = newPool()
     try {
       val sessionId = UUID.randomUUID().toString
       val address = SparkConnectEngineAddress("10.0.0.1", 15002)
       val original = pool.acquire(sessionInfo(sessionId), address)
-      // Same session id, different token. Whatever produced that, the connection authenticated as
-      // the first token must not carry traffic authorised by the second.
+      // Same session id, different engine credential. Whatever produced that, the connection
+      // authenticated to the first engine must not carry traffic meant for the second.
       val replacement = pool.acquire(sessionInfo(sessionId), address)
 
       assert(original ne replacement)
