@@ -1480,13 +1480,15 @@ object KyuubiConf {
     buildConf("kyuubi.frontend.spark.connect.ssl.enabled")
       .audience(SERVER)
       .immutable
-      .doc("Whether to enable TLS on the Spark Connect frontend service. Spark Connect clients " +
-        "upgrade to a secure channel as soon as a bearer token is configured for a non-loopback " +
-        "host, so a plaintext listener is unusable in practice and the frontend refuses to " +
-        "start without TLS.")
+      .doc("Whether to enable TLS on the Spark Connect frontend service. It is on by default " +
+        "because a Spark Connect client upgrades to a secure channel of its own accord as soon " +
+        "as a bearer token is configured for a non-loopback host, so a client that dials Kyuubi " +
+        "directly can only ever talk to a TLS listener. Set it to <code>false</code> when a " +
+        "proxy in front of Kyuubi terminates TLS and forwards plaintext gRPC, as an ingress " +
+        "controller does; the frontend then serves plaintext and warns about it at startup.")
       .version("1.12.0")
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val FRONTEND_SPARK_CONNECT_SSL_KEYSTORE_PATH: OptionalConfigEntry[String] =
     buildConf("kyuubi.frontend.spark.connect.ssl.keystore.path")

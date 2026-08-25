@@ -28,7 +28,7 @@ import io.grpc.Server
 import io.grpc.netty.{GrpcSslContexts, NettyServerBuilder}
 import io.netty.handler.ssl.{SslContext, SslContextBuilder}
 
-import org.apache.kyuubi.KyuubiException
+import org.apache.kyuubi.{KyuubiException, Logging}
 import org.apache.kyuubi.config.KyuubiConf
 import org.apache.kyuubi.config.KyuubiConf._
 import org.apache.kyuubi.server.connect._
@@ -88,9 +88,8 @@ class KyuubiSparkConnectFrontendService(override val serverable: Serverable)
         conf.get(FRONTEND_SPARK_CONNECT_ENGINE_PORT)),
       channelPool)
 
-    grpcServer = NettyServerBuilder.forAddress(new InetSocketAddress(host, port))
-      .maxInboundMessageSize(conf.get(FRONTEND_SPARK_CONNECT_MAX_MESSAGE_SIZE))
-      .sslContext(KyuubiSparkConnectFrontendService.buildSslContext(conf))
+    grpcServer = KyuubiSparkConnectFrontendService
+      .serverBuilder(conf, new InetSocketAddress(host, port))
       .fallbackHandlerRegistry(new SparkConnectHandlerRegistry(relay))
       .build()
 
@@ -136,28 +135,35 @@ class KyuubiSparkConnectFrontendService(override val serverable: Serverable)
   override val discoveryService: Option[Service] = None
 }
 
-object KyuubiSparkConnectFrontendService {
+object KyuubiSparkConnectFrontendService extends Logging {
 
   private val SHUTDOWN_TIMEOUT_SECONDS = 5L
 
   /**
-   * Reject a configuration that would produce a listener no client can talk to.
+   * What an operator sees when they turn TLS off.
    *
-   * Spark Connect's Python client silently upgrades to `ssl_channel_credentials()` as soon as a
-   * token is configured for anything but a loopback host, and a token is always configured here.
-   * A plaintext port would therefore answer a TLS ClientHello with gRPC frames, and the user
-   * would see a bare handshake failure with nothing pointing at the real cause -- so TLS is
-   * required rather than merely recommended, and the failure is raised at startup where an
-   * operator will see it.
+   * Whether a plaintext listener is fine or catastrophic depends entirely on what sits in front
+   * of it, which Kyuubi cannot see, so the warning has to name both cases -- and in particular
+   * the direct-client one, because its symptom is a bare TLS handshake failure with nothing in
+   * it pointing back at this setting.
+   */
+  private[kyuubi] val PLAINTEXT_LISTENER_WARNING: String =
+    s"${FRONTEND_SPARK_CONNECT_SSL_ENABLED.key} is false: the Spark Connect frontend is serving" +
+      " PLAINTEXT gRPC. Bearer tokens, queries and results all cross this port unencrypted, so" +
+      " it is only safe behind a proxy that terminates TLS -- a Kubernetes ingress, say -- with" +
+      " the hop from that proxy to this port confined to a trusted network. Spark Connect" +
+      " clients that dial this port DIRECTLY will fail their handshake rather than fall back to" +
+      " plaintext: the client upgrades to a secure channel on its own as soon as a bearer token" +
+      " is set for a non-loopback host, and this port answers a TLS ClientHello with gRPC" +
+      s" frames. To serve those clients, set ${FRONTEND_SPARK_CONNECT_SSL_ENABLED.key}=true and" +
+      s" point ${FRONTEND_SPARK_CONNECT_SSL_KEYSTORE_PATH.key} at a keystore."
+
+  /**
+   * Reject a configuration that would produce a listener no client can talk to.
    */
   private[kyuubi] def validateConf(conf: KyuubiConf): Unit = {
-    if (!conf.get(FRONTEND_SPARK_CONNECT_SSL_ENABLED)) {
-      throw new KyuubiException(
-        s"${FRONTEND_SPARK_CONNECT_SSL_ENABLED.key} must be true when the Spark Connect frontend" +
-          " is enabled: Spark Connect clients negotiate TLS whenever a bearer token is set for a" +
-          " non-loopback host, so a plaintext listener is unusable.")
-    }
-    if (conf.get(FRONTEND_SPARK_CONNECT_SSL_KEYSTORE_PATH).isEmpty) {
+    if (conf.get(FRONTEND_SPARK_CONNECT_SSL_ENABLED) &&
+      conf.get(FRONTEND_SPARK_CONNECT_SSL_KEYSTORE_PATH).isEmpty) {
       throw new KyuubiException(
         s"${FRONTEND_SPARK_CONNECT_SSL_KEYSTORE_PATH.key} is required when" +
           s" ${FRONTEND_SPARK_CONNECT_SSL_ENABLED.key} is true.")
@@ -166,6 +172,28 @@ object KyuubiSparkConnectFrontendService {
       throw new KyuubiException(
         "The Spark Connect frontend requires the REST frontend, which is where Spark Connect" +
           " sessions are created; add REST to " + FRONTEND_PROTOCOLS.key + ".")
+    }
+  }
+
+  /**
+   * The gRPC transport for the frontend, with TLS unless the operator has opted out.
+   *
+   * TLS is the default because a client that dials Kyuubi directly can use nothing else. It is
+   * opt-out rather than mandatory because the common Kubernetes deployment puts an ingress in
+   * front that terminates TLS with a real certificate and speaks plaintext gRPC to the pod: the
+   * client never sees this hop, and nginx-ingress does not verify backend certificates, so
+   * requiring one here would only mean minting a self-signed keystore that nothing validates.
+   */
+  private[kyuubi] def serverBuilder(
+      conf: KyuubiConf,
+      address: InetSocketAddress): NettyServerBuilder = {
+    val builder = NettyServerBuilder.forAddress(address)
+      .maxInboundMessageSize(conf.get(FRONTEND_SPARK_CONNECT_MAX_MESSAGE_SIZE))
+    if (conf.get(FRONTEND_SPARK_CONNECT_SSL_ENABLED)) {
+      builder.sslContext(buildSslContext(conf))
+    } else {
+      warn(PLAINTEXT_LISTENER_WARNING)
+      builder
     }
   }
 
