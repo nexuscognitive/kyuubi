@@ -285,7 +285,7 @@ private[v1] class SparkConnectResource extends ApiRequestContext with Logging {
     val engineUrl = event.map(_.engineUrl).getOrElse("")
     kubernetesOperation match {
       case None =>
-        unavailableDriverInfo(sessionId, NOT_KUBERNETES_MESSAGE, engineId, engineUrl)
+        unavailableDriverInfo(sessionId, NO_KUBERNETES_CLIENT_MESSAGE, engineId, engineUrl)
       case Some(operation) =>
         operation.getDriverPodDetailByTag(engineTag(session)) match {
           case None =>
@@ -356,7 +356,7 @@ private[v1] class SparkConnectResource extends ApiRequestContext with Logging {
       @QueryParam("lines") @DefaultValue("100") lines: Int): OperationLog = {
     val session = resolveOwnSession(sessionId)
     val logLines = kubernetesOperation match {
-      case None => Seq(NOT_KUBERNETES_MESSAGE)
+      case None => Seq(NO_KUBERNETES_CLIENT_MESSAGE)
       case Some(operation) => operation.getDriverLogByTag(engineTag(session), lines)
     }
     new OperationLog(logLines.asJava, logLines.size)
@@ -377,7 +377,7 @@ private[v1] class SparkConnectResource extends ApiRequestContext with Logging {
     val session = resolveOwnSession(sessionId)
     kubernetesOperation match {
       case None =>
-        unavailableDriverEvents(sessionId, NOT_KUBERNETES_MESSAGE)
+        unavailableDriverEvents(sessionId, NO_KUBERNETES_CLIENT_MESSAGE)
       case Some(operation) =>
         operation.getDriverPodEventDetailsByTag(engineTag(session), size) match {
           case None =>
@@ -415,6 +415,7 @@ private[v1] class SparkConnectResource extends ApiRequestContext with Logging {
   /** The Kubernetes integration, or [[None]] on a deployment that launches engines elsewhere. */
   private def kubernetesOperation: Option[KubernetesApplicationOperation] =
     sessionManager.applicationManager.getKubernetesApplicationOperation
+      .filter(_.hasKubernetesClient)
 
   /**
    * The Spark Connect URL for this instance's gRPC port.
@@ -453,8 +454,9 @@ private[v1] object SparkConnectResource {
    * wrong signal while an engine is still coming up -- the state a user is most likely to be
    * looking at these endpoints in.
    */
-  private[v1] val NOT_KUBERNETES_MESSAGE =
-    "Driver diagnostics are only available when engines run on Kubernetes."
+  private[v1] val NO_KUBERNETES_CLIENT_MESSAGE =
+    "Driver diagnostics are unavailable: this Kyuubi instance has no Kubernetes client, so there " +
+      "is no driver pod for it to inspect."
 
   private[v1] val NO_DRIVER_POD_MESSAGE =
     "No driver pod for this session yet. It may still be starting, or it may have been cleaned " +

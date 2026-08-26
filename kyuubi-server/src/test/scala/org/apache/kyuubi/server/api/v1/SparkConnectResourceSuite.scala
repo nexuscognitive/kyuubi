@@ -17,15 +17,20 @@
 
 package org.apache.kyuubi.server.api.v1
 
-import java.util.Collections
+import java.util.{Collections, UUID}
 import javax.ws.rs.client.Entity
-import javax.ws.rs.core.{GenericType, MediaType}
+import javax.ws.rs.core.{GenericType, MediaType, Response}
+
+import scala.collection.JavaConverters._
 
 import org.apache.kyuubi.{KyuubiFunSuite, RestFrontendTestHelper}
-import org.apache.kyuubi.client.api.v1.dto.{SessionOpenRequest, SparkConnectSession}
+import org.apache.kyuubi.client.api.v1.dto
+import org.apache.kyuubi.client.api.v1.dto.{OperationLog, SessionOpenRequest, SparkConnectDriverEvents, SparkConnectDriverInfo, SparkConnectSession}
 import org.apache.kyuubi.client.api.v1.dto.SparkConnectSessionData
 import org.apache.kyuubi.config.KyuubiConf._
+import org.apache.kyuubi.engine.spark.SparkProcessBuilder
 import org.apache.kyuubi.server.http.util.HttpAuthUtils.{basicAuthorizationHeader, AUTHORIZATION_HEADER}
+import org.apache.kyuubi.session.SessionHandle
 
 class SparkConnectResourceSuite extends KyuubiFunSuite with RestFrontendTestHelper {
 
@@ -42,13 +47,22 @@ class SparkConnectResourceSuite extends KyuubiFunSuite with RestFrontendTestHelp
     assert(conf(ENGINE_SHARE_LEVEL_SUBDOMAIN.key) == SparkConnectResource.ENGINE_SUBDOMAIN)
   }
 
-  test("a client cannot declare its own engine credential or engine sharing") {
+  test("a Spark Connect engine is always launched in cluster mode") {
+    // In client mode the driver JVM runs inside the Kyuubi pod, where the engine's Spark Connect
+    // server cannot bind the port the gateway's own frontend already holds -- and where there is
+    // no driver pod for the engine locator to find.
+    val conf = SparkConnectResource.serverControlledConf("an-engine-credential")
+    assert(conf(SparkProcessBuilder.DEPLOY_MODE_KEY) == SparkConnectResource.DEPLOY_MODE_CLUSTER)
+  }
+
+  test("a client cannot declare its own engine credential, engine sharing or deploy mode") {
     val requested = Map(
       SESSION_SPARK_CONNECT_TOKEN.key -> "a-token-i-chose",
       SESSION_SPARK_CONNECT_ENABLED.key -> "true",
       ENGINE_SHARE_LEVEL.key -> "SERVER",
       ENGINE_SHARE_LEVEL_SUBDOMAIN.key -> "somebody-elses-engine",
       ENGINE_TYPE.key -> "FLINK_SQL",
+      SparkProcessBuilder.DEPLOY_MODE_KEY -> "client",
       "spark.sql.shuffle.partitions" -> "42")
 
     val accepted = SparkConnectResource.clientControlledConf(requested)
@@ -58,6 +72,7 @@ class SparkConnectResourceSuite extends KyuubiFunSuite with RestFrontendTestHelp
     assert(!accepted.contains(ENGINE_SHARE_LEVEL.key))
     assert(!accepted.contains(ENGINE_SHARE_LEVEL_SUBDOMAIN.key))
     assert(!accepted.contains(ENGINE_TYPE.key))
+    assert(!accepted.contains(SparkProcessBuilder.DEPLOY_MODE_KEY))
     // Ordinary Spark conf is still the caller's to set.
     assert(accepted("spark.sql.shuffle.partitions") == "42")
   }
@@ -65,12 +80,29 @@ class SparkConnectResourceSuite extends KyuubiFunSuite with RestFrontendTestHelp
   test("server controlled conf wins over anything the client sent") {
     val requested = Map(
       ENGINE_SHARE_LEVEL.key -> "SERVER",
-      ENGINE_SHARE_LEVEL_SUBDOMAIN.key -> "somebody-elses-engine")
+      ENGINE_SHARE_LEVEL_SUBDOMAIN.key -> "somebody-elses-engine",
+      SparkProcessBuilder.DEPLOY_MODE_KEY -> "client")
     val effective =
       SparkConnectResource.serverControlledConf("an-engine-credential") ++
         SparkConnectResource.clientControlledConf(requested)
     assert(effective(ENGINE_SHARE_LEVEL.key) == "USER")
     assert(effective(ENGINE_SHARE_LEVEL_SUBDOMAIN.key) == SparkConnectResource.ENGINE_SUBDOMAIN)
+    assert(effective(SparkProcessBuilder.DEPLOY_MODE_KEY) ==
+      SparkConnectResource.DEPLOY_MODE_CLUSTER)
+  }
+
+  test("cluster mode is pinned on Spark Connect sessions and nowhere else") {
+    val sparkConnect = openSparkConnectSession("alice")
+    val ordinary = openOrdinarySession("alice")
+    try {
+      assert(sessionConf(sparkConnect.getSessionId)(SparkProcessBuilder.DEPLOY_MODE_KEY) ==
+        SparkConnectResource.DEPLOY_MODE_CLUSTER)
+      // A Thrift or ordinary REST session keeps whatever deploy mode the deployment configures.
+      assert(!sessionConf(ordinary).contains(SparkProcessBuilder.DEPLOY_MODE_KEY))
+    } finally {
+      closeSparkConnectSession("alice", sparkConnect.getSessionId)
+      closeOrdinarySession(ordinary)
+    }
   }
 
   test("the session DTO has no token to leak") {
@@ -176,6 +208,109 @@ class SparkConnectResourceSuite extends KyuubiFunSuite with RestFrontendTestHelp
     } finally {
       closeSparkConnectSession("alice", alice.getSessionId)
     }
+  }
+
+  test("the submit log endpoint serves the caller their own session's log") {
+    val alice = openSparkConnectSession("alice")
+    try {
+      val response = driverRequest("alice", alice.getSessionId, "log")
+      assert(200 == response.getStatus)
+      val log = response.readEntity(classOf[OperationLog])
+      // Whether the launch produced any lines yet depends on timing, but the endpoint must
+      // answer with a well-formed log rather than a 500 either way.
+      assert(log.getRowCount == log.getLogRowSet.size)
+    } finally {
+      closeSparkConnectSession("alice", alice.getSessionId)
+    }
+  }
+
+  test("the driver endpoints degrade honestly with no Kubernetes client") {
+    val alice = openSparkConnectSession("alice")
+    try {
+      val driver = driverRequest("alice", alice.getSessionId, "driver")
+        .readEntity(classOf[SparkConnectDriverInfo])
+      assert(!driver.getAvailable)
+      assert(driver.getMessage == SparkConnectResource.NO_KUBERNETES_CLIENT_MESSAGE)
+      // Not an empty object that reads like a healthy driver with no containers.
+      assert(driver.getPodName == null)
+      assert(driver.getContainers.isEmpty)
+      assert(driver.getSessionId == alice.getSessionId)
+
+      val events = driverRequest("alice", alice.getSessionId, "driver/events")
+        .readEntity(classOf[SparkConnectDriverEvents])
+      assert(!events.getAvailable)
+      assert(events.getMessage == SparkConnectResource.NO_KUBERNETES_CLIENT_MESSAGE)
+      assert(events.getEvents.isEmpty)
+
+      val driverLog = driverRequest("alice", alice.getSessionId, "driver/log")
+        .readEntity(classOf[OperationLog])
+      assert(driverLog.getLogRowSet.asScala ==
+        Seq(SparkConnectResource.NO_KUBERNETES_CLIENT_MESSAGE))
+    } finally {
+      closeSparkConnectSession("alice", alice.getSessionId)
+    }
+  }
+
+  test("nobody can read another user's driver diagnostics") {
+    val alice = openSparkConnectSession("alice")
+    try {
+      Seq("log", "driver", "driver/log", "driver/events").foreach { path =>
+        val response = driverRequest("bob", alice.getSessionId, path)
+        assert(
+          403 == response.getStatus,
+          s"bob must not reach alice's $path")
+      }
+    } finally {
+      closeSparkConnectSession("alice", alice.getSessionId)
+    }
+  }
+
+  test("the driver endpoints reject a session id that is not the caller's to name") {
+    val alice = openSparkConnectSession("alice")
+    try {
+      assert(400 == driverRequest("alice", "not-a-uuid", "driver").getStatus)
+      assert(404 ==
+        driverRequest("alice", UUID.randomUUID().toString, "driver").getStatus)
+      // An ordinary session of the caller's own is still not a Spark Connect one.
+      val ordinary = openOrdinarySession("alice")
+      try {
+        assert(404 == driverRequest("alice", ordinary, "driver").getStatus)
+      } finally {
+        closeOrdinarySession(ordinary)
+      }
+    } finally {
+      closeSparkConnectSession("alice", alice.getSessionId)
+    }
+  }
+
+  private def driverRequest(user: String, sessionId: String, path: String): Response =
+    webTarget.path(s"api/v1/spark-connect/sessions/$sessionId/$path")
+      .request(MediaType.APPLICATION_JSON_TYPE)
+      .header(AUTHORIZATION_HEADER, basicAuthorizationHeader(user))
+      .get()
+
+  private def sessionConf(sessionId: String): Map[String, String] =
+    server.backendService.sessionManager
+      .getSessionOption(SessionHandle.fromUUID(sessionId))
+      .map(_.conf)
+      .getOrElse(fail(s"session $sessionId is not open"))
+
+  private def openOrdinarySession(user: String): String = {
+    val response = webTarget.path("api/v1/sessions")
+      .request(MediaType.APPLICATION_JSON_TYPE)
+      .header(AUTHORIZATION_HEADER, basicAuthorizationHeader(user))
+      .post(Entity.entity(
+        new SessionOpenRequest(Collections.emptyMap[String, String]()),
+        MediaType.APPLICATION_JSON_TYPE))
+    assert(200 == response.getStatus)
+    response.readEntity(classOf[dto.SessionHandle]).getIdentifier.toString
+  }
+
+  private def closeOrdinarySession(sessionId: String): Unit = {
+    webTarget.path(s"api/v1/sessions/$sessionId")
+      .request(MediaType.APPLICATION_JSON_TYPE)
+      .header(AUTHORIZATION_HEADER, basicAuthorizationHeader("alice"))
+      .delete()
   }
 
   private def openSparkConnectSession(user: String): SparkConnectSession = {

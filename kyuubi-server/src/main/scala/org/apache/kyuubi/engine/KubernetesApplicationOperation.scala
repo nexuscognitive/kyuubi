@@ -443,6 +443,16 @@ class KubernetesApplicationOperation extends ApplicationOperation with Logging {
   }
 
   /**
+   * Whether any Kubernetes client has been built on this instance.
+   *
+   * This operation is always present in the [[java.util.ServiceLoader]] list, so its existence
+   * says nothing about where engines actually run; a client, which is only ever built for an
+   * engine being launched on or looked up in a cluster, does. Callers use it to tell "this
+   * deployment does not run engines on Kubernetes" from "the driver pod is not there yet".
+   */
+  private[kyuubi] def hasKubernetesClient: Boolean = !kubernetesClients.isEmpty
+
+  /**
    * A structured snapshot of the driver pod carrying `tag`, for callers that render diagnostics
    * rather than log lines -- what [[getDriverPodStates]] collapses into one string, spelled out.
    *
