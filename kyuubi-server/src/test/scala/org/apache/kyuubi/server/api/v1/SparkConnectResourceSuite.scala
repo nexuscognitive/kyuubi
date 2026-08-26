@@ -22,6 +22,7 @@ import javax.ws.rs.client.Entity
 import javax.ws.rs.core.{GenericType, MediaType, Response}
 
 import scala.collection.JavaConverters._
+import scala.concurrent.duration._
 
 import org.apache.kyuubi.{KyuubiFunSuite, RestFrontendTestHelper}
 import org.apache.kyuubi.client.api.v1.dto
@@ -213,15 +214,57 @@ class SparkConnectResourceSuite extends KyuubiFunSuite with RestFrontendTestHelp
   test("the submit log endpoint serves the caller their own session's log") {
     val alice = openSparkConnectSession("alice")
     try {
-      val response = driverRequest("alice", alice.getSessionId, "log")
-      assert(200 == response.getStatus)
-      val log = response.readEntity(classOf[OperationLog])
-      // Whether the launch produced any lines yet depends on timing, but the endpoint must
-      // answer with a well-formed log rather than a 500 either way.
-      assert(log.getRowCount == log.getLogRowSet.size)
+      val log = submitLogWhenWritten("alice", alice.getSessionId)
+      // The launch operation announces the engine it is opening for the user it belongs to, so
+      // this is the caller's own submit log and not some other session's.
+      assert(
+        log.exists(_.contains("alice")),
+        s"the submit log does not look like alice's: $log")
     } finally {
       closeSparkConnectSession("alice", alice.getSessionId)
     }
+  }
+
+  test("the submit log is paged rather than returned whole") {
+    val alice = openSparkConnectSession("alice")
+    try {
+      val whole = submitLogWhenWritten("alice", alice.getSessionId)
+      assume(whole.size > 1, "the launch had written only one line to page through")
+      val firstLine = submitLogPage("alice", alice.getSessionId, from = 0, size = 1)
+      assert(firstLine == whole.take(1))
+      // `from` is an offset into the log, not a hint: a UI paging forward must not be handed
+      // the top of the file again.
+      assert(submitLogPage("alice", alice.getSessionId, from = 1, size = 1) == whole.slice(1, 2))
+    } finally {
+      closeSparkConnectSession("alice", alice.getSessionId)
+    }
+  }
+
+  /** The whole submit log, once the launch has written to it. */
+  private def submitLogWhenWritten(user: String, sessionId: String): Seq[String] = {
+    var log = Seq.empty[String]
+    eventually(timeout(30.seconds), interval(200.milliseconds)) {
+      log = submitLogPage(user, sessionId, from = 0, size = 1000)
+      assert(log.nonEmpty, "the launch has not written a submit log yet")
+    }
+    log
+  }
+
+  private def submitLogPage(
+      user: String,
+      sessionId: String,
+      from: Int,
+      size: Int): Seq[String] = {
+    val response = webTarget.path(s"api/v1/spark-connect/sessions/$sessionId/log")
+      .queryParam("from", from.toString)
+      .queryParam("size", size.toString)
+      .request(MediaType.APPLICATION_JSON_TYPE)
+      .header(AUTHORIZATION_HEADER, basicAuthorizationHeader(user))
+      .get()
+    assert(200 == response.getStatus)
+    val log = response.readEntity(classOf[OperationLog])
+    assert(log.getRowCount == log.getLogRowSet.size)
+    log.getLogRowSet.asScala
   }
 
   test("the driver endpoints degrade honestly with no Kubernetes client") {
