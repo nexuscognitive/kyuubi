@@ -17,6 +17,7 @@
 
 package org.apache.kyuubi.server.api.v1
 
+import java.util.Collections
 import javax.ws.rs._
 import javax.ws.rs.core.{MediaType, Response}
 
@@ -27,13 +28,15 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse
 import io.swagger.v3.oas.annotations.tags.Tag
 
 import org.apache.kyuubi.Logging
-import org.apache.kyuubi.client.api.v1.dto.{SessionOpenRequest, SparkConnectSession}
+import org.apache.kyuubi.client.api.v1.dto.{OperationLog, SessionOpenRequest, SparkConnectDriverContainer, SparkConnectDriverEvent, SparkConnectDriverEvents, SparkConnectDriverInfo, SparkConnectSession}
 import org.apache.kyuubi.client.api.v1.dto.SparkConnectSessionData
 import org.apache.kyuubi.config.KyuubiConf._
 import org.apache.kyuubi.config.KyuubiReservedKeys._
+import org.apache.kyuubi.engine.{KubernetesApplicationOperation, KubernetesDriverContainer, KubernetesDriverPodEvent}
+import org.apache.kyuubi.engine.spark.SparkProcessBuilder
 import org.apache.kyuubi.server.api.ApiRequestContext
 import org.apache.kyuubi.server.connect.SparkConnect
-import org.apache.kyuubi.session.{KyuubiSession, KyuubiSessionManager, SessionHandle}
+import org.apache.kyuubi.session.{KyuubiSession, KyuubiSessionImpl, KyuubiSessionManager, SessionHandle}
 import org.apache.kyuubi.shaded.hive.service.rpc.thrift.TProtocolVersion
 
 /**
@@ -193,6 +196,227 @@ private[v1] class SparkConnectResource extends ApiRequestContext with Logging {
   }
 
   /**
+   * The caller's own Spark Connect session, or a 4xx.
+   *
+   * Scoped to the caller alone, the way the session list is, and deliberately without the
+   * administrator exemption the close path carries: an engine someone else has to clear up is a
+   * different thing from that user's submit log, driver log and Kubernetes events, all of which
+   * can carry their query text, their table names and their data.
+   */
+  private def resolveOwnSession(sessionId: String): KyuubiSessionImpl = {
+    val sessionHandle =
+      try {
+        SessionHandle.fromUUID(sessionId)
+      } catch {
+        case _: IllegalArgumentException =>
+          throw new WebApplicationException("invalid sessionId", 400)
+      }
+    val session = sessionManager.getSessionOption(sessionHandle).getOrElse {
+      throw new WebApplicationException("session not found", 404)
+    }
+    val userName = fe.getSessionUser(Map.empty[String, String])
+    if (session.user != userName) {
+      throw new ForbiddenException(s"$userName is not allowed to access session $sessionId")
+    }
+    session match {
+      case kyuubiSession: KyuubiSessionImpl if isSparkConnectSession(kyuubiSession.conf) =>
+        kyuubiSession
+      case _ =>
+        // Reachable through this path only for a session opened on another frontend, which has
+        // its own endpoints; answering 404 keeps this resource about Spark Connect sessions.
+        throw new WebApplicationException("not a Spark Connect session", 404)
+    }
+  }
+
+  /**
+   * The `kyuubi-unique-tag` labelling this session's driver pod.
+   *
+   * Taken from the routing record rather than assumed to be the session id, because a session
+   * handed a reusable engine inherits that engine's older tag -- which is the one the pod carries.
+   */
+  private def engineTag(session: KyuubiSessionImpl): String =
+    sessionManager.sparkConnectSessionRegistry.lookup(session.user)
+      .map(_.engineTag)
+      .getOrElse(session.handle.identifier.toString)
+
+  @ApiResponse(
+    responseCode = "200",
+    content = Array(new Content(
+      mediaType = MediaType.APPLICATION_JSON,
+      schema = new Schema(implementation = classOf[OperationLog]))),
+    description = "Get the engine submit log for the caller's own Spark Connect session")
+  @GET
+  @Path("sessions/{sessionId}/log")
+  def getSubmitLog(
+      @PathParam("sessionId") sessionId: String,
+      @QueryParam("from") @DefaultValue("-1") from: Int,
+      @QueryParam("size") @DefaultValue("100") size: Int): OperationLog = {
+    val session = resolveOwnSession(sessionId)
+    // The launch operation's log is the `spark-submit` output Kyuubi captures in its work
+    // directory -- the only place a launch that never produced a driver pod says anything.
+    val logRowSet = Option(session.launchEngineOp).flatMap(_.getOperationLog) match {
+      case Some(operationLog) =>
+        val columns = operationLog.read(from, size).getColumns
+        if (columns == null || columns.isEmpty) {
+          Collections.emptyList[String]()
+        } else {
+          columns.get(0).getStringVal.getValues
+        }
+      case None =>
+        // Operation logging can be switched off deployment-wide, and a session restored on a
+        // peer never had a local log to begin with. Neither is an error.
+        List(NO_SUBMIT_LOG_MESSAGE).asJava
+    }
+    new OperationLog(logRowSet, logRowSet.size)
+  }
+
+  @ApiResponse(
+    responseCode = "200",
+    content = Array(new Content(
+      mediaType = MediaType.APPLICATION_JSON,
+      schema = new Schema(implementation = classOf[SparkConnectDriverInfo]))),
+    description = "Get the driver pod of the caller's own Spark Connect session")
+  @GET
+  @Path("sessions/{sessionId}/driver")
+  def getDriverInfo(@PathParam("sessionId") sessionId: String): SparkConnectDriverInfo = {
+    val session = resolveOwnSession(sessionId)
+    val event = session.getSessionEvent
+    val engineId = event.map(_.engineId).getOrElse("")
+    val engineUrl = event.map(_.engineUrl).getOrElse("")
+    kubernetesOperation match {
+      case None =>
+        unavailableDriverInfo(sessionId, NOT_KUBERNETES_MESSAGE, engineId, engineUrl)
+      case Some(operation) =>
+        operation.getDriverPodDetailByTag(engineTag(session)) match {
+          case None =>
+            unavailableDriverInfo(sessionId, NO_DRIVER_POD_MESSAGE, engineId, engineUrl)
+          case Some(pod) =>
+            new SparkConnectDriverInfo(
+              sessionId,
+              true,
+              null,
+              engineId,
+              engineUrl,
+              pod.name,
+              pod.namespace,
+              pod.nodeName.orNull,
+              pod.phase,
+              pod.reason.orNull,
+              pod.startTime.orNull,
+              pod.podIp.orNull,
+              pod.containers.map(driverContainer).asJava)
+        }
+    }
+  }
+
+  private def unavailableDriverInfo(
+      sessionId: String,
+      message: String,
+      engineId: String,
+      engineUrl: String): SparkConnectDriverInfo =
+    new SparkConnectDriverInfo(
+      sessionId,
+      false,
+      message,
+      engineId,
+      engineUrl,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      Collections.emptyList[SparkConnectDriverContainer]())
+
+  private def driverContainer(container: KubernetesDriverContainer)
+      : SparkConnectDriverContainer =
+    new SparkConnectDriverContainer(
+      container.name,
+      container.state,
+      container.stateReason.orNull,
+      container.ready,
+      container.restartCount,
+      container.exitCode.map(Int.box).orNull,
+      container.lastTerminationReason.orNull,
+      container.lastTerminationExitCode.map(Int.box).orNull,
+      container.requests.asJava,
+      container.limits.asJava)
+
+  @ApiResponse(
+    responseCode = "200",
+    content = Array(new Content(
+      mediaType = MediaType.APPLICATION_JSON,
+      schema = new Schema(implementation = classOf[OperationLog]))),
+    description = "Get the driver pod log of the caller's own Spark Connect session")
+  @GET
+  @Path("sessions/{sessionId}/driver/log")
+  def getDriverLog(
+      @PathParam("sessionId") sessionId: String,
+      @QueryParam("lines") @DefaultValue("100") lines: Int): OperationLog = {
+    val session = resolveOwnSession(sessionId)
+    val logLines = kubernetesOperation match {
+      case None => Seq(NOT_KUBERNETES_MESSAGE)
+      case Some(operation) => operation.getDriverLogByTag(engineTag(session), lines)
+    }
+    new OperationLog(logLines.asJava, logLines.size)
+  }
+
+  @ApiResponse(
+    responseCode = "200",
+    content = Array(new Content(
+      mediaType = MediaType.APPLICATION_JSON,
+      schema = new Schema(implementation = classOf[SparkConnectDriverEvents]))),
+    description = "Get the driver pod's Kubernetes events for the caller's own session, newest " +
+      "first")
+  @GET
+  @Path("sessions/{sessionId}/driver/events")
+  def getDriverEvents(
+      @PathParam("sessionId") sessionId: String,
+      @QueryParam("size") @DefaultValue("100") size: Int): SparkConnectDriverEvents = {
+    val session = resolveOwnSession(sessionId)
+    kubernetesOperation match {
+      case None =>
+        unavailableDriverEvents(sessionId, NOT_KUBERNETES_MESSAGE)
+      case Some(operation) =>
+        operation.getDriverPodEventDetailsByTag(engineTag(session), size) match {
+          case None =>
+            unavailableDriverEvents(sessionId, NO_DRIVER_POD_MESSAGE)
+          case Some(events) =>
+            // A driver pod with no events is normal once it has settled, so this is available
+            // with an empty list rather than unavailable.
+            new SparkConnectDriverEvents(
+              sessionId,
+              true,
+              if (events.isEmpty) NO_DRIVER_POD_EVENTS_MESSAGE else null,
+              events.map(driverEvent).asJava)
+        }
+    }
+  }
+
+  private def unavailableDriverEvents(
+      sessionId: String,
+      message: String): SparkConnectDriverEvents =
+    new SparkConnectDriverEvents(
+      sessionId,
+      false,
+      message,
+      Collections.emptyList[SparkConnectDriverEvent]())
+
+  private def driverEvent(event: KubernetesDriverPodEvent): SparkConnectDriverEvent =
+    new SparkConnectDriverEvent(
+      event.eventType,
+      event.reason,
+      event.message,
+      event.count,
+      event.firstTimestamp.orNull,
+      event.lastTimestamp.orNull)
+
+  /** The Kubernetes integration, or [[None]] on a deployment that launches engines elsewhere. */
+  private def kubernetesOperation: Option[KubernetesApplicationOperation] =
+    sessionManager.applicationManager.getKubernetesApplicationOperation
+
+  /**
    * The Spark Connect URL for this instance's gRPC port.
    *
    * The scheme is always `sc://` and the connection is always TLS: the frontend refuses to start
@@ -221,6 +445,27 @@ private[v1] object SparkConnectResource {
   private[v1] val STATE_CLOSED = "CLOSED"
 
   private[v1] val STATE_FAILED = "FAILED"
+
+  /**
+   * What the driver endpoints say instead of failing.
+   *
+   * A 500 or an empty record would both read as "something is broken here", which is exactly the
+   * wrong signal while an engine is still coming up -- the state a user is most likely to be
+   * looking at these endpoints in.
+   */
+  private[v1] val NOT_KUBERNETES_MESSAGE =
+    "Driver diagnostics are only available when engines run on Kubernetes."
+
+  private[v1] val NO_DRIVER_POD_MESSAGE =
+    "No driver pod for this session yet. It may still be starting, or it may have been cleaned " +
+      "up after the engine exited."
+
+  private[v1] val NO_DRIVER_POD_EVENTS_MESSAGE =
+    "The driver pod has recorded no events. Kubernetes expires events after a few hours."
+
+  private[v1] val NO_SUBMIT_LOG_MESSAGE =
+    "No submit log for this session. Engine operation logging may be disabled, or this Kyuubi " +
+      "instance may not be the one that launched the engine."
 
   /**
    * Whether a session belongs to the Spark Connect frontend.
@@ -269,20 +514,34 @@ private[v1] object SparkConnectResource {
    * The token is Kyuubi's credential for the engine, minted when the engine is launched and
    * reused for as long as that driver lives. It is never returned to a client: callers
    * authenticate with their own platform credential, which terminates at the frontend.
+   *
+   * The deploy mode is pinned to `cluster` for Spark Connect alone -- other engine types keep
+   * whatever the deployment configures. In client mode the driver JVM runs inside the Kyuubi
+   * pod, where `SparkConnectPlugin` tries to bind [[FRONTEND_SPARK_CONNECT_ENGINE_PORT]] in the
+   * same network namespace that the gateway's own Spark Connect frontend already listens on, and
+   * fails outright because `spark.port.maxRetries` defaults to 0. Even on a free port a
+   * client-mode engine would be unreachable: [[SparkConnectEngineLocator]] resolves an engine by
+   * finding the driver pod that carries its `kyuubi-unique-tag`, and in client mode there is no
+   * such pod.
    */
   private[v1] def serverControlledConf(engineToken: String): Map[String, String] = Map(
     SESSION_SPARK_CONNECT_ENABLED.key -> "true",
     SESSION_SPARK_CONNECT_TOKEN.key -> engineToken,
     ENGINE_TYPE.key -> "SPARK_SQL",
     ENGINE_SHARE_LEVEL.key -> "USER",
-    ENGINE_SHARE_LEVEL_SUBDOMAIN.key -> ENGINE_SUBDOMAIN)
+    ENGINE_SHARE_LEVEL_SUBDOMAIN.key -> ENGINE_SUBDOMAIN,
+    SparkProcessBuilder.DEPLOY_MODE_KEY -> DEPLOY_MODE_CLUSTER)
+
+  /** The only deploy mode a Spark Connect engine works in -- see [[serverControlledConf]]. */
+  private[v1] val DEPLOY_MODE_CLUSTER = "cluster"
 
   private[v1] val SERVER_CONTROLLED_KEYS: Set[String] = Set(
     SESSION_SPARK_CONNECT_ENABLED.key,
     SESSION_SPARK_CONNECT_TOKEN.key,
     ENGINE_TYPE.key,
     ENGINE_SHARE_LEVEL.key,
-    ENGINE_SHARE_LEVEL_SUBDOMAIN.key)
+    ENGINE_SHARE_LEVEL_SUBDOMAIN.key,
+    SparkProcessBuilder.DEPLOY_MODE_KEY)
 
   /**
    * The caller's conf, minus anything only Kyuubi may set.
