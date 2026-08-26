@@ -24,12 +24,14 @@
       <p class="page-sub">{{ $t('spark_connect.subtitle') }}</p>
     </header>
 
-    <SessionCard
-      v-if="session"
-      :session="session"
-      @copy="copy"
-      @refresh="loadSession"
-      @close="closeSession" />
+    <template v-if="session">
+      <SessionCard
+        :session="session"
+        @copy="copy"
+        @refresh="loadSession"
+        @close="closeSession" />
+      <DiagnosticsCard :session-id="session.sessionId" />
+    </template>
 
     <CreateSessionCard
       v-else
@@ -54,6 +56,7 @@
     type SparkConnectSessionData
   } from '@/api/spark-connect'
   import CreateSessionCard from './components/CreateSessionCard.vue'
+  import DiagnosticsCard from './components/DiagnosticsCard.vue'
   import SessionCard from './components/SessionCard.vue'
   import { copyToClipboard } from './utils/clipboard'
 

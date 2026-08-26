@@ -24,7 +24,7 @@ import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
 import com.google.common.cache.{Cache, CacheBuilder, RemovalNotification}
-import io.fabric8.kubernetes.api.model.{ContainerState, Event, Pod, Service}
+import io.fabric8.kubernetes.api.model.{Container, ContainerState, ContainerStatus, Event, Pod, Quantity, ResourceRequirements, Service}
 import io.fabric8.kubernetes.client.KubernetesClient
 import io.fabric8.kubernetes.client.informers.{ResourceEventHandler, SharedIndexInformer}
 
@@ -442,6 +442,146 @@ class KubernetesApplicationOperation extends ApplicationOperation with Logging {
       .getOrElse("")
   }
 
+  /**
+   * Whether any Kubernetes client has been built on this instance.
+   *
+   * This operation is always present in the [[java.util.ServiceLoader]] list, so its existence
+   * says nothing about where engines actually run; a client, which is only ever built for an
+   * engine being launched on or looked up in a cluster, does. Callers use it to tell "this
+   * deployment does not run engines on Kubernetes" from "the driver pod is not there yet".
+   */
+  private[kyuubi] def hasKubernetesClient: Boolean = !kubernetesClients.isEmpty
+
+  /**
+   * A structured snapshot of the driver pod carrying `tag`, for callers that render diagnostics
+   * rather than log lines -- what [[getDriverPodStates]] collapses into one string, spelled out.
+   *
+   * [[None]] means no driver pod carries the tag on any configured cluster: it has not been
+   * created yet, or it has already been cleaned up. Callers must say which rather than presenting
+   * an empty record as a healthy one.
+   */
+  private[kyuubi] def getDriverPodDetailByTag(tag: String): Option[KubernetesDriverPod] = {
+    kubernetesClients.values().asScala.iterator.flatMap { client =>
+      try {
+        client.pods()
+          .withLabel(LABEL_KYUUBI_UNIQUE_KEY, tag)
+          .withLabel(SPARK_ROLE_LABEL, SPARK_ROLE_DRIVER)
+          .list().getItems.asScala.headOption.map(toDriverPodDetail)
+      } catch {
+        case NonFatal(e) =>
+          warn(s"Failed to fetch driver pod detail for ${toLabel(tag)}: ${e.getMessage}")
+          None
+      }
+    }.toSeq.headOption
+  }
+
+  private def toDriverPodDetail(pod: Pod): KubernetesDriverPod = {
+    val status = Option(pod.getStatus)
+    // Resource requests and limits live on the pod spec while restart counts and termination
+    // reasons live on the status, so the two have to be joined by container name.
+    val specContainersByName = Option(pod.getSpec)
+      .flatMap(spec => Option(spec.getContainers))
+      .map(_.asScala.map(container => container.getName -> container).toMap)
+      .getOrElse(Map.empty[String, Container])
+    val containers = status
+      .flatMap(s => Option(s.getContainerStatuses))
+      .map(_.asScala.toSeq)
+      .getOrElse(Nil)
+      .map(containerStatus =>
+        toDriverContainerDetail(containerStatus, specContainersByName.get(containerStatus.getName)))
+    KubernetesDriverPod(
+      name = pod.getMetadata.getName,
+      namespace = pod.getMetadata.getNamespace,
+      nodeName = Option(pod.getSpec).flatMap(spec => Option(spec.getNodeName)),
+      phase = status.flatMap(s => Option(s.getPhase)).getOrElse(UNKNOWN_POD_PHASE),
+      reason = status.flatMap(s => Option(s.getReason)).filter(_.nonEmpty),
+      startTime = status.flatMap(s => Option(s.getStartTime)).filter(_.nonEmpty),
+      podIp = status.flatMap(s => Option(s.getPodIP)).filter(_.nonEmpty),
+      containers = containers)
+  }
+
+  private def toDriverContainerDetail(
+      containerStatus: ContainerStatus,
+      specContainer: Option[Container]): KubernetesDriverContainer = {
+    val state = Option(containerStatus.getState)
+    val running = state.flatMap(s => Option(s.getRunning))
+    val waiting = state.flatMap(s => Option(s.getWaiting))
+    val terminated = state.flatMap(s => Option(s.getTerminated))
+    val currentState =
+      if (running.isDefined) CONTAINER_STATE_RUNNING
+      else if (terminated.isDefined) CONTAINER_STATE_TERMINATED
+      else if (waiting.isDefined) CONTAINER_STATE_WAITING
+      else UNKNOWN_POD_PHASE
+    // The reason a container is stuck or dead is the whole point of this endpoint: an
+    // ImagePullBackOff shows up as a waiting reason and an OOMKilled as a termination one.
+    val stateReason = waiting.flatMap(w => Option(w.getReason))
+      .orElse(terminated.flatMap(t => Option(t.getReason)))
+      .filter(_.nonEmpty)
+    // A driver that crashed and was restarted has already lost its Spark Connect state, so the
+    // previous termination matters even when the container is running again.
+    val lastTermination = Option(containerStatus.getLastState).flatMap(s => Option(s.getTerminated))
+    KubernetesDriverContainer(
+      name = containerStatus.getName,
+      state = currentState,
+      stateReason = stateReason,
+      ready = Option(containerStatus.getReady).exists(_.booleanValue),
+      restartCount = Option(containerStatus.getRestartCount).map(_.intValue).getOrElse(0),
+      exitCode = terminated.flatMap(t => Option(t.getExitCode)).map(_.intValue),
+      lastTerminationReason = lastTermination.flatMap(t => Option(t.getReason)).filter(_.nonEmpty),
+      lastTerminationExitCode = lastTermination.flatMap(t => Option(t.getExitCode)).map(_.intValue),
+      requests = specContainer.map(containerResources(_, _.getRequests)).getOrElse(Map.empty),
+      limits = specContainer.map(containerResources(_, _.getLimits)).getOrElse(Map.empty))
+  }
+
+  private def containerResources(
+      container: Container,
+      select: ResourceRequirements => java.util.Map[String, Quantity]): Map[String, String] = {
+    Option(container.getResources).flatMap(resources => Option(select(resources)))
+      .map(_.asScala.map { case (name, quantity) => name -> quantity.toString }.toMap)
+      .getOrElse(Map.empty)
+  }
+
+  /**
+   * Structured Kubernetes events for the driver pod carrying `tag`, newest first.
+   *
+   * The string form in [[getDriverPodEventsByTag]] reads oldest-first like a log; a diagnostics
+   * view wants the newest event at the top, because that is the one explaining the current state.
+   * [[None]] carries the same "no such pod" meaning as [[getDriverPodDetailByTag]].
+   */
+  private[kyuubi] def getDriverPodEventDetailsByTag(
+      tag: String,
+      size: Int): Option[Seq[KubernetesDriverPodEvent]] = {
+    val maxEvents = if (size <= 0) DEFAULT_MAX_DRIVER_POD_EVENTS else size
+    kubernetesClients.values().asScala.iterator.flatMap { client =>
+      try {
+        client.pods()
+          .withLabel(LABEL_KYUUBI_UNIQUE_KEY, tag)
+          .withLabel(SPARK_ROLE_LABEL, SPARK_ROLE_DRIVER)
+          .list().getItems.asScala.headOption.map { pod =>
+            client.v1().events().inNamespace(pod.getMetadata.getNamespace)
+              .withField("involvedObject.uid", pod.getMetadata.getUid)
+              .list().getItems.asScala.toSeq
+              .sortBy(driverPodEventTimestamp)(Ordering[String].reverse)
+              .take(maxEvents)
+              .map(toDriverPodEventDetail)
+          }
+      } catch {
+        case NonFatal(e) =>
+          warn(s"Failed to fetch driver pod event detail for ${toLabel(tag)}: ${e.getMessage}")
+          None
+      }
+    }.toSeq.headOption
+  }
+
+  private def toDriverPodEventDetail(event: Event): KubernetesDriverPodEvent =
+    KubernetesDriverPodEvent(
+      eventType = Option(event.getType).getOrElse(DEFAULT_EVENT_TYPE),
+      reason = Option(event.getReason).getOrElse(""),
+      message = Option(event.getMessage).map(_.trim).getOrElse(""),
+      count = Option(event.getCount).map(_.intValue).getOrElse(1),
+      firstTimestamp = Option(event.getFirstTimestamp).filter(_.nonEmpty),
+      lastTimestamp = Some(driverPodEventTimestamp(event)).filter(_.nonEmpty))
+
   // e.g. "[2026-07-23T18:20:01Z] Warning  FailedScheduling (x3): 0/5 nodes are available: ..."
   private def formatDriverPodEvent(event: Event): String = {
     val ts = driverPodEventTimestamp(event)
@@ -756,6 +896,16 @@ object KubernetesApplicationOperation extends Logging {
   val KUBERNETES_SERVICE_PORT = "KUBERNETES_SERVICE_PORT"
   val SPARK_UI_PORT_NAME = "spark-ui"
   private val PENDING_WAITING_REASONS: Set[String] = Set("ContainerCreating", "PodInitializing")
+
+  /** What Kubernetes itself reports for a pod whose phase it cannot determine. */
+  private val UNKNOWN_POD_PHASE = "Unknown"
+  private val CONTAINER_STATE_RUNNING = "Running"
+  private val CONTAINER_STATE_WAITING = "Waiting"
+  private val CONTAINER_STATE_TERMINATED = "Terminated"
+
+  /** The type Kubernetes assumes for an event that does not declare one. */
+  private val DEFAULT_EVENT_TYPE = "Normal"
+  private val DEFAULT_MAX_DRIVER_POD_EVENTS = 100
 
   def toLabel(tag: String): String = s"label: $LABEL_KYUUBI_UNIQUE_KEY=$tag"
 

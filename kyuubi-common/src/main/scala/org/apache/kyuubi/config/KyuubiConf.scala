@@ -1527,6 +1527,12 @@ object KyuubiConf {
       .doc("Port that the Spark Connect gRPC server binds to inside the Spark driver pod. The " +
         "frontend dials the driver pod IP on this port, and the same value is passed to the " +
         "engine as <code>spark.connect.grpc.binding.port</code>.")
+      // Sharing 15002 with kyuubi.frontend.spark.connect.bind.port is deliberate and safe: the
+      // engine only ever runs in cluster mode, so its driver has a network namespace of its own
+      // and never contends with the gateway's own listener. Do not "fix" a BindException here by
+      // moving this port -- a collision means an engine was launched in client mode, which puts
+      // the driver inside the Kyuubi pod where its Spark Connect plugin has nothing to route to
+      // anyway. SparkConnectResource pins spark.submit.deployMode=cluster for that reason.
       .version("1.12.0")
       .intConf
       .checkValue(p => p > 1024 && p < 65535, "Invalid Port number")

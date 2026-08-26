@@ -25,7 +25,11 @@ vi.mock('@/utils/request', () => ({
 import {
   openSparkConnectSession,
   listSparkConnectSessions,
-  closeSparkConnectSession
+  closeSparkConnectSession,
+  getSparkConnectSubmitLog,
+  getSparkConnectDriverInfo,
+  getSparkConnectDriverLog,
+  getSparkConnectDriverEvents
 } from '@/api/spark-connect'
 
 describe('spark-connect api', () => {
@@ -120,5 +124,47 @@ describe('spark-connect api', () => {
     request.mockRejectedValue(new Error('boom'))
 
     await expect(listSparkConnectSessions()).rejects.toThrow('boom')
+  })
+
+  it('reads the submit log from the top so polling does not consume it', async () => {
+    await getSparkConnectSubmitLog('a-session-id')
+
+    expect(request).toHaveBeenCalledWith({
+      url: 'api/v1/spark-connect/sessions/a-session-id/log',
+      method: 'get',
+      params: { from: 0, size: 500 }
+    })
+  })
+
+  it('reads the driver, its log and its events under the session', async () => {
+    await getSparkConnectDriverInfo('a-session-id')
+    expect(request).toHaveBeenCalledWith({
+      url: 'api/v1/spark-connect/sessions/a-session-id/driver',
+      method: 'get'
+    })
+
+    await getSparkConnectDriverLog('a-session-id', 50)
+    expect(request).toHaveBeenCalledWith({
+      url: 'api/v1/spark-connect/sessions/a-session-id/driver/log',
+      method: 'get',
+      params: { lines: 50 }
+    })
+
+    await getSparkConnectDriverEvents('a-session-id', 20)
+    expect(request).toHaveBeenCalledWith({
+      url: 'api/v1/spark-connect/sessions/a-session-id/driver/events',
+      method: 'get',
+      params: { size: 20 }
+    })
+  })
+
+  it('escapes the session id on the diagnostics paths too', async () => {
+    await getSparkConnectDriverLog('../../admin')
+
+    expect(request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: 'api/v1/spark-connect/sessions/..%2F..%2Fadmin/driver/log'
+      })
+    )
   })
 })
