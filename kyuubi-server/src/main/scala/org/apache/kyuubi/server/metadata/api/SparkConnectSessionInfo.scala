@@ -50,6 +50,10 @@ package org.apache.kyuubi.server.metadata.api
  * @param recoveryState where recovery stands: see [[SparkConnectRecoveryState]].
  * @param recoveryMessage why recovery is where it is -- above all, why it was abandoned. This is
  *                        what an operator reads on a session that is never coming back.
+ * @param engineConf the conf the client asked for when it created the session, minus everything
+ *                   only Kyuubi may set. Kept so that a relaunched engine comes up configured the
+ *                   way the user asked for rather than on defaults: recovery cannot restore the
+ *                   session's data, but there is no reason for it to lose its shape as well.
  * @param driverPostMortems what killed this binding's drivers, newest first, captured while each
  *                          pod still existed and bounded to the most recent few. The whole point
  *                          of keeping more than one is that the same failure three times running
@@ -66,6 +70,7 @@ case class SparkConnectSessionInfo(
     lastRestartTime: Long = 0L,
     recoveryState: String = SparkConnectRecoveryState.NONE,
     recoveryMessage: Option[String] = None,
+    engineConf: Map[String, String] = Map.empty,
     driverPostMortems: Seq[SparkConnectDriverPostMortem] = Nil) {
 
   /** Whether a Kyuubi session is still open on this engine, as opposed to the engine alone. */

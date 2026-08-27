@@ -28,7 +28,7 @@ import scala.collection.mutable.ListBuffer
 import scala.util.Try
 
 import com.fasterxml.jackson.core.JsonProcessingException
-import com.fasterxml.jackson.core.type.TypeReference
+import com.fasterxml.jackson.core.`type`.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
 import com.google.common.annotations.VisibleForTesting
@@ -106,6 +106,7 @@ class JDBCMetadataStore(conf: KyuubiConf) extends MetadataStore with Logging {
     ensureColumn(SPARK_CONNECT_SESSION_TABLE, "last_restart_time", "bigint NOT NULL DEFAULT 0")
     ensureColumn(SPARK_CONNECT_SESSION_TABLE, "recovery_state", "varchar(16) NOT NULL DEFAULT ''")
     ensureColumn(SPARK_CONNECT_SESSION_TABLE, "recovery_message", "text")
+    ensureColumn(SPARK_CONNECT_SESSION_TABLE, "engine_conf", "text")
     ensureColumn(SPARK_CONNECT_SESSION_TABLE, "driver_post_mortems", "text")
   }
 
@@ -618,7 +619,19 @@ class JDBCMetadataStore(conf: KyuubiConf) extends MetadataStore with Logging {
         sessionInfo.lastRestartTime,
         sessionInfo.recoveryState,
         sessionInfo.recoveryMessage.getOrElse(""),
+        valueAsString(sessionInfo.engineConf),
         valueAsString(sessionInfo.driverPostMortems))
+    }
+  }
+
+  override def getSparkConnectSessionByEngineTag(
+      engineTag: String): Option[SparkConnectSessionInfo] = {
+    val query = s"SELECT $SPARK_CONNECT_SESSION_COLUMNS_STR FROM" +
+      s" $SPARK_CONNECT_SESSION_TABLE WHERE engine_tag = ? ORDER BY create_time DESC"
+    JdbcUtils.withConnection { connection =>
+      withResultSet(connection, query, engineTag) { rs =>
+        buildSparkConnectSessions(rs).headOption
+      }
     }
   }
 
@@ -628,7 +641,7 @@ class JDBCMetadataStore(conf: KyuubiConf) extends MetadataStore with Logging {
          |UPDATE $SPARK_CONNECT_SESSION_TABLE
          |SET session_id = ?, engine_tag = ?, engine_token = ?, generation = ?,
          |    restart_count = ?, last_restart_time = ?, recovery_state = ?,
-         |    recovery_message = ?, driver_post_mortems = ?
+         |    recovery_message = ?, engine_conf = ?, driver_post_mortems = ?
          |WHERE user_name = ?
          |""".stripMargin
     JdbcUtils.withConnection { connection =>
@@ -643,6 +656,7 @@ class JDBCMetadataStore(conf: KyuubiConf) extends MetadataStore with Logging {
         sessionInfo.lastRestartTime,
         sessionInfo.recoveryState,
         sessionInfo.recoveryMessage.getOrElse(""),
+        valueAsString(sessionInfo.engineConf),
         valueAsString(sessionInfo.driverPostMortems),
         sessionInfo.userName)
     }
@@ -710,6 +724,7 @@ class JDBCMetadataStore(conf: KyuubiConf) extends MetadataStore with Logging {
           recoveryState = Option(resultSet.getString("recovery_state"))
             .getOrElse(SparkConnectRecoveryState.NONE),
           recoveryMessage = Option(resultSet.getString("recovery_message")).filter(_.nonEmpty),
+          engineConf = string2Map(resultSet.getString("engine_conf")),
           driverPostMortems = string2PostMortems(resultSet.getString("driver_post_mortems")))
       }
       sessionInfoList
@@ -992,6 +1007,7 @@ object JDBCMetadataStore {
     "last_restart_time",
     "recovery_state",
     "recovery_message",
+    "engine_conf",
     "driver_post_mortems")
   private val SPARK_CONNECT_SESSION_COLUMNS_STR = SPARK_CONNECT_SESSION_COLUMNS.mkString(",")
   private val SPARK_CONNECT_SESSION_VALUE_PLACEHOLDERS =

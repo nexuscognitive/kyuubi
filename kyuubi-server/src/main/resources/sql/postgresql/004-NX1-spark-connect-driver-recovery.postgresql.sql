@@ -19,6 +19,8 @@ ALTER TABLE spark_connect_session ADD COLUMN IF NOT EXISTS recovery_state varcha
 
 ALTER TABLE spark_connect_session ADD COLUMN IF NOT EXISTS recovery_message text;
 
+ALTER TABLE spark_connect_session ADD COLUMN IF NOT EXISTS engine_conf text;
+
 ALTER TABLE spark_connect_session ADD COLUMN IF NOT EXISTS driver_post_mortems text;
 
 COMMENT ON COLUMN spark_connect_session.generation IS 'how many engines this binding has had; a new one is a new Spark session';
@@ -26,4 +28,5 @@ COMMENT ON COLUMN spark_connect_session.restart_count IS 'how many times recover
 COMMENT ON COLUMN spark_connect_session.last_restart_time IS 'when the most recent relaunch started';
 COMMENT ON COLUMN spark_connect_session.recovery_state IS 'empty, RECOVERING or ABANDONED';
 COMMENT ON COLUMN spark_connect_session.recovery_message IS 'why recovery is where it is, above all why it was abandoned';
+COMMENT ON COLUMN spark_connect_session.engine_conf IS 'JSON: the conf the client asked its engine to be launched with';
 COMMENT ON COLUMN spark_connect_session.driver_post_mortems IS 'JSON: what killed this binding drivers, newest first, captured while each pod still existed';

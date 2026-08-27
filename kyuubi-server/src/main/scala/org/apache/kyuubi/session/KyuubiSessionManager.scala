@@ -29,20 +29,20 @@ import org.apache.kyuubi.client.api.v1.dto.{Batch, BatchRequest}
 import org.apache.kyuubi.client.util.BatchUtils.KYUUBI_BATCH_ID_KEY
 import org.apache.kyuubi.config.KyuubiConf
 import org.apache.kyuubi.config.KyuubiConf._
-import org.apache.kyuubi.config.KyuubiReservedKeys.{KYUUBI_BATCH_PRIORITY, KYUUBI_SESSION_REAL_USER_KEY}
+import org.apache.kyuubi.config.KyuubiReservedKeys.{KYUUBI_BATCH_PRIORITY, KYUUBI_CLIENT_IP_KEY, KYUUBI_SERVER_IP_KEY, KYUUBI_SESSION_REAL_USER_KEY}
 import org.apache.kyuubi.credentials.HadoopCredentialsManager
 import org.apache.kyuubi.engine.KyuubiApplicationManager
 import org.apache.kyuubi.metrics.MetricsConstants._
 import org.apache.kyuubi.metrics.MetricsSystem
 import org.apache.kyuubi.operation.{KyuubiOperationManager, OperationState}
 import org.apache.kyuubi.plugin.{GroupProvider, PluginLoader, SessionConfAdvisor}
-import org.apache.kyuubi.server.connect.{KubernetesSparkConnectEngineLocator, SparkConnectEngineLocator, SparkConnectSessionRegistry}
+import org.apache.kyuubi.server.connect.{KubernetesSparkConnectEngineLocator, SparkConnectEngineConf, SparkConnectEngineLocator, SparkConnectEngineRequest, SparkConnectSessionRegistry, SparkConnectSessionSupervisor}
 import org.apache.kyuubi.server.metadata.{MetadataManager, MetadataRequestsRetryRef}
 import org.apache.kyuubi.server.metadata.api.{Metadata, MetadataFilter}
 import org.apache.kyuubi.service.TempFileService
 import org.apache.kyuubi.shaded.hive.service.rpc.thrift.TProtocolVersion
 import org.apache.kyuubi.sql.parser.server.KyuubiParser
-import org.apache.kyuubi.util.{SignUtils, ThreadUtils}
+import org.apache.kyuubi.util.{JavaUtils, SignUtils, ThreadUtils}
 import org.apache.kyuubi.util.ThreadUtils.scheduleTolerableRunnableWithFixedDelay
 
 class KyuubiSessionManager private (name: String) extends SessionManager(name) {
@@ -69,6 +69,13 @@ class KyuubiSessionManager private (name: String) extends SessionManager(name) {
   private var _sparkConnectEngineLocator: SparkConnectEngineLocator = _
   def sparkConnectEngineLocator: SparkConnectEngineLocator = _sparkConnectEngineLocator
 
+  // Reconciles a Spark Connect session's reported state against its actual driver, and relaunches
+  // the driver when it dies. Shared by the REST endpoint that renders the state and the gRPC
+  // frontend that has to answer a client whose engine is gone.
+  private var _sparkConnectSessionSupervisor: SparkConnectSessionSupervisor = _
+  def sparkConnectSessionSupervisor: SparkConnectSessionSupervisor =
+    _sparkConnectSessionSupervisor
+
   // lazy is required for plugins since the conf is null when this class initialization
   lazy val sessionConfAdvisor: Seq[SessionConfAdvisor] = PluginLoader.loadSessionConfAdvisor(conf)
   lazy val groupProvider: GroupProvider = PluginLoader.loadGroupProvider(conf)
@@ -92,6 +99,12 @@ class KyuubiSessionManager private (name: String) extends SessionManager(name) {
     _sparkConnectEngineLocator = new KubernetesSparkConnectEngineLocator(
       applicationManager,
       conf.get(KyuubiConf.FRONTEND_SPARK_CONNECT_ENGINE_PORT))
+    _sparkConnectSessionSupervisor = new SparkConnectSessionSupervisor(
+      conf,
+      _sparkConnectSessionRegistry,
+      _sparkConnectEngineLocator,
+      applicationManager,
+      openSparkConnectEngineSession _)
     addService(applicationManager)
     addService(credentialsManager)
     addService(tempFileService)
@@ -118,6 +131,34 @@ class KyuubiSessionManager private (name: String) extends SessionManager(name) {
       userConf,
       userConf.get(ENGINE_DO_AS_ENABLED),
       parser)
+  }
+
+  /**
+   * Open a Spark Connect session for `request`, and answer with its handle.
+   *
+   * The one provisioning path for a Spark Connect engine: the REST endpoint reaches it with the
+   * conf a user asked for, and the supervisor reaches it with the conf recovery remembered, so a
+   * relaunched engine is launched exactly the way the original was rather than through a second
+   * code path that will drift from this one.
+   *
+   * The session is attributed to this Kyuubi instance's own address, because that is the truth of
+   * where the request came from -- a relaunch has no client behind it, and borrowing the address
+   * of whoever created the session originally would put a fiction in the audit log.
+   */
+  private[kyuubi] def openSparkConnectEngineSession(
+      request: SparkConnectEngineRequest): String = {
+    val ipAddress = JavaUtils.findLocalInetAddress.getHostAddress
+    val handle = openSession(
+      TProtocolVersion.HIVE_CLI_SERVICE_PROTOCOL_V11,
+      request.userName,
+      "",
+      ipAddress,
+      SparkConnectEngineConf.serverControlledConf(request.engineToken) ++ Map(
+        KYUUBI_CLIENT_IP_KEY -> ipAddress,
+        KYUUBI_SERVER_IP_KEY -> ipAddress,
+        KYUUBI_SESSION_REAL_USER_KEY -> request.userName) ++
+        SparkConnectEngineConf.clientControlledConf(request.requestedConf))
+    handle.identifier.toString
   }
 
   override def openSession(
@@ -328,6 +369,16 @@ class KyuubiSessionManager private (name: String) extends SessionManager(name) {
     }
     super.start()
     startEngineAliveChecker()
+    // After super.start(), so that the application manager's Kubernetes clients exist and the
+    // supervisor can register for driver terminations on the informer they already run.
+    _sparkConnectSessionSupervisor.start()
+  }
+
+  override def stop(): Unit = synchronized {
+    if (_sparkConnectSessionSupervisor != null) {
+      _sparkConnectSessionSupervisor.stop()
+    }
+    super.stop()
   }
 
   def getBatchSessionsToRecover(kyuubiInstance: String): Seq[KyuubiBatchSession] = {

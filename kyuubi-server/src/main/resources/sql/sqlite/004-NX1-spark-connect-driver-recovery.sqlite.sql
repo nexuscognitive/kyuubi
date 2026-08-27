@@ -19,4 +19,6 @@ ALTER TABLE spark_connect_session ADD COLUMN recovery_state varchar(16) NOT NULL
 
 ALTER TABLE spark_connect_session ADD COLUMN recovery_message text;
 
+ALTER TABLE spark_connect_session ADD COLUMN engine_conf text;
+
 ALTER TABLE spark_connect_session ADD COLUMN driver_post_mortems text;

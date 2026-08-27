@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS spark_connect_session(
     last_restart_time bigint NOT NULL DEFAULT 0, -- when the most recent relaunch started
     recovery_state varchar(16) NOT NULL DEFAULT '', -- empty, RECOVERING or ABANDONED
     recovery_message text, -- why recovery is where it is, above all why it was abandoned
+    engine_conf text, -- JSON: the conf the client asked its engine to be launched with
     driver_post_mortems text -- JSON: what killed this binding's drivers, newest first, captured while each pod still existed
 );
 

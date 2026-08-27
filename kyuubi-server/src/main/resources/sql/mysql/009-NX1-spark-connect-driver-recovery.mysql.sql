@@ -24,5 +24,8 @@ ALTER TABLE spark_connect_session ADD COLUMN recovery_state varchar(16) NOT NULL
 ALTER TABLE spark_connect_session ADD COLUMN recovery_message mediumtext
     COMMENT 'why recovery is where it is, above all why it was abandoned';
 
+ALTER TABLE spark_connect_session ADD COLUMN engine_conf mediumtext
+    COMMENT 'JSON: the conf the client asked its engine to be launched with';
+
 ALTER TABLE spark_connect_session ADD COLUMN driver_post_mortems mediumtext
     COMMENT 'JSON: what killed this binding drivers, newest first, captured while each pod still existed';

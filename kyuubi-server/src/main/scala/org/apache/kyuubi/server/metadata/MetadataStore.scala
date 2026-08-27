@@ -141,6 +141,18 @@ trait MetadataStore extends Closeable {
   def getSparkConnectSessionByUserName(userName: String): Option[SparkConnectSessionInfo]
 
   /**
+   * Look up a Spark Connect record by the `kyuubi-unique-tag` of its engine.
+   *
+   * The lookup a driver's death arrives on: the pod informer knows the tag on the dead pod and
+   * nothing else, and the instance that observes the death is not necessarily one that ever
+   * served the user.
+   *
+   * @return the record, or [[None]] when no binding names that engine -- which is the answer for
+   *         every batch and Thrift engine, since those are not bound here at all.
+   */
+  def getSparkConnectSessionByEngineTag(engineTag: String): Option[SparkConnectSessionInfo]
+
+  /**
    * Overwrite a user's Spark Connect record with the engine and recovery bookkeeping it now
    * carries -- a replacement engine after a relaunch, the attempt count, why recovery was
    * abandoned, and the post-mortems of the drivers that died.
