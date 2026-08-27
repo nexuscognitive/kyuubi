@@ -112,7 +112,7 @@ COMMENT ON COLUMN spark_connect_session.session_id IS 'the Kyuubi session handle
 COMMENT ON COLUMN spark_connect_session.engine_tag IS 'the kyuubi-unique-tag label value of the engine';
 COMMENT ON COLUMN spark_connect_session.engine_token IS 'the credential Kyuubi presents to the engine';
 COMMENT ON COLUMN spark_connect_session.create_time IS 'the binding create time';
-COMMENT ON COLUMN spark_connect_session.generation IS 'how many engines this binding has had; a new one is a new Spark session';
+COMMENT ON COLUMN spark_connect_session.generation IS 'how many engines this binding has had, and a new one is a new Spark session';
 COMMENT ON COLUMN spark_connect_session.restart_count IS 'how many times recovery has relaunched a driver';
 COMMENT ON COLUMN spark_connect_session.last_restart_time IS 'when the most recent relaunch started';
 COMMENT ON COLUMN spark_connect_session.recovery_state IS 'empty, RECOVERING or ABANDONED';

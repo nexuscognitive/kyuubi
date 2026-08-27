@@ -7,7 +7,7 @@
 -- generation is what tells a client its Spark session was replaced. A relaunched driver is a new
 -- JVM with none of the temporary views, cached frames, artifacts or session conf the old one
 -- held, so a bumped generation is a state loss, not a hiccup.
--- Applied automatically on startup by JDBCMetadataStore.migrateSchema; this file records the
+-- Applied automatically on startup by JDBCMetadataStore.migrateSchema. This file records the
 -- change for operators who manage their schema by hand.
 ALTER TABLE spark_connect_session ADD COLUMN generation int NOT NULL DEFAULT 0;
 

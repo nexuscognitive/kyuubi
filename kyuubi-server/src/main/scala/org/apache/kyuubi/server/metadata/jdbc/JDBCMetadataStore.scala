@@ -28,7 +28,6 @@ import scala.collection.mutable.ListBuffer
 import scala.util.Try
 
 import com.fasterxml.jackson.core.JsonProcessingException
-import com.fasterxml.jackson.core.`type`.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
 import com.google.common.annotations.VisibleForTesting
@@ -944,7 +943,10 @@ class JDBCMetadataStore(conf: KyuubiConf) extends MetadataStore with Logging {
       return Seq.empty
     }
     try {
-      mapper.readValue(str, new TypeReference[Seq[SparkConnectDriverPostMortem]] {})
+      // An array rather than a TypeReference for Seq: Jackson erases the element type of a
+      // generic Scala collection, and the array form says it without needing a type token that
+      // Scalafmt and Scalastyle cannot agree on the import ordering of.
+      mapper.readValue(str, classOf[Array[SparkConnectDriverPostMortem]]).toSeq
     } catch {
       case e: JsonProcessingException =>
         warn(s"Ignoring unreadable Spark Connect driver post-mortems: ${e.getMessage}")

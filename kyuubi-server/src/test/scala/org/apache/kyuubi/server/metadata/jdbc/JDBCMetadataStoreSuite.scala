@@ -27,7 +27,7 @@ import org.apache.kyuubi.{KyuubiException, KyuubiFunSuite, Utils}
 import org.apache.kyuubi.config.KyuubiConf
 import org.apache.kyuubi.engine.ApplicationState
 import org.apache.kyuubi.server.metadata.MetadataManager
-import org.apache.kyuubi.server.metadata.api.{KubernetesEngineInfo, Metadata, MetadataFilter, SparkConnectSessionInfo}
+import org.apache.kyuubi.server.metadata.api.{KubernetesEngineInfo, Metadata, MetadataFilter, SparkConnectDriverContainerExit, SparkConnectDriverEventRecord, SparkConnectDriverPostMortem, SparkConnectRecoveryState, SparkConnectSessionInfo}
 import org.apache.kyuubi.server.metadata.jdbc.JDBCMetadataStoreConf._
 import org.apache.kyuubi.session.SessionType
 
@@ -532,5 +532,91 @@ class JDBCMetadataStoreSuite extends KyuubiFunSuite {
 
     assert(jdbcMetadataStore.cleanupSparkConnectSessionByAge(1000, Int.MaxValue) >= 1)
     assert(jdbcMetadataStore.getSparkConnectSessionByUserName("ageing_user").isEmpty)
+  }
+
+  test("a binding is found by the engine tag a dying driver arrives with") {
+    val sessionId = UUID.randomUUID().toString
+    jdbcMetadataStore.insertSparkConnectSession(SparkConnectSessionInfo(
+      userName = "tagged_user",
+      sessionId = sessionId,
+      engineTag = sessionId,
+      engineToken = "an-engine-credential",
+      createTime = System.currentTimeMillis()))
+
+    // The only lookup a driver's death can make: the pod informer knows the tag and nothing else,
+    // and the instance that observes it need never have served this user.
+    val found = jdbcMetadataStore.getSparkConnectSessionByEngineTag(sessionId)
+    assert(found.map(_.userName).contains("tagged_user"))
+    // Every batch and Thrift engine reaches the same lookup, so a miss must be ordinary.
+    assert(jdbcMetadataStore.getSparkConnectSessionByEngineTag("some-batch-engine").isEmpty)
+
+    jdbcMetadataStore.cleanupSparkConnectSessionByUserName("tagged_user")
+  }
+
+  test("recovery bookkeeping and driver post-mortems survive a round trip") {
+    val sessionId = UUID.randomUUID().toString
+    jdbcMetadataStore.insertSparkConnectSession(SparkConnectSessionInfo(
+      userName = "recovering_user",
+      sessionId = sessionId,
+      engineTag = sessionId,
+      engineToken = "an-engine-credential",
+      createTime = System.currentTimeMillis()))
+
+    val postMortem = SparkConnectDriverPostMortem(
+      engineTag = sessionId,
+      capturedTime = 1700000600000L,
+      driverName = "spark-connect-driver-1",
+      location = "analytics",
+      finalState = "Failed",
+      applicationState = "FAILED",
+      reason = None,
+      message = Some("the node was low on memory"),
+      containers = Seq(SparkConnectDriverContainerExit(
+        name = "spark-kubernetes-driver",
+        reason = Some("OOMKilled"),
+        message = None,
+        exitCode = Some(137),
+        signal = Some(9),
+        oomKilled = true,
+        restartCount = 0,
+        finishedAt = Some("2026-08-27T02:11:04Z"))),
+      events = Seq(SparkConnectDriverEventRecord(
+        eventType = "Warning",
+        reason = "Evicted",
+        message = "The node was low on resource: memory",
+        count = 1,
+        firstTimestamp = Some("2026-08-27T02:11:03Z"),
+        lastTimestamp = Some("2026-08-27T02:11:03Z"))))
+
+    val newSessionId = UUID.randomUUID().toString
+    jdbcMetadataStore.updateSparkConnectSessionRecovery(SparkConnectSessionInfo(
+      userName = "recovering_user",
+      sessionId = newSessionId,
+      engineTag = newSessionId,
+      engineToken = "a-fresh-credential",
+      generation = 1,
+      restartCount = 1,
+      lastRestartTime = 1700000700000L,
+      recoveryState = SparkConnectRecoveryState.ABANDONED,
+      recoveryMessage = Some("the driver died 4 times"),
+      engineConf = Map("spark.executor.memory" -> "8g"),
+      driverPostMortems = Seq(postMortem)))
+
+    val persisted = jdbcMetadataStore.getSparkConnectSessionByUserName("recovering_user")
+      .getOrElse(fail("the binding was not persisted"))
+    assert(persisted.generation == 1)
+    assert(persisted.restartCount == 1)
+    assert(persisted.lastRestartTime == 1700000700000L)
+    assert(persisted.isRecoveryAbandoned)
+    assert(persisted.recoveryMessage.contains("the driver died 4 times"))
+    // The conf a relaunched engine has to come up with.
+    assert(persisted.engineConf == Map("spark.executor.memory" -> "8g"))
+    // The point of the whole feature: this outlives the pod, its events, and this process.
+    assert(persisted.driverPostMortems == Seq(postMortem))
+    assert(persisted.latestPostMortem.exists(_.oomKilled))
+    assert(persisted.latestPostMortem.map(_.summary).contains("OOMKilled (exit 137)"))
+    assert(persisted.latestPostMortem.exists(_.events.exists(_.reason == "Evicted")))
+
+    jdbcMetadataStore.cleanupSparkConnectSessionByUserName("recovering_user")
   }
 }

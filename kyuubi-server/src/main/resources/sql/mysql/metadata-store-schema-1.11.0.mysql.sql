@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS spark_connect_session(
     engine_tag varchar(36) NOT NULL COMMENT 'the kyuubi-unique-tag label value of the engine',
     engine_token varchar(64) NOT NULL COMMENT 'the credential Kyuubi presents to the engine',
     create_time bigint NOT NULL COMMENT 'the binding create time',
-    generation int NOT NULL DEFAULT 0 COMMENT 'how many engines this binding has had; a new one is a new Spark session',
+    generation int NOT NULL DEFAULT 0 COMMENT 'how many engines this binding has had, and a new one is a new Spark session',
     restart_count int NOT NULL DEFAULT 0 COMMENT 'how many times recovery has relaunched a driver',
     last_restart_time bigint NOT NULL DEFAULT 0 COMMENT 'when the most recent relaunch started',
     recovery_state varchar(16) NOT NULL DEFAULT '' COMMENT 'empty, RECOVERING or ABANDONED',

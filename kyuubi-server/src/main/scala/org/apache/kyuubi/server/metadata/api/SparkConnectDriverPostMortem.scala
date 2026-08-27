@@ -17,7 +17,7 @@
 
 package org.apache.kyuubi.server.metadata.api
 
-import org.apache.kyuubi.engine.{KubernetesDriverPostMortem, KubernetesDriverPodEvent}
+import org.apache.kyuubi.engine.{KubernetesDriverPodEvent, KubernetesDriverPostMortem}
 
 /** One event recorded against a driver while it was alive, kept for as long as the post-mortem. */
 case class SparkConnectDriverEventRecord(

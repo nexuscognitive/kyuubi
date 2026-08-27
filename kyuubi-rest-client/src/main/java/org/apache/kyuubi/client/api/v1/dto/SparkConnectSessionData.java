@@ -57,7 +57,19 @@ public class SparkConnectSessionData {
       String engineId,
       String engineUrl,
       String connectUrl) {
-    this(sessionId, user, createTime, state, engineId, engineUrl, connectUrl, 0, 0, 0L, null, null,
+    this(
+        sessionId,
+        user,
+        createTime,
+        state,
+        engineId,
+        engineUrl,
+        connectUrl,
+        0,
+        0,
+        0L,
+        null,
+        null,
         Collections.emptyList());
   }
 
@@ -165,8 +177,8 @@ public class SparkConnectSessionData {
    *
    * <p>0 for a session on its original driver. Every increment is a driver replaced, and therefore
    * a <b>new Spark session</b> -- see {@link #getStateLossWarning()}. A client that keeps this
-   * value between polls can tell that its session was replaced without waiting to be surprised by
-   * a missing temporary view.
+   * value between polls can tell that its session was replaced without waiting to be surprised by a
+   * missing temporary view.
    */
   public int getGeneration() {
     return generation;
@@ -211,8 +223,7 @@ public class SparkConnectSessionData {
   /**
    * Set only on a session whose driver was replaced, to say that its Spark state did not survive.
    *
-   * <p>Null on a session that has never been restarted, so that it means something on one that
-   * has.
+   * <p>Null on a session that has never been restarted, so that it means something on one that has.
    */
   public String getStateLossWarning() {
     return stateLossWarning;
@@ -225,8 +236,8 @@ public class SparkConnectSessionData {
   /**
    * What killed this session's drivers, newest first.
    *
-   * <p>Captured while each pod still existed, so it survives both the pod and the Kubernetes
-   * events that would otherwise have been the only explanation.
+   * <p>Captured while each pod still existed, so it survives both the pod and the Kubernetes events
+   * that would otherwise have been the only explanation.
    */
   public List<SparkConnectDriverPostMortem> getDriverPostMortems() {
     return driverPostMortems == null ? Collections.emptyList() : driverPostMortems;
