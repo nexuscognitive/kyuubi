@@ -86,7 +86,8 @@ class KyuubiSparkConnectFrontendService(override val serverable: Serverable)
       new SparkConnectAuthenticator(conf),
       sessionManager.sparkConnectSessionRegistry,
       sessionManager.sparkConnectEngineLocator,
-      channelPool)
+      channelPool,
+      sessionManager.sparkConnectSessionSupervisor)
 
     grpcServer = KyuubiSparkConnectFrontendService
       .serverBuilder(conf, new InetSocketAddress(host, port))

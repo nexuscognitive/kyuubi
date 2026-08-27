@@ -170,17 +170,25 @@ class KyuubiSparkConnectFrontendServiceSuite extends KyuubiFunSuite {
    * genuinely crossed the transport rather than merely proved that a builder could be built.
    */
   private def withFrontendTransport(conf: KyuubiConf)(f: Int => Unit): Unit = {
+    val registry = new SparkConnectSessionRegistry(None)
+    val locator = new SparkConnectEngineLocator {
+      override def locate(engineTag: String): Option[SparkConnectEngineAddress] = None
+    }
     val relay = new SparkConnectRelay(
       new SparkConnectAuthenticator(conf),
-      new SparkConnectSessionRegistry(None),
-      new SparkConnectEngineLocator {
-        override def locate(engineTag: String): Option[SparkConnectEngineAddress] = None
-      },
+      registry,
+      locator,
       new SparkConnectEngineChannelPool(
         SparkConnectEngineChannelConf(
           maxInboundMessageSize = 4 * 1024 * 1024,
           keepAliveTimeMillis = 60000,
-          keepAliveTimeoutMillis = 20000)))
+          keepAliveTimeoutMillis = 20000)),
+      new SparkConnectSessionSupervisor(
+        conf,
+        registry,
+        locator,
+        new FakeSparkConnectDriverObserver(available = false),
+        _ => throw new IllegalStateException("this suite never provisions an engine")))
     var server: Server = null
     try {
       server = KyuubiSparkConnectFrontendService

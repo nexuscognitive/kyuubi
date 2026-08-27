@@ -1571,6 +1571,109 @@ object KyuubiConf {
       .checkValue(_ > 0, "must be positive")
       .createWithDefaultString("PT20S")
 
+  val FRONTEND_SPARK_CONNECT_RECOVERY_ENABLED: ConfigEntry[Boolean] =
+    buildConf("kyuubi.frontend.spark.connect.recovery.enabled")
+      .audience(SERVER)
+      .immutable
+      .doc("Whether Kyuubi relaunches the Spark Connect engine of a session whose driver has " +
+        "died. A relaunched driver is a <b>new Spark session</b>: temporary views, cached " +
+        "frames, registered artifacts and session-level Spark conf are all gone, and a client " +
+        "still holding the old Spark Connect session id is answered " +
+        "<code>INVALID_HANDLE.SESSION_NOT_FOUND</code> by the new engine. Recovery restores a " +
+        "usable endpoint, never the state that was on it. Disable this to leave a dead session " +
+        "dead, which is the right choice where a silent state loss is worse than an outage.")
+      .version("1.12.0")
+      .booleanConf
+      .createWithDefault(true)
+
+  val FRONTEND_SPARK_CONNECT_RECOVERY_EAGER_ENABLED: ConfigEntry[Boolean] =
+    buildConf("kyuubi.frontend.spark.connect.recovery.eager.enabled")
+      .audience(SERVER)
+      .immutable
+      .doc("Whether a dead driver is relaunched as soon as Kyuubi observes its death, rather " +
+        "than when the session is next used. Eager recovery keeps the endpoint warm, at the " +
+        "cost of burning a driver for a user who has gone home -- and a driver is the most " +
+        "expensive thing this gateway allocates. Lazy recovery, the default, relaunches on the " +
+        "next Spark Connect call or session create, so nobody pays for an engine nobody wants.")
+      .version("1.12.0")
+      .booleanConf
+      .createWithDefault(false)
+
+  val FRONTEND_SPARK_CONNECT_RECOVERY_EAGER_INTERVAL: ConfigEntry[Long] =
+    buildConf("kyuubi.frontend.spark.connect.recovery.eager.interval")
+      .audience(SERVER)
+      .immutable
+      .doc("How often the eager Spark Connect recovery reconciler sweeps for dead drivers. " +
+        "Ignored unless " +
+        "<code>kyuubi.frontend.spark.connect.recovery.eager.enabled</code> is set.")
+      .version("1.12.0")
+      .timeConf
+      .checkValue(_ > 0, "must be positive")
+      .createWithDefaultString("PT30S")
+
+  val FRONTEND_SPARK_CONNECT_RECOVERY_MAX_ATTEMPTS: ConfigEntry[Int] =
+    buildConf("kyuubi.frontend.spark.connect.recovery.max.attempts")
+      .audience(SERVER)
+      .immutable
+      .doc("How many times Kyuubi relaunches the engine of one Spark Connect session before " +
+        "giving up. A driver that dies on startup dies again on relaunch, so an unbounded " +
+        "policy turns one bad session into a cluster full of drivers that live for seconds. " +
+        "Once the attempts are spent the session goes to a terminal failed state carrying the " +
+        "reason, and the user has to create a new one.")
+      .version("1.12.0")
+      .intConf
+      .checkValue(_ > 0, "must be positive")
+      .createWithDefault(3)
+
+  val FRONTEND_SPARK_CONNECT_RECOVERY_BACKOFF_INITIAL: ConfigEntry[Long] =
+    buildConf("kyuubi.frontend.spark.connect.recovery.backoff.initial")
+      .audience(SERVER)
+      .immutable
+      .doc("How long Kyuubi waits before the first relaunch of a dead Spark Connect engine. " +
+        "Each further attempt doubles the wait, up to " +
+        "<code>kyuubi.frontend.spark.connect.recovery.backoff.max</code>.")
+      .version("1.12.0")
+      .timeConf
+      .checkValue(_ >= 0, "must not be negative")
+      .createWithDefaultString("PT10S")
+
+  val FRONTEND_SPARK_CONNECT_RECOVERY_BACKOFF_MAX: ConfigEntry[Long] =
+    buildConf("kyuubi.frontend.spark.connect.recovery.backoff.max")
+      .audience(SERVER)
+      .immutable
+      .doc("The ceiling on the doubling backoff between Spark Connect engine relaunches.")
+      .version("1.12.0")
+      .timeConf
+      .checkValue(_ >= 0, "must not be negative")
+      .createWithDefaultString("PT5M")
+
+  val FRONTEND_SPARK_CONNECT_POST_MORTEM_RETAIN: ConfigEntry[Int] =
+    buildConf("kyuubi.frontend.spark.connect.post.mortem.retain")
+      .audience(SERVER)
+      .immutable
+      .doc("How many dead-driver post-mortems are kept on one Spark Connect session record, " +
+        "newest first. More than one is the point: the same failure on every attempt is a crash " +
+        "loop, while three different failures are three problems. The default covers the death " +
+        "that triggered recovery plus the default number of relaunch attempts, which is what it " +
+        "takes to see a loop for what it is.")
+      .version("1.12.0")
+      .intConf
+      .checkValue(_ > 0, "must be positive")
+      .createWithDefault(4)
+
+  val FRONTEND_SPARK_CONNECT_POST_MORTEM_MAX_EVENTS: ConfigEntry[Int] =
+    buildConf("kyuubi.frontend.spark.connect.post.mortem.max.events")
+      .audience(SERVER)
+      .immutable
+      .doc("How many Kubernetes events are stored with each dead-driver post-mortem, newest " +
+        "first. Events are by far the largest part of the record and a driver that never got " +
+        "scheduled can accumulate hundreds of near-identical ones, none of which say more than " +
+        "the first few.")
+      .version("1.12.0")
+      .intConf
+      .checkValue(_ >= 0, "must not be negative")
+      .createWithDefault(20)
+
   val SESSION_SPARK_CONNECT_ENABLED: ConfigEntry[Boolean] =
     buildConf("kyuubi.session.spark.connect.enabled")
       .audience(SERVER)

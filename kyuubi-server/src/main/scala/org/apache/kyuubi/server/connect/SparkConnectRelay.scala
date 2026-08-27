@@ -99,7 +99,8 @@ private[kyuubi] class SparkConnectRelay(
     authenticator: SparkConnectAuthenticator,
     sessionRegistry: SparkConnectSessionRegistry,
     engineLocator: SparkConnectEngineLocator,
-    channelPool: SparkConnectEngineChannelPool)
+    channelPool: SparkConnectEngineChannelPool,
+    sessionSupervisor: SparkConnectSessionSupervisor)
   extends ServerCallHandler[Array[Byte], Array[Byte]] with Logging {
 
   import SparkConnectRelay._
@@ -138,13 +139,39 @@ private[kyuubi] class SparkConnectRelay(
         reject(serverCall, Status.FAILED_PRECONDITION.withDescription(NO_SESSION_MESSAGE))
       case Some(sessionInfo) =>
         engineLocator.locate(sessionInfo.engineTag) match {
-          case None =>
-            debug(s"Deferring $method for session ${sessionInfo.sessionId}:" +
-              s" engine ${sessionInfo.engineTag} is not serving yet")
-            reject(serverCall, Status.UNAVAILABLE.withDescription(ENGINE_NOT_READY_MESSAGE))
+          case None => deferOrReject(serverCall, sessionInfo, method)
           case Some(address) => relay(serverCall, headers, sessionInfo, address)
         }
     }
+
+  /**
+   * Answer a call whose engine is not there, having first given recovery the chance to start.
+   *
+   * A Spark Connect call is the other thing, besides a `POST` to the session endpoint, that
+   * proves somebody wants this session -- which is what lazy recovery waits for. The status
+   * chosen matters as much as the relaunch: `UNAVAILABLE` is retried by a Spark Connect client
+   * with backoff for the better part of ten minutes, which is right while a replacement driver
+   * starts and wrong once recovery has given up, where it would leave the client waiting out a
+   * deadline before showing an error that was known on the first call.
+   */
+  private def deferOrReject(
+      serverCall: ServerCall[Array[Byte], Array[Byte]],
+      sessionInfo: SparkConnectSessionInfo,
+      method: String): ServerCall.Listener[Array[Byte]] = {
+    sessionSupervisor.recoverIfDead(sessionInfo.userName, ENGINE_ASSUMED_RUNNING) match {
+      case SparkConnectRecoveryOutcome.Abandoned(reason) =>
+        debug(s"Rejecting $method for session ${sessionInfo.sessionId}: $reason")
+        reject(serverCall, Status.FAILED_PRECONDITION.withDescription(reason))
+      case SparkConnectRecoveryOutcome.Recovering =>
+        debug(s"Deferring $method for session ${sessionInfo.sessionId}:" +
+          s" engine ${sessionInfo.engineTag} is being replaced")
+        reject(serverCall, Status.UNAVAILABLE.withDescription(ENGINE_BEING_REPLACED_MESSAGE))
+      case _ =>
+        debug(s"Deferring $method for session ${sessionInfo.sessionId}:" +
+          s" engine ${sessionInfo.engineTag} is not serving yet")
+        reject(serverCall, Status.UNAVAILABLE.withDescription(ENGINE_NOT_READY_MESSAGE))
+    }
+  }
 
   /**
    * The caller's address, for the authentication provider that wants to see it.
@@ -186,7 +213,7 @@ private[kyuubi] class SparkConnectRelay(
           error(s"Failed to open a Spark Connect channel to $address", e)
           return reject(serverCall, Status.UNAVAILABLE.withDescription(ENGINE_NOT_READY_MESSAGE))
       }
-    val relayState = new RelayState(serverCall, clientCall)
+    val relayState = new RelayState(serverCall, clientCall, sessionInfo.generation)
     // The engine's own credential, not the caller's: the caller's terminates at this hop.
     val upstreamHeaders = SparkConnect.upstreamHeaders(headers, sessionInfo.engineToken)
     clientCall.start(relayState.clientListener, upstreamHeaders)
@@ -207,6 +234,24 @@ private[connect] object SparkConnectRelay {
       " from the Spark Connect page of the Kyuubi web UI, and connect again once it is running."
   private val ENGINE_NOT_READY_MESSAGE =
     "The Spark engine for this session is still starting; retrying shortly will succeed"
+  private[connect] val ENGINE_BEING_REPLACED_MESSAGE =
+    "The Spark driver for this session died and is being replaced. Retrying shortly will reach" +
+      " the new one -- but it is a new Spark session: temporary views, cached DataFrames and" +
+      " registered artifacts did not survive the driver that held them, and a client still using" +
+      " the previous Spark Connect session id will be told INVALID_HANDLE.SESSION_NOT_FOUND."
+
+  /**
+   * What the relay tells the supervisor it believed of the session before asking.
+   *
+   * A relay only reaches the supervisor with a session it holds a live binding for, so Kyuubi's
+   * own record says the engine is running; whether that is still true is the supervisor's to
+   * answer from the driver.
+   */
+  private val ENGINE_ASSUMED_RUNNING = SparkConnectSessionSupervisor.STATE_RUNNING
+
+  /** Names which engine answered a call; see [[SparkConnectRelay]]'s `withEngineGeneration`. */
+  private[connect] val ENGINE_GENERATION_HEADER: Metadata.Key[String] =
+    Metadata.Key.of("x-kyuubi-spark-connect-engine-generation", Metadata.ASCII_STRING_MARSHALLER)
 
   /**
    * Paces one direction of the relay so that at most one message is in flight beyond what gRPC
@@ -238,7 +283,8 @@ private[connect] object SparkConnectRelay {
    */
   private class RelayState(
       serverCall: ServerCall[Array[Byte], Array[Byte]],
-      clientCall: ClientCall[Array[Byte], Array[Byte]]) extends Logging {
+      clientCall: ClientCall[Array[Byte], Array[Byte]],
+      engineGeneration: Int) extends Logging {
 
     private val closed = new AtomicBoolean(false)
     private val headersSent = new AtomicBoolean(false)
@@ -287,7 +333,7 @@ private[connect] object SparkConnectRelay {
 
         override def onHeaders(headers: Metadata): Unit = {
           if (headersSent.compareAndSet(false, true)) {
-            serverCall.sendHeaders(headers)
+            serverCall.sendHeaders(withEngineGeneration(headers))
           }
         }
 
@@ -295,7 +341,7 @@ private[connect] object SparkConnectRelay {
           // gRPC delivers onHeaders before any message, but sendMessage throws if headers have
           // not gone out, so make the ordering explicit rather than depend on it.
           if (headersSent.compareAndSet(false, true)) {
-            serverCall.sendHeaders(new Metadata())
+            serverCall.sendHeaders(withEngineGeneration(new Metadata()))
           }
           serverCall.sendMessage(message)
           responsePacer.demandNext()
@@ -320,5 +366,19 @@ private[connect] object SparkConnectRelay {
 
         override def onReady(): Unit = requestPacer.onDestinationReady()
       }
+
+    /**
+     * Stamp the response with which engine answered it.
+     *
+     * The only in-band way a client can learn that its Spark session was replaced without first
+     * tripping over the consequences. The number changes exactly when a driver is relaunched, so
+     * a client that remembers it across calls knows its temporary views, cached frames and
+     * artifacts are gone before it goes looking for them. Clients that ignore the header lose
+     * nothing they had.
+     */
+    private def withEngineGeneration(headers: Metadata): Metadata = {
+      headers.put(ENGINE_GENERATION_HEADER, engineGeneration.toString)
+      headers
+    }
   }
 }

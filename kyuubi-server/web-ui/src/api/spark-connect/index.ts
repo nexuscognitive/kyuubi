@@ -31,15 +31,63 @@ export interface SparkConnectSession {
   connectUrl: string
 }
 
+/** Why one container of a dead driver stopped, as recorded when it died. */
+export interface SparkConnectDriverContainerExit {
+  name: string
+  reason: string | null
+  message: string | null
+  exitCode: number | null
+  signal: number | null
+  oomKilled: boolean
+  restartCount: number
+  finishedAt: string | null
+}
+
+/**
+ * What killed one of a session's drivers, captured while its pod still existed.
+ *
+ * Kubernetes collects a pod's events once the pod is gone, so this is the only account of a
+ * driver that died overnight. A session carries several, newest first: the same failure every
+ * time is a crash loop, three different failures are three problems.
+ */
+export interface SparkConnectDriverPostMortem {
+  capturedTime: number
+  driverName: string
+  location: string
+  finalState: string
+  applicationState: string
+  summary: string
+  oomKilled: boolean
+  reason: string | null
+  message: string | null
+  containers: SparkConnectDriverContainerExit[]
+  events: SparkConnectDriverEvent[]
+}
+
 /** A session as listed back. Deliberately has no `token` -- see the server-side DTO. */
 export interface SparkConnectSessionData {
   sessionId: string
   user: string
   createTime: number
+  /**
+   * Reconciled against the driver, not read off Kyuubi's session record.
+   *
+   * `PENDING` and `DEAD` are distinct on purpose: a driver that has not appeared yet is waited
+   * out, and one that appeared and died is acted on.
+   */
   state: string
   engineId: string
   engineUrl: string
   connectUrl: string
+  /** Bumped every time a driver is replaced. A new generation is a new Spark session. */
+  generation: number
+  restartCount: number
+  lastRestartTime: number
+  /** Why recovery is where it is -- above all, why it gave up and will not try again. */
+  recoveryMessage: string | null
+  /** Set only once a driver has actually been replaced, so it means something when it is. */
+  stateLossWarning: string | null
+  driverPostMortems: SparkConnectDriverPostMortem[]
 }
 
 /** A log the server hands back a page of, shaped like every other Kyuubi operation log. */
@@ -116,6 +164,21 @@ export function listSparkConnectSessions(): Promise<SparkConnectSessionData[]> {
     url: `${SPARK_CONNECT_BASE_URL}/sessions`,
     method: 'get'
   }) as Promise<SparkConnectSessionData[]>
+}
+
+/**
+ * One session, with its state reconciled against its driver and its restart history.
+ *
+ * Separate from the list call because the page polls this one while a session is recovering,
+ * and a list is a heavier answer to "is it back yet".
+ */
+export function getSparkConnectSession(
+  sessionId: string
+): Promise<SparkConnectSessionData> {
+  return request({
+    url: `${SPARK_CONNECT_BASE_URL}/sessions/${encodeURIComponent(sessionId)}`,
+    method: 'get'
+  }) as Promise<SparkConnectSessionData>
 }
 
 export function closeSparkConnectSession(sessionId: string): Promise<unknown> {

@@ -28,16 +28,14 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse
 import io.swagger.v3.oas.annotations.tags.Tag
 
 import org.apache.kyuubi.Logging
-import org.apache.kyuubi.client.api.v1.dto.{OperationLog, SessionOpenRequest, SparkConnectDriverContainer, SparkConnectDriverEvent, SparkConnectDriverEvents, SparkConnectDriverInfo, SparkConnectSession}
+import org.apache.kyuubi.client.api.v1.dto.{OperationLog, SessionOpenRequest, SparkConnectDriverContainer, SparkConnectDriverContainerExit, SparkConnectDriverEvent, SparkConnectDriverEvents, SparkConnectDriverInfo, SparkConnectDriverPostMortem, SparkConnectSession}
 import org.apache.kyuubi.client.api.v1.dto.SparkConnectSessionData
 import org.apache.kyuubi.config.KyuubiConf._
-import org.apache.kyuubi.config.KyuubiReservedKeys._
 import org.apache.kyuubi.engine.{KubernetesApplicationOperation, KubernetesDriverContainer, KubernetesDriverPodEvent}
-import org.apache.kyuubi.engine.spark.SparkProcessBuilder
 import org.apache.kyuubi.server.api.ApiRequestContext
-import org.apache.kyuubi.server.connect.SparkConnect
+import org.apache.kyuubi.server.connect.{SparkConnect, SparkConnectEngineConf, SparkConnectEngineRequest, SparkConnectRecoveryOutcome, SparkConnectSessionSupervisor}
+import org.apache.kyuubi.server.metadata
 import org.apache.kyuubi.session.{KyuubiSession, KyuubiSessionImpl, KyuubiSessionManager, SessionHandle}
-import org.apache.kyuubi.shaded.hive.service.rpc.thrift.TProtocolVersion
 
 /**
  * Creates the Spark Connect sessions that the Spark Connect gRPC frontend then attaches to.
@@ -81,17 +79,49 @@ private[v1] class SparkConnectResource extends ApiRequestContext with Logging {
     // would be unreachable -- and the conf on this request cannot be applied to an engine that is
     // already running anyway, which is why it is dropped rather than quietly half-honoured.
     registry.liveSession(userName) match {
-      case Some(existing) =>
+      case Some(existing) if isUsable(userName, existing.sessionId) =>
         info(s"Returning the existing Spark Connect session ${existing.sessionId} for $userName")
         new SparkConnectSession(existing.sessionId, connectUrl)
-      case None => createSession(userName, requestedConf, request)
+      case _ => createSession(userName, requestedConf)
     }
+  }
+
+  /**
+   * Whether the caller's existing session is one they can use, rather than one whose driver has
+   * died under it.
+   *
+   * A `POST` from a client that found its session broken is the clearest possible statement that
+   * somebody wants this session, so it is also where lazy recovery is triggered. The caller is
+   * handed the session they already have while the replacement engine comes up, and their Spark
+   * Connect calls are answered `UNAVAILABLE` until it is serving -- the same experience as a cold
+   * start, which is what a relaunch is.
+   */
+  private def isUsable(userName: String, sessionId: String): Boolean =
+    sessionManager.sparkConnectSessionSupervisor
+      .recoverIfDead(userName, recordState(sessionId)) match {
+      case SparkConnectRecoveryOutcome.Healthy => true
+      case SparkConnectRecoveryOutcome.Recovering => true
+      // Abandoned, or no binding at all: a new session is what the caller needs and asked for.
+      case _ => false
+    }
+
+  /** What Kyuubi's own session record says, before it is reconciled against the driver. */
+  private def recordState(sessionId: String): String =
+    sessionManager.getSessionOption(SessionHandle.fromUUID(sessionId))
+      .collect { case session: KyuubiSession => recordStateOf(session) }
+      .getOrElse(SparkConnectSessionSupervisor.STATE_CLOSED)
+
+  private def recordStateOf(session: KyuubiSession): String = {
+    val event = session.getSessionEvent
+    sessionState(
+      openedTime = event.map(_.openedTime).getOrElse(-1L),
+      endTime = event.map(_.endTime).getOrElse(-1L),
+      failed = event.exists(_.exception.isDefined))
   }
 
   private def createSession(
       userName: String,
-      requestedConf: Map[String, String],
-      request: SessionOpenRequest): SparkConnectSession = {
+      requestedConf: Map[String, String]): SparkConnectSession = {
     val registry = sessionManager.sparkConnectSessionRegistry
 
     // The engine is shared at USER level, so one left running by a previous session of this
@@ -103,22 +133,14 @@ private[v1] class SparkConnectResource extends ApiRequestContext with Logging {
       .filter(engine => sessionManager.sparkConnectEngineLocator.locate(engine.engineTag).nonEmpty)
     val engineToken = reusableEngine.map(_.engineToken).getOrElse(SparkConnect.generateToken())
 
-    val ipAddress = fe.getIpAddress
-    val handle = fe.be.openSession(
-      Option(request).flatMap(r => Option(r.getProtocolVersion))
-        .map(version => TProtocolVersion.findByValue(version.intValue))
-        .getOrElse(DEFAULT_SESSION_PROTOCOL_VERSION),
-      userName,
-      "",
-      ipAddress,
-      serverControlledConf(engineToken) ++ Map(
-        KYUUBI_CLIENT_IP_KEY -> ipAddress,
-        KYUUBI_SERVER_IP_KEY -> fe.host,
-        KYUUBI_SESSION_CONNECTION_URL_KEY -> fe.connectionUrl,
-        KYUUBI_SESSION_REAL_USER_KEY -> fe.getRealUser()) ++
-        clientControlledConf(requestedConf))
+    // The one provisioning path, shared with recovery: an engine relaunched under a dead session
+    // has to come up the way the original did, and a second copy of this call is how the two
+    // would drift apart.
+    val sessionId = sessionManager.openSparkConnectEngineSession(SparkConnectEngineRequest(
+      userName = userName,
+      engineToken = engineToken,
+      requestedConf = requestedConf))
 
-    val sessionId = handle.identifier.toString
     // A newly launched engine carries this session's id as its `kyuubi-unique-tag` pod label,
     // because that is the engine reference id Kyuubi tags the driver with.
     val engineTag = reusableEngine.map(_.engineTag).getOrElse(sessionId)
@@ -126,7 +148,10 @@ private[v1] class SparkConnectResource extends ApiRequestContext with Logging {
       userName = userName,
       sessionId = sessionId,
       engineTag = engineTag,
-      engineToken = engineToken)
+      engineToken = engineToken,
+      // Kept so that an engine relaunched by recovery comes up shaped the way this caller asked
+      // for, rather than on whatever the deployment defaults to.
+      engineConf = SparkConnectEngineConf.clientControlledConf(requestedConf))
     info(s"Created Spark Connect session $sessionId for $userName on engine $engineTag")
 
     new SparkConnectSession(sessionId, connectUrl)
@@ -154,20 +179,80 @@ private[v1] class SparkConnectResource extends ApiRequestContext with Logging {
       .sortBy(session => -session.getCreateTime.longValue())
   }
 
+  @ApiResponse(
+    responseCode = "200",
+    content = Array(new Content(
+      mediaType = MediaType.APPLICATION_JSON,
+      schema = new Schema(implementation = classOf[SparkConnectSessionData]))),
+    description = "Get the caller's own Spark Connect session, with driver-derived state")
+  @GET
+  @Path("sessions/{sessionId}")
+  def getSession(@PathParam("sessionId") sessionId: String): SparkConnectSessionData =
+    sessionData(resolveOwnSession(sessionId))
+
+  /**
+   * One session, with its state reconciled against the driver that is supposed to be serving it.
+   *
+   * The session record on its own says `RUNNING` from the moment the engine reported in and goes
+   * on saying it after the driver pod has been OOM-killed, evicted or deleted -- which is the
+   * defect this reconciliation exists to fix. The record still decides the two things a pod
+   * cannot contradict, a session the user closed and a launch that threw.
+   */
   private def sessionData(session: KyuubiSession): SparkConnectSessionData = {
     val event = session.getSessionEvent
+    val status =
+      sessionManager.sparkConnectSessionSupervisor.sessionStatus(
+        session.user,
+        recordStateOf(session))
+    val binding = status.binding
     new SparkConnectSessionData(
       session.handle.identifier.toString,
       session.user,
       session.createTime,
-      sessionState(
-        openedTime = event.map(_.openedTime).getOrElse(-1L),
-        endTime = event.map(_.endTime).getOrElse(-1L),
-        failed = event.exists(_.exception.isDefined)),
+      status.state,
       event.map(_.engineId).getOrElse(""),
       event.map(_.engineUrl).getOrElse(""),
-      connectUrl)
+      connectUrl,
+      binding.map(_.generation).getOrElse(0),
+      binding.map(_.restartCount).getOrElse(0),
+      Long.box(binding.map(_.lastRestartTime).getOrElse(0L)),
+      binding.flatMap(_.recoveryMessage).orNull,
+      // Only a session that has actually been through a restart carries the warning; saying it
+      // on every session would train an operator to ignore it on the one where it is true.
+      if (binding.exists(_.wasRestarted)) STATE_LOSS_MESSAGE else null,
+      binding.map(_.driverPostMortems).getOrElse(Nil).map(driverPostMortem).asJava)
   }
+
+  private def driverPostMortem(
+      postMortem: metadata.api.SparkConnectDriverPostMortem): SparkConnectDriverPostMortem =
+    new SparkConnectDriverPostMortem(
+      postMortem.capturedTime,
+      postMortem.driverName,
+      postMortem.location,
+      postMortem.finalState,
+      postMortem.applicationState,
+      postMortem.summary,
+      postMortem.oomKilled,
+      postMortem.reason.orNull,
+      postMortem.message.orNull,
+      postMortem.containers.map(container =>
+        new SparkConnectDriverContainerExit(
+          container.name,
+          container.reason.orNull,
+          container.message.orNull,
+          container.exitCode.map(Int.box).orNull,
+          container.signal.map(Int.box).orNull,
+          container.oomKilled,
+          container.restartCount,
+          container.finishedAt.orNull)).asJava,
+      postMortem.events.map(event =>
+        new SparkConnectDriverEvent(
+          event.eventType,
+          event.reason,
+          event.message,
+          event.count,
+          event.firstTimestamp.orNull,
+          event.lastTimestamp.orNull)).asJava)
 
   @ApiResponse(
     responseCode = "200",
@@ -289,7 +374,14 @@ private[v1] class SparkConnectResource extends ApiRequestContext with Logging {
       case Some(operation) =>
         operation.getDriverPodDetailByTag(engineTag(session)) match {
           case None =>
-            unavailableDriverInfo(sessionId, NO_DRIVER_POD_MESSAGE, engineId, engineUrl)
+            // A dead session's driver pod has usually been reclaimed by the time anyone comes
+            // looking, so answer from the post-mortem taken while it still existed rather than
+            // with "not found", which is what sent the operator to the cluster in the first place.
+            unavailableDriverInfo(
+              sessionId,
+              storedPostMortem(session).map(deadDriverMessage).getOrElse(NO_DRIVER_POD_MESSAGE),
+              engineId,
+              engineUrl)
           case Some(pod) =>
             new SparkConnectDriverInfo(
               sessionId,
@@ -362,6 +454,37 @@ private[v1] class SparkConnectResource extends ApiRequestContext with Logging {
     new OperationLog(logLines.asJava, logLines.size)
   }
 
+  /**
+   * What Kyuubi captured when this session's driver died, if it ever did.
+   *
+   * Read from the session binding rather than from the cluster, which is the point: the pod and
+   * its events are long gone by the time most people look.
+   */
+  private def storedPostMortem(
+      session: KyuubiSessionImpl): Option[metadata.api.SparkConnectDriverPostMortem] =
+    sessionManager.sparkConnectSessionRegistry.lookup(session.user).flatMap(_.latestPostMortem)
+
+  private def deadDriverMessage(
+      postMortem: metadata.api.SparkConnectDriverPostMortem): String =
+    s"The driver pod ${postMortem.driverName} is gone. Kyuubi recorded why it died while the pod" +
+      s" still existed: ${postMortem.summary}. Its Kubernetes events, as of that moment, are on" +
+      " the driver events endpoint."
+
+  private def postMortemEventsMessage(
+      postMortem: metadata.api.SparkConnectDriverPostMortem): String =
+    s"The driver pod ${postMortem.driverName} is gone and Kubernetes has collected its events." +
+      " These are the ones Kyuubi copied out as it died, newest first."
+
+  private def storedDriverEvent(
+      event: metadata.api.SparkConnectDriverEventRecord): SparkConnectDriverEvent =
+    new SparkConnectDriverEvent(
+      event.eventType,
+      event.reason,
+      event.message,
+      event.count,
+      event.firstTimestamp.orNull,
+      event.lastTimestamp.orNull)
+
   @ApiResponse(
     responseCode = "200",
     content = Array(new Content(
@@ -381,7 +504,17 @@ private[v1] class SparkConnectResource extends ApiRequestContext with Logging {
       case Some(operation) =>
         operation.getDriverPodEventDetailsByTag(engineTag(session), size) match {
           case None =>
-            unavailableDriverEvents(sessionId, NO_DRIVER_POD_MESSAGE)
+            // The pod is gone, and Kubernetes collected its events with it. What is left is what
+            // Kyuubi copied out while the pod was dying, which is the whole reason it did so.
+            storedPostMortem(session) match {
+              case Some(postMortem) =>
+                new SparkConnectDriverEvents(
+                  sessionId,
+                  true,
+                  postMortemEventsMessage(postMortem),
+                  postMortem.events.take(math.max(size, 0)).map(storedDriverEvent).asJava)
+              case None => unavailableDriverEvents(sessionId, NO_DRIVER_POD_MESSAGE)
+            }
           case Some(events) =>
             // A driver pod with no events is normal once it has settled, so this is available
             // with an empty list rather than unavailable.
@@ -431,21 +564,9 @@ private[v1] class SparkConnectResource extends ApiRequestContext with Logging {
     s"sc://$advertisedHost:${conf.get(FRONTEND_SPARK_CONNECT_BIND_PORT)}"
   }
 }
-
 private[v1] object SparkConnectResource {
 
-  private val DEFAULT_SESSION_PROTOCOL_VERSION =
-    SessionsResource.DEFAULT_SESSION_PROTOCOL_VERSION
-
-  /** The engine has been asked for but has not reported in yet. */
-  private[v1] val STATE_PENDING = "PENDING"
-
-  /** The engine is up and the session is usable. */
-  private[v1] val STATE_RUNNING = "RUNNING"
-
-  private[v1] val STATE_CLOSED = "CLOSED"
-
-  private[v1] val STATE_FAILED = "FAILED"
+  import SparkConnectSessionSupervisor.{STATE_CLOSED, STATE_FAILED, STATE_PENDING, STATE_RUNNING}
 
   /**
    * What the driver endpoints say instead of failing.
@@ -470,21 +591,31 @@ private[v1] object SparkConnectResource {
       "instance may not be the one that launched the engine."
 
   /**
-   * Whether a session belongs to the Spark Connect frontend.
+   * What a session that has been through a restart has to say for itself.
    *
-   * Keyed off the conf this resource itself pins, so a session opened through any other frontend
-   * -- Thrift, the ordinary REST session API -- is never listed here even though it lives in the
-   * same session manager.
+   * Shown on the session rather than only at the moment of the restart, because the client that
+   * needs to hear it is the one that reconnected afterwards and is about to discover its
+   * temporary views missing.
    */
+  private[v1] val STATE_LOSS_MESSAGE =
+    "The Spark driver for this session was replaced after it died. The replacement is a new " +
+      "Spark session: temporary views, cached DataFrames, registered artifacts and any " +
+      "session-level Spark conf set over the connection are gone. A client still holding the " +
+      "previous Spark Connect session id will be answered INVALID_HANDLE.SESSION_NOT_FOUND and " +
+      "should build a new SparkSession."
+
+  /** @see [[org.apache.kyuubi.server.connect.SparkConnectEngineConf.isSparkConnectSession]] */
   private[v1] def isSparkConnectSession(sessionConf: Map[String, String]): Boolean =
-    sessionConf.get(SESSION_SPARK_CONNECT_ENABLED.key).contains("true")
+    SparkConnectEngineConf.isSparkConnectSession(sessionConf)
 
   /**
-   * The lifecycle stage of a session, from the timestamps its event carries.
+   * The lifecycle stage of a session as Kyuubi's own record has it, from the timestamps its event
+   * carries.
    *
-   * `PENDING` is the interesting one: an engine takes a minute or two to come up, and until it
-   * does the gRPC port answers `UNAVAILABLE`. A user staring at a client that is quietly retrying
-   * needs to be able to tell "still starting" from "broken".
+   * This is only half the answer, and the half that knows nothing about the driver: the record
+   * goes on saying `RUNNING` after the driver pod has been OOM-killed or deleted, because nothing
+   * about that death travels back to it. [[SparkConnectSessionSupervisor.reconcileState]]
+   * reconciles it against the pod before anyone is shown it.
    */
   private[v1] def sessionState(openedTime: Long, endTime: Long, failed: Boolean): String = {
     if (failed) STATE_FAILED
@@ -492,67 +623,4 @@ private[v1] object SparkConnectResource {
     else if (openedTime > 0) STATE_RUNNING
     else STATE_PENDING
   }
-
-  /**
-   * The subdomain that keeps a Spark Connect engine to itself.
-   *
-   * At `USER` share level the engine space is keyed by user and subdomain, so without this a
-   * Spark Connect session would be handed whatever ordinary Thrift or REST engine the same user
-   * already had -- a driver launched without the Spark Connect plugin, which answers nothing on
-   * the gRPC port. It also keeps the reverse from happening to an unsuspecting Thrift session.
-   */
-  private[v1] val ENGINE_SUBDOMAIN = "spark-connect"
-
-  /**
-   * Conf that only Kyuubi may set.
-   *
-   * The engine share level is `USER`, with a subdomain of its own. A Spark Connect session is
-   * stateful -- artifacts, temporary views, cached frames -- so the engine cannot be shared
-   * across users; within one user it can be, because there is at most one Spark Connect session
-   * per user and the state that survives between two of their own sessions is their own. Sharing
-   * it that far is what lets a user who closes a session and opens another get their engine back
-   * in a second rather than waiting out another cold start.
-   *
-   * The token is Kyuubi's credential for the engine, minted when the engine is launched and
-   * reused for as long as that driver lives. It is never returned to a client: callers
-   * authenticate with their own platform credential, which terminates at the frontend.
-   *
-   * The deploy mode is pinned to `cluster` for Spark Connect alone -- other engine types keep
-   * whatever the deployment configures. In client mode the driver JVM runs inside the Kyuubi
-   * pod, where `SparkConnectPlugin` tries to bind [[FRONTEND_SPARK_CONNECT_ENGINE_PORT]] in the
-   * same network namespace that the gateway's own Spark Connect frontend already listens on, and
-   * fails outright because `spark.port.maxRetries` defaults to 0. Even on a free port a
-   * client-mode engine would be unreachable: [[SparkConnectEngineLocator]] resolves an engine by
-   * finding the driver pod that carries its `kyuubi-unique-tag`, and in client mode there is no
-   * such pod.
-   */
-  private[v1] def serverControlledConf(engineToken: String): Map[String, String] = Map(
-    SESSION_SPARK_CONNECT_ENABLED.key -> "true",
-    SESSION_SPARK_CONNECT_TOKEN.key -> engineToken,
-    ENGINE_TYPE.key -> "SPARK_SQL",
-    ENGINE_SHARE_LEVEL.key -> "USER",
-    ENGINE_SHARE_LEVEL_SUBDOMAIN.key -> ENGINE_SUBDOMAIN,
-    SparkProcessBuilder.DEPLOY_MODE_KEY -> DEPLOY_MODE_CLUSTER)
-
-  /** The only deploy mode a Spark Connect engine works in -- see [[serverControlledConf]]. */
-  private[v1] val DEPLOY_MODE_CLUSTER = "cluster"
-
-  private[v1] val SERVER_CONTROLLED_KEYS: Set[String] = Set(
-    SESSION_SPARK_CONNECT_ENABLED.key,
-    SESSION_SPARK_CONNECT_TOKEN.key,
-    ENGINE_TYPE.key,
-    ENGINE_SHARE_LEVEL.key,
-    ENGINE_SHARE_LEVEL_SUBDOMAIN.key,
-    SparkProcessBuilder.DEPLOY_MODE_KEY)
-
-  /**
-   * The caller's conf, minus anything only Kyuubi may set.
-   *
-   * Stripping rather than rejecting keeps a client that echoes a previous session's conf working,
-   * and a self-declared engine token would be inert anyway -- the frontend presents the one from
-   * the routing record, which only this endpoint writes -- but letting one through would still be
-   * a needless surprise.
-   */
-  private[v1] def clientControlledConf(requestedConf: Map[String, String]): Map[String, String] =
-    requestedConf -- SERVER_CONTROLLED_KEYS
 }

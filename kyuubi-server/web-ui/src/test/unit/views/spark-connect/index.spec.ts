@@ -19,18 +19,25 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import SessionCard from '@/views/spark-connect/components/SessionCard.vue'
+import type { SparkConnectSessionData } from '@/api/spark-connect'
 import { createI18n } from '@/test/unit/utils'
 import en_US from '@/locales/en_US'
 import zh_CN from '@/locales/zh_CN'
 
-const SESSION = {
+const SESSION: SparkConnectSessionData = {
   sessionId: 'a-session-id',
   user: 'alice',
   createTime: 1700000000000,
   state: 'RUNNING',
   engineId: 'spark-application-1',
   engineUrl: 'http://engine:4040',
-  connectUrl: 'sc://kyuubi.example.com:15002'
+  connectUrl: 'sc://kyuubi.example.com:15002',
+  generation: 0,
+  restartCount: 0,
+  lastRestartTime: 0,
+  recoveryMessage: null,
+  stateLossWarning: null,
+  driverPostMortems: []
 }
 
 function mountCard(overrides: Partial<typeof SESSION> = {}) {

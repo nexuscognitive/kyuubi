@@ -46,9 +46,12 @@
         <el-tag :type="stateTagType" disable-transitions>
           {{ session.state }}
         </el-tag>
-        <span v-if="session.state === 'PENDING'" class="state-note">
-          {{ $t('spark_connect.pending_note') }}
-        </span>
+        <!--
+          The state is derived from the driver pod, so DEAD and FAILED are things that actually
+          happened rather than guesses -- and each one calls for a different response, which is
+          why each gets its own sentence instead of a shared "something is wrong".
+        -->
+        <span v-if="stateNote" class="state-note">{{ stateNote }}</span>
       </dd>
 
       <dt>{{ $t('session_id') }}</dt>
@@ -88,9 +91,12 @@
 
 <script lang="ts" setup>
   import { computed } from 'vue'
+  import { useI18n } from 'vue-i18n'
   import { format } from 'date-fns'
   import type { SparkConnectSessionData } from '@/api/spark-connect'
   import { buildPySparkSnippet } from '../utils/snippet'
+
+  const { t } = useI18n()
 
   const props = defineProps<{ session: SparkConnectSessionData }>()
   const emit = defineEmits<{
@@ -102,13 +108,27 @@
   const STATE_TAG_TYPES: Record<string, string> = {
     RUNNING: 'success',
     PENDING: 'warning',
+    RECOVERING: 'warning',
+    DEAD: 'danger',
     FAILED: 'danger',
     CLOSED: 'info'
+  }
+
+  const STATE_NOTES: Record<string, string> = {
+    PENDING: 'spark_connect.pending_note',
+    RECOVERING: 'spark_connect.state_recovering_note',
+    DEAD: 'spark_connect.state_dead_note',
+    FAILED: 'spark_connect.state_failed_note'
   }
 
   const stateTagType = computed(
     () => STATE_TAG_TYPES[props.session.state] ?? 'info'
   )
+
+  const stateNote = computed(() => {
+    const key = STATE_NOTES[props.session.state]
+    return key ? t(key) : null
+  })
 
   const formattedCreateTime = computed(() => {
     const createTime = props.session.createTime
