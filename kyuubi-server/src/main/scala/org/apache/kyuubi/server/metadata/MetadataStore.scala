@@ -141,6 +141,17 @@ trait MetadataStore extends Closeable {
   def getSparkConnectSessionByUserName(userName: String): Option[SparkConnectSessionInfo]
 
   /**
+   * Overwrite a user's Spark Connect record with the engine and recovery bookkeeping it now
+   * carries -- a replacement engine after a relaunch, the attempt count, why recovery was
+   * abandoned, and the post-mortems of the drivers that died.
+   *
+   * An update rather than a delete-and-insert because the post-mortem history has to survive the
+   * write that records the next failure; that history is the only remaining account of drivers
+   * whose pods, and whose Kubernetes events, no longer exist.
+   */
+  def updateSparkConnectSessionRecovery(sessionInfo: SparkConnectSessionInfo): Unit
+
+  /**
    * Clear the session handle on a Spark Connect record, leaving the engine binding in place.
    * Called when the session closes; the engine outlives it and the user's next session is handed
    * the same driver by engine discovery.

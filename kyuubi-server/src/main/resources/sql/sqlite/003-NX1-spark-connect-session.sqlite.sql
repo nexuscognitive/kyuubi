@@ -14,7 +14,13 @@ CREATE TABLE IF NOT EXISTS spark_connect_session(
     session_id varchar(36) NOT NULL, -- the Kyuubi session handle, empty once it has closed
     engine_tag varchar(36) NOT NULL, -- the kyuubi-unique-tag label value of the engine
     engine_token varchar(64) NOT NULL, -- the credential Kyuubi presents to the engine
-    create_time bigint NOT NULL -- the binding create time
+    create_time bigint NOT NULL, -- the binding create time
+    generation int NOT NULL DEFAULT 0, -- how many engines this binding has had; a new one is a new Spark session
+    restart_count int NOT NULL DEFAULT 0, -- how many times recovery has relaunched a driver
+    last_restart_time bigint NOT NULL DEFAULT 0, -- when the most recent relaunch started
+    recovery_state varchar(16) NOT NULL DEFAULT '', -- empty, RECOVERING or ABANDONED
+    recovery_message text, -- why recovery is where it is, above all why it was abandoned
+    driver_post_mortems text -- JSON: what killed this binding's drivers, newest first, captured while each pod still existed
 );
 
 CREATE INDEX IF NOT EXISTS spark_connect_session_user_name_index ON spark_connect_session(user_name);

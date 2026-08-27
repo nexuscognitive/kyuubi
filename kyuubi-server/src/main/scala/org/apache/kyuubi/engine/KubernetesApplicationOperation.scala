@@ -18,7 +18,7 @@
 package org.apache.kyuubi.engine
 
 import java.util.Locale
-import java.util.concurrent.{ConcurrentHashMap, ScheduledExecutorService, ThreadPoolExecutor, TimeUnit}
+import java.util.concurrent.{ConcurrentHashMap, CopyOnWriteArrayList, ScheduledExecutorService, ThreadPoolExecutor, TimeUnit}
 
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
@@ -84,6 +84,11 @@ class KubernetesApplicationOperation extends ApplicationOperation with Logging {
   private var cleanupCanceledAppPodExecutor: ThreadPoolExecutor = _
 
   private var kubernetesClientInitializeCleanupTerminatedPodExecutor: ThreadPoolExecutor = _
+
+  private var driverPostMortemExecutor: ThreadPoolExecutor = _
+
+  private val driverTerminationListeners =
+    new CopyOnWriteArrayList[KubernetesDriverPostMortem => Unit]()
 
   private def getOrCreateKubernetesClient(kubernetesInfo: KubernetesInfo): KubernetesClient = {
     checkKubernetesInfo(kubernetesInfo)
@@ -213,6 +218,10 @@ class KubernetesApplicationOperation extends ApplicationOperation with Logging {
     kubernetesClientInitializeCleanupTerminatedPodExecutor =
       ThreadUtils.newDaemonCachedThreadPool(
         "kubernetes-client-initialize-cleanup-terminated-pod-thread")
+    // Off the informer thread: capturing a post-mortem calls the API server for the pod's events,
+    // and a stalled informer stops every application state in this process from advancing.
+    driverPostMortemExecutor = ThreadUtils.newDaemonCachedThreadPool(
+      "driver-post-mortem-thread")
     initializeKubernetesClient(kyuubiConf)
   }
 
@@ -667,6 +676,11 @@ class KubernetesApplicationOperation extends ApplicationOperation with Logging {
       ThreadUtils.shutdown(kubernetesClientInitializeCleanupTerminatedPodExecutor)
       kubernetesClientInitializeCleanupTerminatedPodExecutor = null
     }
+
+    if (driverPostMortemExecutor != null) {
+      ThreadUtils.shutdown(driverPostMortemExecutor)
+      driverPostMortemExecutor = null
+    }
   }
 
   private class SparkEnginePodEventHandler(kubernetesInfo: KubernetesInfo)
@@ -839,8 +853,123 @@ class KubernetesApplicationOperation extends ApplicationOperation with Logging {
         engineError = appError)))
     if (cleanupTerminatedAppInfoTrigger.getIfPresent(key) == null) {
       cleanupTerminatedAppInfoTrigger.put(key, appState)
+      // Inside the same first-observation guard as the cleanup trigger, so a driver that the
+      // informer reports terminated and then deleted produces one post-mortem rather than two.
+      captureDriverPostMortem(kubernetesInfo, pod, key, appState, appError)
     }
   }
+
+  /**
+   * Register a callback invoked once per engine, when its driver pod is first observed terminated.
+   *
+   * Fires for every Spark engine driver, batch and interactive alike, so a listener that cares
+   * about a subset must filter on [[KubernetesDriverPostMortem.engineTag]].
+   */
+  private[kyuubi] def onDriverTerminated(listener: KubernetesDriverPostMortem => Unit): Unit =
+    driverTerminationListeners.add(listener)
+
+  /**
+   * Copy out everything that explains this driver's death, before Kubernetes reclaims it.
+   *
+   * Pod events are namespaced objects with a short TTL, garbage-collected once the object they
+   * involve is gone, so asking for them after the fact is too late by construction -- which is
+   * exactly the position an operator is in when they come looking hours later. The pod-derived
+   * half of the snapshot is built here, synchronously, from the object the informer already
+   * handed us: even if the events call below loses its race with the API server's garbage
+   * collector, the phase, the exit code and the OOM flag survive.
+   */
+  private def captureDriverPostMortem(
+      kubernetesInfo: KubernetesInfo,
+      pod: Pod,
+      engineTag: String,
+      appState: ApplicationState,
+      appError: Option[String]): Unit = {
+    if (driverTerminationListeners.isEmpty || driverPostMortemExecutor == null) {
+      return
+    }
+    val status = Option(pod.getStatus)
+    val containers = status.flatMap(s => Option(s.getContainerStatuses))
+      .map(_.asScala.toSeq).getOrElse(Nil)
+      .map(toContainerTermination)
+    val postMortem = KubernetesDriverPostMortem(
+      engineTag = engineTag,
+      capturedTime = System.currentTimeMillis(),
+      podName = pod.getMetadata.getName,
+      namespace = pod.getMetadata.getNamespace,
+      finalPhase = status.flatMap(s => Option(s.getPhase)).getOrElse(UNKNOWN_POD_PHASE),
+      applicationState = appState.toString,
+      reason = status.flatMap(s => Option(s.getReason)).filter(_.nonEmpty),
+      message = status.flatMap(s => Option(s.getMessage)).filter(_.nonEmpty).orElse(appError),
+      containers = containers,
+      events = Nil)
+    driverPostMortemExecutor.submit(new Runnable {
+      override def run(): Unit = {
+        val withEvents = postMortem.copy(events = driverPodEventsAtDeath(kubernetesInfo, pod))
+        driverTerminationListeners.asScala.foreach { listener =>
+          try {
+            listener(withEvents)
+          } catch {
+            case NonFatal(e) =>
+              warn(s"A driver termination listener failed for ${toLabel(engineTag)}", e)
+          }
+        }
+      }
+    })
+  }
+
+  /**
+   * The pod's events, read by UID so a later pod of the same name cannot contribute any.
+   *
+   * Best effort by design: losing the race against event garbage collection must degrade the
+   * post-mortem, not discard it.
+   */
+  private def driverPodEventsAtDeath(
+      kubernetesInfo: KubernetesInfo,
+      pod: Pod): Seq[KubernetesDriverPodEvent] = {
+    try {
+      val client = getOrCreateKubernetesClient(kubernetesInfo)
+      client.v1().events().inNamespace(pod.getMetadata.getNamespace)
+        .withField("involvedObject.uid", pod.getMetadata.getUid)
+        .list().getItems.asScala.toSeq
+        .sortBy(driverPodEventTimestamp)(Ordering[String].reverse)
+        .take(DEFAULT_MAX_DRIVER_POD_EVENTS)
+        .map(toDriverPodEventDetail)
+    } catch {
+      case NonFatal(e) =>
+        warn(s"Failed to capture the events of dying driver pod ${pod.getMetadata.getName}:" +
+          s" ${e.getMessage}")
+        Nil
+    }
+  }
+
+  private def toContainerTermination(
+      containerStatus: ContainerStatus): KubernetesDriverContainerTermination = {
+    // The current terminated state when the container stopped for good; the last one when it
+    // stopped, was restarted, and is now waiting or running again.
+    val terminated = Option(containerStatus.getState).flatMap(s => Option(s.getTerminated))
+      .orElse(Option(containerStatus.getLastState).flatMap(s => Option(s.getTerminated)))
+    val reason = terminated.flatMap(t => Option(t.getReason)).filter(_.nonEmpty)
+    KubernetesDriverContainerTermination(
+      name = containerStatus.getName,
+      reason = reason,
+      message = terminated.flatMap(t => Option(t.getMessage)).filter(_.nonEmpty),
+      exitCode = terminated.flatMap(t => Option(t.getExitCode)).map(_.intValue),
+      signal = terminated.flatMap(t => Option(t.getSignal)).map(_.intValue),
+      oomKilled = reason.contains(OOM_KILLED_REASON),
+      restartCount = Option(containerStatus.getRestartCount).map(_.intValue).getOrElse(0),
+      finishedAt = terminated.flatMap(t => Option(t.getFinishedAt)).filter(_.nonEmpty))
+  }
+
+  /**
+   * The application state Kyuubi's own informer holds for `tag`, or [[None]] when it holds none.
+   *
+   * Read straight out of the informer-maintained store, so it costs no API call. [[None]] means
+   * this instance has never seen a driver pod carrying the tag -- which is not the same as having
+   * seen one die, and callers that must tell "never started" from "died" depend on the
+   * difference.
+   */
+  private[kyuubi] def getEngineApplicationStateByTag(tag: String): Option[ApplicationState] =
+    Option(appInfoStore.get(tag)).map(_._2.state)
 
   private def deletePod(
       kubernetesInfo: KubernetesInfo,
@@ -906,6 +1035,9 @@ object KubernetesApplicationOperation extends Logging {
   /** The type Kubernetes assumes for an event that does not declare one. */
   private val DEFAULT_EVENT_TYPE = "Normal"
   private val DEFAULT_MAX_DRIVER_POD_EVENTS = 100
+
+  /** The container termination reason the kubelet writes when the cgroup OOM killer fired. */
+  private val OOM_KILLED_REASON = "OOMKilled"
 
   def toLabel(tag: String): String = s"label: $LABEL_KYUUBI_UNIQUE_KEY=$tag"
 

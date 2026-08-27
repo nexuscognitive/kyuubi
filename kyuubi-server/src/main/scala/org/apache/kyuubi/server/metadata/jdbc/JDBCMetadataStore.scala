@@ -27,6 +27,8 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable.ListBuffer
 import scala.util.Try
 
+import com.fasterxml.jackson.core.JsonProcessingException
+import com.fasterxml.jackson.core.type.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
 import com.google.common.annotations.VisibleForTesting
@@ -36,7 +38,7 @@ import org.apache.kyuubi.{KyuubiException, Logging, Utils}
 import org.apache.kyuubi.config.KyuubiConf
 import org.apache.kyuubi.operation.OperationState
 import org.apache.kyuubi.server.metadata.MetadataStore
-import org.apache.kyuubi.server.metadata.api.{KubernetesEngineInfo, Metadata, MetadataFilter, SparkConnectSessionInfo}
+import org.apache.kyuubi.server.metadata.api.{KubernetesEngineInfo, Metadata, MetadataFilter, SparkConnectDriverPostMortem, SparkConnectRecoveryState, SparkConnectSessionInfo}
 import org.apache.kyuubi.server.metadata.jdbc.DatabaseType._
 import org.apache.kyuubi.server.metadata.jdbc.JDBCMetadataStoreConf._
 import org.apache.kyuubi.session.SessionType
@@ -99,6 +101,12 @@ class JDBCMetadataStore(conf: KyuubiConf) extends MetadataStore with Logging {
    */
   private def migrateSchema(): Unit = {
     ensureColumn(METADATA_TABLE, "version", "int NOT NULL DEFAULT 0")
+    ensureColumn(SPARK_CONNECT_SESSION_TABLE, "generation", "int NOT NULL DEFAULT 0")
+    ensureColumn(SPARK_CONNECT_SESSION_TABLE, "restart_count", "int NOT NULL DEFAULT 0")
+    ensureColumn(SPARK_CONNECT_SESSION_TABLE, "last_restart_time", "bigint NOT NULL DEFAULT 0")
+    ensureColumn(SPARK_CONNECT_SESSION_TABLE, "recovery_state", "varchar(16) NOT NULL DEFAULT ''")
+    ensureColumn(SPARK_CONNECT_SESSION_TABLE, "recovery_message", "text")
+    ensureColumn(SPARK_CONNECT_SESSION_TABLE, "driver_post_mortems", "text")
   }
 
   /**
@@ -594,7 +602,7 @@ class JDBCMetadataStore(conf: KyuubiConf) extends MetadataStore with Logging {
     val query =
       s"""
          |INSERT INTO $SPARK_CONNECT_SESSION_TABLE ($SPARK_CONNECT_SESSION_COLUMNS_STR)
-         |VALUES (?, ?, ?, ?, ?)
+         |VALUES ($SPARK_CONNECT_SESSION_VALUE_PLACEHOLDERS)
          |""".stripMargin
     JdbcUtils.withConnection { connection =>
       execute(
@@ -604,7 +612,39 @@ class JDBCMetadataStore(conf: KyuubiConf) extends MetadataStore with Logging {
         sessionInfo.sessionId,
         sessionInfo.engineTag,
         sessionInfo.engineToken,
-        sessionInfo.createTime)
+        sessionInfo.createTime,
+        sessionInfo.generation,
+        sessionInfo.restartCount,
+        sessionInfo.lastRestartTime,
+        sessionInfo.recoveryState,
+        sessionInfo.recoveryMessage.getOrElse(""),
+        valueAsString(sessionInfo.driverPostMortems))
+    }
+  }
+
+  override def updateSparkConnectSessionRecovery(sessionInfo: SparkConnectSessionInfo): Unit = {
+    val query =
+      s"""
+         |UPDATE $SPARK_CONNECT_SESSION_TABLE
+         |SET session_id = ?, engine_tag = ?, engine_token = ?, generation = ?,
+         |    restart_count = ?, last_restart_time = ?, recovery_state = ?,
+         |    recovery_message = ?, driver_post_mortems = ?
+         |WHERE user_name = ?
+         |""".stripMargin
+    JdbcUtils.withConnection { connection =>
+      execute(
+        connection,
+        query,
+        sessionInfo.sessionId,
+        sessionInfo.engineTag,
+        sessionInfo.engineToken,
+        sessionInfo.generation,
+        sessionInfo.restartCount,
+        sessionInfo.lastRestartTime,
+        sessionInfo.recoveryState,
+        sessionInfo.recoveryMessage.getOrElse(""),
+        valueAsString(sessionInfo.driverPostMortems),
+        sessionInfo.userName)
     }
   }
 
@@ -660,7 +700,17 @@ class JDBCMetadataStore(conf: KyuubiConf) extends MetadataStore with Logging {
           sessionId = Option(resultSet.getString("session_id")).getOrElse(""),
           engineTag = resultSet.getString("engine_tag"),
           engineToken = resultSet.getString("engine_token"),
-          createTime = resultSet.getLong("create_time"))
+          createTime = resultSet.getLong("create_time"),
+          generation = resultSet.getInt("generation"),
+          restartCount = resultSet.getInt("restart_count"),
+          lastRestartTime = resultSet.getLong("last_restart_time"),
+          // A row written before the recovery columns existed reads back as NULL here, and a
+          // binding whose recovery has never run reads back as the empty string; both mean the
+          // same thing and neither may throw.
+          recoveryState = Option(resultSet.getString("recovery_state"))
+            .getOrElse(SparkConnectRecoveryState.NONE),
+          recoveryMessage = Option(resultSet.getString("recovery_message")).filter(_.nonEmpty),
+          driverPostMortems = string2PostMortems(resultSet.getString("driver_post_mortems")))
       }
       sessionInfoList
     } finally {
@@ -866,6 +916,26 @@ class JDBCMetadataStore(conf: KyuubiConf) extends MetadataStore with Logging {
       mapper.readValue(str, classOf[Seq[String]])
     }
   }
+
+  /**
+   * Driver post-mortems as they were written, or nothing.
+   *
+   * A record that cannot be parsed -- written by a Kyuubi whose post-mortem shape differed -- is
+   * dropped rather than allowed to fail the lookup: losing a diagnosis is bad, but failing to
+   * route a live session because of an unreadable diagnosis is worse.
+   */
+  private def string2PostMortems(str: String): Seq[SparkConnectDriverPostMortem] = {
+    if (str == null || str.isEmpty) {
+      return Seq.empty
+    }
+    try {
+      mapper.readValue(str, new TypeReference[Seq[SparkConnectDriverPostMortem]] {})
+    } catch {
+      case e: JsonProcessingException =>
+        warn(s"Ignoring unreadable Spark Connect driver post-mortems: ${e.getMessage}")
+        Seq.empty
+    }
+  }
 }
 
 object JDBCMetadataStore {
@@ -916,6 +986,14 @@ object JDBCMetadataStore {
     "session_id",
     "engine_tag",
     "engine_token",
-    "create_time")
+    "create_time",
+    "generation",
+    "restart_count",
+    "last_restart_time",
+    "recovery_state",
+    "recovery_message",
+    "driver_post_mortems")
   private val SPARK_CONNECT_SESSION_COLUMNS_STR = SPARK_CONNECT_SESSION_COLUMNS.mkString(",")
+  private val SPARK_CONNECT_SESSION_VALUE_PLACEHOLDERS =
+    SPARK_CONNECT_SESSION_COLUMNS.map(_ => "?").mkString(",")
 }

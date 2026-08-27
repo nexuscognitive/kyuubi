@@ -67,3 +67,49 @@ case class KubernetesDriverPodEvent(
     count: Int,
     firstTimestamp: Option[String],
     lastTimestamp: Option[String])
+
+/**
+ * Why one driver container stopped, captured while the pod still existed.
+ *
+ * `oomKilled` is broken out rather than left for a reader to infer from `reason`, because it is
+ * the single most common cause of a Spark Connect driver dying under a user who then finds no pod
+ * and no events to explain it, and because the response to it -- raise `spark.driver.memory` --
+ * differs from every other termination reason.
+ */
+case class KubernetesDriverContainerTermination(
+    name: String,
+    reason: Option[String],
+    message: Option[String],
+    exitCode: Option[Int],
+    signal: Option[Int],
+    oomKilled: Boolean,
+    restartCount: Int,
+    finishedAt: Option[String])
+
+/**
+ * The post-mortem of a driver pod, taken at the moment Kyuubi observed it terminate.
+ *
+ * Kubernetes events are namespaced objects with a short TTL that are garbage-collected once their
+ * involved object is gone, so a driver pod that died overnight takes the only explanation of its
+ * death with it. Everything an operator would have gone looking for is therefore copied out here
+ * while the pod is still observable, and persisted with the session binding so that it outlives
+ * both the pod and the Kyuubi process that saw it die.
+ *
+ * @param engineTag the `kyuubi-unique-tag` of the engine whose driver this was.
+ * @param capturedTime when the snapshot was taken, which is the closest thing to a time of death
+ *                     Kyuubi can honestly report -- the pod's own timestamps may be absent.
+ * @param applicationState the state Kyuubi itself derived, which is what drove its own decisions,
+ *                         as opposed to the raw pod phase Kubernetes reported.
+ * @param events the pod's events as of that moment, newest first and bounded.
+ */
+case class KubernetesDriverPostMortem(
+    engineTag: String,
+    capturedTime: Long,
+    podName: String,
+    namespace: String,
+    finalPhase: String,
+    applicationState: String,
+    reason: Option[String],
+    message: Option[String],
+    containers: Seq[KubernetesDriverContainerTermination],
+    events: Seq[KubernetesDriverPodEvent])
