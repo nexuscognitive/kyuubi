@@ -25,7 +25,8 @@ import scala.util.control.NonFatal
 import org.apache.kyuubi.Logging
 import org.apache.kyuubi.config.KyuubiConf
 import org.apache.kyuubi.config.KyuubiConf._
-import org.apache.kyuubi.engine.{ApplicationState, KubernetesApplicationOperation, KubernetesDriverPostMortem, KyuubiApplicationManager}
+import org.apache.kyuubi.engine.{ApplicationState, KubernetesDriverPostMortem}
+import org.apache.kyuubi.engine.ApplicationState.isTerminated
 import org.apache.kyuubi.server.metadata.api.{SparkConnectDriverPostMortem, SparkConnectSessionInfo}
 import org.apache.kyuubi.util.ThreadUtils
 
@@ -71,7 +72,7 @@ class SparkConnectSessionSupervisor(
     conf: KyuubiConf,
     registry: SparkConnectSessionRegistry,
     engineLocator: SparkConnectEngineLocator,
-    applicationManager: KyuubiApplicationManager,
+    driverObserver: SparkConnectDriverObserver,
     provisionEngine: SparkConnectEngineRequest => String)
   extends Logging {
 
@@ -111,7 +112,7 @@ class SparkConnectSessionSupervisor(
     }
     recoveryExecutor = ThreadUtils.newDaemonSingleThreadScheduledExecutor(
       "spark-connect-recovery-thread")
-    kubernetesOperation.foreach(_.onDriverTerminated(recordDriverDeath))
+    driverObserver.onDriverTerminated(recordDriverDeath)
     if (recoveryEnabled && eagerRecoveryEnabled) {
       info("Spark Connect engine recovery is eager: dead drivers are relaunched on detection")
       ThreadUtils.scheduleTolerableRunnableWithFixedDelay(
@@ -198,14 +199,13 @@ class SparkConnectSessionSupervisor(
   private def driverDerivedState(
       recordState: String,
       binding: SparkConnectSessionInfo): String = {
-    val operation = kubernetesOperation
-    if (operation.isEmpty) {
+    if (!driverObserver.isAvailable) {
       // No Kubernetes client on this instance: there is no driver pod for it to inspect, and
       // inventing a state from the absence of one would be a false report either way.
       return recordState
     }
-    val applicationState = operation.flatMap(_.getEngineApplicationStateByTag(binding.engineTag))
-    val driverPod = operation.flatMap(_.getDriverPodDetailByTag(binding.engineTag))
+    val applicationState = driverObserver.applicationState(binding.engineTag)
+    val driverPod = driverObserver.driverPod(binding.engineTag)
     val everServed = binding.wasRestarted ||
       binding.driverPostMortems.nonEmpty ||
       recordState == STATE_RUNNING ||
@@ -219,7 +219,7 @@ class SparkConnectSessionSupervisor(
       // Succeeded, Failed, or a phase Kubernetes could not determine: either way this driver is
       // not coming back on its own, because Spark pins restartPolicy: Never on it.
       case Some(_) => STATE_DEAD
-      case None if applicationState.exists(ApplicationState.isTerminated) => STATE_DEAD
+      case None if applicationState.exists(isTerminated) => STATE_DEAD
       case None if everServed => STATE_DEAD
       // No pod, and no evidence there ever was one. The engine is still being submitted; the
       // launch operation itself fails the session if it never arrives.
@@ -372,9 +372,6 @@ class SparkConnectSessionSupervisor(
       }
     }
   }
-
-  private def kubernetesOperation: Option[KubernetesApplicationOperation] =
-    applicationManager.getKubernetesApplicationOperation.filter(_.hasKubernetesClient)
 }
 
 /** What a session should be reported as, and the engine binding that answer came from. */

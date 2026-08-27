@@ -36,7 +36,7 @@ import org.apache.kyuubi.metrics.MetricsConstants._
 import org.apache.kyuubi.metrics.MetricsSystem
 import org.apache.kyuubi.operation.{KyuubiOperationManager, OperationState}
 import org.apache.kyuubi.plugin.{GroupProvider, PluginLoader, SessionConfAdvisor}
-import org.apache.kyuubi.server.connect.{KubernetesSparkConnectEngineLocator, SparkConnectEngineConf, SparkConnectEngineLocator, SparkConnectEngineRequest, SparkConnectSessionRegistry, SparkConnectSessionSupervisor}
+import org.apache.kyuubi.server.connect.{KubernetesSparkConnectDriverObserver, KubernetesSparkConnectEngineLocator, SparkConnectEngineConf, SparkConnectEngineLocator, SparkConnectEngineRequest, SparkConnectSessionRegistry, SparkConnectSessionSupervisor}
 import org.apache.kyuubi.server.metadata.{MetadataManager, MetadataRequestsRetryRef}
 import org.apache.kyuubi.server.metadata.api.{Metadata, MetadataFilter}
 import org.apache.kyuubi.service.TempFileService
@@ -103,7 +103,7 @@ class KyuubiSessionManager private (name: String) extends SessionManager(name) {
       conf,
       _sparkConnectSessionRegistry,
       _sparkConnectEngineLocator,
-      applicationManager,
+      new KubernetesSparkConnectDriverObserver(applicationManager),
       openSparkConnectEngineSession _)
     addService(applicationManager)
     addService(credentialsManager)

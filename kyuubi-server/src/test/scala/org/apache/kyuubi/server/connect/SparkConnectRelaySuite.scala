@@ -28,6 +28,7 @@ import io.grpc.{ManagedChannel, Metadata, Server, Status}
 import io.grpc.netty.NettyServerBuilder
 
 import org.apache.kyuubi.KyuubiFunSuite
+import org.apache.kyuubi.config.KyuubiConf
 import org.apache.kyuubi.server.connect.SparkConnectTestHelper._
 
 /**
@@ -90,7 +91,14 @@ class SparkConnectRelaySuite extends KyuubiFunSuite {
       }
     }
 
-    val relay = new SparkConnectRelay(authenticator, registry, locator, channelPool)
+    val supervisor = new SparkConnectSessionSupervisor(
+      KyuubiConf(),
+      registry,
+      locator,
+      new FakeSparkConnectDriverObserver(available = false),
+      _ => throw new IllegalStateException("this suite never provisions an engine"))
+    val relay =
+      new SparkConnectRelay(authenticator, registry, locator, channelPool, supervisor)
     proxyServer = NettyServerBuilder.forPort(0)
       .fallbackHandlerRegistry(new SparkConnectHandlerRegistry(relay))
       .build()

@@ -30,13 +30,14 @@ import org.apache.kyuubi.client.api.v1.dto.{OperationLog, SessionOpenRequest, Sp
 import org.apache.kyuubi.client.api.v1.dto.SparkConnectSessionData
 import org.apache.kyuubi.config.KyuubiConf._
 import org.apache.kyuubi.engine.spark.SparkProcessBuilder
+import org.apache.kyuubi.server.connect.{SparkConnectEngineConf, SparkConnectSessionSupervisor}
 import org.apache.kyuubi.server.http.util.HttpAuthUtils.{basicAuthorizationHeader, AUTHORIZATION_HEADER}
 import org.apache.kyuubi.session.SessionHandle
 
 class SparkConnectResourceSuite extends KyuubiFunSuite with RestFrontendTestHelper {
 
   test("a Spark Connect session gets an engine of its user's own") {
-    val conf = SparkConnectResource.serverControlledConf("an-engine-credential")
+    val conf = SparkConnectEngineConf.serverControlledConf("an-engine-credential")
     assert(conf(SESSION_SPARK_CONNECT_ENABLED.key) == "true")
     assert(conf(SESSION_SPARK_CONNECT_TOKEN.key) == "an-engine-credential")
     assert(conf(ENGINE_TYPE.key) == "SPARK_SQL")
@@ -45,15 +46,15 @@ class SparkConnectResourceSuite extends KyuubiFunSuite with RestFrontendTestHelp
     assert(conf(ENGINE_SHARE_LEVEL.key) == "USER")
     // Without a subdomain of its own, a Spark Connect session would be handed the same user's
     // ordinary Thrift engine, which was launched without the Spark Connect plugin.
-    assert(conf(ENGINE_SHARE_LEVEL_SUBDOMAIN.key) == SparkConnectResource.ENGINE_SUBDOMAIN)
+    assert(conf(ENGINE_SHARE_LEVEL_SUBDOMAIN.key) == SparkConnectEngineConf.ENGINE_SUBDOMAIN)
   }
 
   test("a Spark Connect engine is always launched in cluster mode") {
     // In client mode the driver JVM runs inside the Kyuubi pod, where the engine's Spark Connect
     // server cannot bind the port the gateway's own frontend already holds -- and where there is
     // no driver pod for the engine locator to find.
-    val conf = SparkConnectResource.serverControlledConf("an-engine-credential")
-    assert(conf(SparkProcessBuilder.DEPLOY_MODE_KEY) == SparkConnectResource.DEPLOY_MODE_CLUSTER)
+    val conf = SparkConnectEngineConf.serverControlledConf("an-engine-credential")
+    assert(conf(SparkProcessBuilder.DEPLOY_MODE_KEY) == SparkConnectEngineConf.DEPLOY_MODE_CLUSTER)
   }
 
   test("a client cannot declare its own engine credential, engine sharing or deploy mode") {
@@ -66,7 +67,7 @@ class SparkConnectResourceSuite extends KyuubiFunSuite with RestFrontendTestHelp
       SparkProcessBuilder.DEPLOY_MODE_KEY -> "client",
       "spark.sql.shuffle.partitions" -> "42")
 
-    val accepted = SparkConnectResource.clientControlledConf(requested)
+    val accepted = SparkConnectEngineConf.clientControlledConf(requested)
 
     assert(!accepted.contains(SESSION_SPARK_CONNECT_TOKEN.key))
     assert(!accepted.contains(SESSION_SPARK_CONNECT_ENABLED.key))
@@ -84,12 +85,12 @@ class SparkConnectResourceSuite extends KyuubiFunSuite with RestFrontendTestHelp
       ENGINE_SHARE_LEVEL_SUBDOMAIN.key -> "somebody-elses-engine",
       SparkProcessBuilder.DEPLOY_MODE_KEY -> "client")
     val effective =
-      SparkConnectResource.serverControlledConf("an-engine-credential") ++
-        SparkConnectResource.clientControlledConf(requested)
+      SparkConnectEngineConf.serverControlledConf("an-engine-credential") ++
+        SparkConnectEngineConf.clientControlledConf(requested)
     assert(effective(ENGINE_SHARE_LEVEL.key) == "USER")
-    assert(effective(ENGINE_SHARE_LEVEL_SUBDOMAIN.key) == SparkConnectResource.ENGINE_SUBDOMAIN)
+    assert(effective(ENGINE_SHARE_LEVEL_SUBDOMAIN.key) == SparkConnectEngineConf.ENGINE_SUBDOMAIN)
     assert(effective(SparkProcessBuilder.DEPLOY_MODE_KEY) ==
-      SparkConnectResource.DEPLOY_MODE_CLUSTER)
+      SparkConnectEngineConf.DEPLOY_MODE_CLUSTER)
   }
 
   test("cluster mode is pinned on Spark Connect sessions and nowhere else") {
@@ -97,7 +98,7 @@ class SparkConnectResourceSuite extends KyuubiFunSuite with RestFrontendTestHelp
     val ordinary = openOrdinarySession("alice")
     try {
       assert(sessionConf(sparkConnect.getSessionId)(SparkProcessBuilder.DEPLOY_MODE_KEY) ==
-        SparkConnectResource.DEPLOY_MODE_CLUSTER)
+        SparkConnectEngineConf.DEPLOY_MODE_CLUSTER)
       // A Thrift or ordinary REST session keeps whatever deploy mode the deployment configures.
       assert(!sessionConf(ordinary).contains(SparkProcessBuilder.DEPLOY_MODE_KEY))
     } finally {
@@ -116,14 +117,14 @@ class SparkConnectResourceSuite extends KyuubiFunSuite with RestFrontendTestHelp
 
   test("a session is PENDING until its engine reports in") {
     assert(SparkConnectResource.sessionState(openedTime = -1L, endTime = -1L, failed = false) ==
-      SparkConnectResource.STATE_PENDING)
+      SparkConnectSessionSupervisor.STATE_PENDING)
     assert(SparkConnectResource.sessionState(openedTime = 1L, endTime = -1L, failed = false) ==
-      SparkConnectResource.STATE_RUNNING)
+      SparkConnectSessionSupervisor.STATE_RUNNING)
     assert(SparkConnectResource.sessionState(openedTime = 1L, endTime = 2L, failed = false) ==
-      SparkConnectResource.STATE_CLOSED)
+      SparkConnectSessionSupervisor.STATE_CLOSED)
     // A failed session may well have opened and closed; the failure is what the user needs to see.
     assert(SparkConnectResource.sessionState(openedTime = 1L, endTime = 2L, failed = true) ==
-      SparkConnectResource.STATE_FAILED)
+      SparkConnectSessionSupervisor.STATE_FAILED)
   }
 
   test("only sessions this resource opened are recognised as Spark Connect ones") {
