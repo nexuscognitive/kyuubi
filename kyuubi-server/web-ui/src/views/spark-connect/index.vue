@@ -30,6 +30,12 @@
         @copy="copy"
         @refresh="loadSession"
         @close="closeSession" />
+      <!--
+        Shown only once something has happened to a driver. On a session that has never lost one
+        there is nothing to say, and a permanently empty panel is how an operator learns to skip
+        past the one place that would have told them what went wrong.
+      -->
+      <RecoveryCard v-if="hasRecoveryHistory" :session="session" />
       <DiagnosticsCard :session-id="session.sessionId" />
     </template>
 
@@ -46,7 +52,7 @@
 </script>
 
 <script lang="ts" setup>
-  import { onMounted, ref, shallowRef } from 'vue'
+  import { computed, onMounted, ref, shallowRef } from 'vue'
   import { useI18n } from 'vue-i18n'
   import { ElMessage } from 'element-plus'
   import {
@@ -57,6 +63,7 @@
   } from '@/api/spark-connect'
   import CreateSessionCard from './components/CreateSessionCard.vue'
   import DiagnosticsCard from './components/DiagnosticsCard.vue'
+  import RecoveryCard from './components/RecoveryCard.vue'
   import SessionCard from './components/SessionCard.vue'
   import { copyToClipboard } from './utils/clipboard'
 
@@ -67,6 +74,14 @@
   const session = shallowRef<SparkConnectSessionData | null>(null)
   const loadingSession = ref(false)
   const creating = ref(false)
+
+  const hasRecoveryHistory = computed(
+    () =>
+      session.value !== null &&
+      (session.value.restartCount > 0 ||
+        (session.value.driverPostMortems ?? []).length > 0 ||
+        session.value.recoveryMessage !== null)
+  )
 
   function errorMessage(error: unknown): string {
     return error instanceof Error && error.message

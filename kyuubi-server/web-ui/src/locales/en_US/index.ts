@@ -248,6 +248,35 @@ export default {
     container_limits: 'Limits',
     restarted_note:
       'The driver has restarted, so anything this session had cached in it is gone.',
+    state_dead_note:
+      'The Spark driver for this session has died. The session is not usable until a new driver replaces it.',
+    state_recovering_note:
+      'The driver died and a replacement is being launched. Spark clients retry until it is serving.',
+    state_failed_note:
+      'This session is finished. Kyuubi will not launch another driver for it -- create a new session.',
+    recovery: 'Driver recovery',
+    recovery_note:
+      'A replaced driver is a new Spark session. Recovery restores an endpoint you can connect to; it cannot restore what was in the old driver.',
+    restart_count: 'Drivers replaced',
+    generation: 'Engine generation',
+    last_restart: 'Last replaced',
+    never_restarted: 'Never -- this session is on its original driver.',
+    recovery_abandoned: 'Recovery abandoned',
+    state_loss_warning: 'Your Spark session was replaced',
+    post_mortems: 'What killed the drivers',
+    post_mortems_note:
+      'Captured as each driver died. Kubernetes deletes a pod\u2019s events with the pod, so this is what is left once the pod is gone.',
+    no_post_mortems: 'No driver of this session has been recorded as dying.',
+    post_mortem_when: 'Died',
+    post_mortem_driver: 'Driver',
+    post_mortem_cause: 'Cause',
+    post_mortem_state: 'Final state',
+    post_mortem_oom: 'Out of memory',
+    post_mortem_events: 'Events at the time of death',
+    post_mortem_containers: 'Containers',
+    container_exit_code: 'Exit code',
+    container_signal: 'Signal',
+    container_finished_at: 'Finished',
     event_type: 'Type',
     event_reason: 'Reason',
     event_message: 'Message',
