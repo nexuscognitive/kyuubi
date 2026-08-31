@@ -262,6 +262,27 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # A second image from the same tarball, on a Java 25 base. The NX1 decision
+      # functions are evaluated by the ZEN engine's Panama binding, which needs Java
+      # 22 or newer, and under Kyuubi's default client deploy mode the Spark driver
+      # runs in this pod -- so that JVM is the one that has to be new enough. Kyuubi
+      # itself is unchanged: same tarball, same bytes, only the JDK underneath moves.
+      # Kept parallel rather than replacing the java17 image, which stays the default.
+      - name: Build and push kyuubi-base (Java 25)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/Dockerfile.nx1-base
+          push: true
+          build-args: |
+            KYUUBI_TARBALL=${{ steps.meta.outputs.tarball }}
+            BASE_IMAGE=eclipse-temurin:25-jdk-noble
+          tags: |
+            ${{ secrets.ACR_REGISTRY }}/kyuubi-base:${{ steps.meta.outputs.tag }}-java25
+            ${{ secrets.ACR_REGISTRY }}/kyuubi-base:${{ steps.meta.outputs.version }}-java25
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
       - name: Summary
         run: |
           {
@@ -272,6 +293,7 @@ jobs:
             echo "| Tag | \`${{ steps.meta.outputs.tag }}\` |"
             echo "| Version | \`${{ steps.meta.outputs.version }}\` |"
             echo "| Image | \`${{ secrets.ACR_REGISTRY }}/kyuubi-base:${{ steps.meta.outputs.tag }}\` |"
+            echo "| Image (Java 25) | \`${{ secrets.ACR_REGISTRY }}/kyuubi-base:${{ steps.meta.outputs.tag }}-java25\` |"
             echo "| Tarball | \`${{ steps.meta.outputs.tarball }}\` |"
             echo "| SHA256 | \`${{ steps.sum.outputs.sha256 }}\` |"
           } >> "$GITHUB_STEP_SUMMARY"
