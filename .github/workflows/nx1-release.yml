@@ -276,7 +276,7 @@ jobs:
           push: true
           build-args: |
             KYUUBI_TARBALL=${{ steps.meta.outputs.tarball }}
-            BASE_IMAGE=eclipse-temurin:25-jdk-noble
+            BASE_IMAGE=eclipse-temurin:25-jdk-jammy
           tags: |
             ${{ secrets.ACR_REGISTRY }}/kyuubi-base:${{ steps.meta.outputs.tag }}-java25
             ${{ secrets.ACR_REGISTRY }}/kyuubi-base:${{ steps.meta.outputs.version }}-java25
