@@ -381,6 +381,12 @@
         </dependency>
 
         <dependency>
+            <groupId>org.mongodb.spark</groupId>
+            <artifactId>${mongo.spark.artifact}</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
             <groupId>io.delta</groupId>
             <artifactId>${delta.artifact}</artifactId>
             <scope>test</scope>

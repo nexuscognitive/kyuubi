@@ -17,9 +17,10 @@
 
 package org.apache.kyuubi.plugin.spark.authz.serde
 
-import java.util.{LinkedHashMap, Map => JMap}
+import java.util.{HashMap => JHashMap, LinkedHashMap, Map => JMap}
 
 import scala.collection.JavaConverters._
+import scala.util.control.NonFatal
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.{InternalRow, TableIdentifier}
@@ -30,6 +31,7 @@ import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.types.DataType
 import org.apache.spark.unsafe.types.UTF8String
+import org.slf4j.LoggerFactory
 
 import org.apache.kyuubi.plugin.spark.authz.util.AuthZUtils._
 import org.apache.kyuubi.plugin.spark.authz.util.PathIdentifier._
@@ -230,6 +232,158 @@ class ArrayBufferTableExtractor extends TableExtractor {
 }
 
 /**
+ * Resolves the namespace of a `DataSourceV2Relation` that carries neither a catalog
+ * nor an identifier, for connectors that keep their namespace in the relation's
+ * options instead of in a Spark identifier.
+ *
+ * A `TableProvider` that does not implement `SupportsCatalogOptions` -- the MongoDB
+ * connector, the ClickHouse native connector -- goes through Spark's non-catalog
+ * fallback, which passes `(catalog, identifier) = (None, None)`. The only identity
+ * left on the relation is `table.name()`, which is connector-defined and may carry no
+ * namespace at all. For `com.mongodb.spark.sql.connector.MongoTable` it carries none
+ * by construction: `MongoTableProvider.getTable` always builds a `SimpleMongoConfig`,
+ * which is neither a `ReadConfig` nor a `WriteConfig`, so `MongoTable.name()` falls to
+ * its `else` branch and returns the constant string `MongoTable()`. Every MongoDB
+ * relation in the cluster therefore reports the same name, so a resource built from it
+ * is unscoped -- one grant would cover every database and collection -- and also
+ * unmatchable, because it has no `schema` level and Ranger's hierarchy matcher
+ * refuses to match a resource that is missing a parent level.
+ */
+private object ExternalDataSourceV2Namespace {
+
+  final private val LOG = LoggerFactory.getLogger(getClass)
+
+  final private val MONGO_TABLE_CLASS = "com.mongodb.spark.sql.connector.MongoTable"
+  final private val MONGO_CONFIG_CLASS = "com.mongodb.spark.sql.connector.config.MongoConfig"
+  final private val MONGO_CATALOG = "mongodb"
+
+  /**
+   * The connector's two usage namespaces, as (factory method, SparkConf key prefix).
+   */
+  final private val MONGO_USAGE_MODES = Seq(
+    "writeConfig" -> "spark.mongodb.write.",
+    "readConfig" -> "spark.mongodb.read.")
+
+  /**
+   * Catalog label for a catalog-less relation whose provider is not recognised here.
+   * Such a relation is not in any Spark catalog, so leaving its catalog empty lets
+   * `AccessResource` fold it into the session default catalog -- which maps onto the
+   * Iceberg policy namespace and makes the audit record actively misleading. These
+   * resources are denied either way (they carry no schema level), so this only changes
+   * the label, not the outcome.
+   */
+  final val EXTERNAL_CATALOG = "external"
+
+  /**
+   * Deny-by-default namespace, used when the provider is recognised but its namespace
+   * does not resolve to exactly one database and table.
+   *
+   * This has to be a resource rather than `None`, and it cannot be an exception.
+   * Returning `None` would drop the privilege object, and `AppendData` carries both
+   * uri and query descriptors, so `PrivilegesBuilder`'s command-level fail-closed guard
+   * does not fire for it -- the write would be silently skipped, with no Ranger request
+   * and no audit event. Throwing does not work either: `getTablePriv` swallows every
+   * `Exception`, and `AccessControlException` is a `RuntimeException`. Emitting a
+   * sentinel resource keeps the request, and with it the audit record and the deny.
+   */
+  final val UNRESOLVED = "__unresolved__"
+
+  def apply(v2Relation: DataSourceV2Relation): Option[Table] =
+    v2Relation.table.getClass.getName match {
+      case MONGO_TABLE_CLASS => Some(mongoTable(v2Relation))
+      case _ => None
+    }
+
+  private def mongoTable(v2Relation: DataSourceV2Relation): Table = {
+    // The same map the connector itself received from DataFrameWriter/loadV2Source.
+    val options = v2Relation.options.asCaseSensitiveMap()
+
+    // Resolve through the connector's own config API rather than reading `database`
+    // and `collection` out of the options here. The connector layers three sources --
+    // explicit options, SparkConf under `spark.mongodb.{read,write}.`, and the
+    // database/collection path of `connection.uri` -- and reimplementing that
+    // precedence would silently drift from it on the next connector bump.
+    //
+    // The usage mode is not knowable from the relation alone, so both are tried.
+    // Explicit options win inside the connector, so the mode only changes the answer
+    // when the namespace comes from SparkConf, and then normally only one of the two
+    // prefixes is set. If both resolve and disagree, the namespace is ambiguous and we
+    // deny. If only the mode opposite to the actual operation resolves we authorize the
+    // wrong namespace, but the connector builds its config the same way at execution
+    // time, so that operation cannot succeed either.
+    val namespaces = MONGO_USAGE_MODES.flatMap(resolveNamespace(options, _)).distinct
+
+    namespaces match {
+      case Seq((database, collection)) =>
+        Table(Some(MONGO_CATALOG), Some(database), collection, None)
+      case ambiguous =>
+        LOG.warn(
+          "Could not resolve a single MongoDB namespace for authorization " +
+            "({} candidates); denying via {}/{}. A multi-collection spec " +
+            "(collection=\"*\" or a comma-separated list) is not authorizable as a " +
+            "single resource.",
+          Array[Object](Int.box(ambiguous.size), MONGO_CATALOG, UNRESOLVED): _*)
+        Table(Some(MONGO_CATALOG), Some(UNRESOLVED), UNRESOLVED, None)
+    }
+  }
+
+  /**
+   * Asks the connector to resolve `options` in one usage mode, or None if it will not.
+   */
+  private def resolveNamespace(
+      options: JMap[String, String],
+      usageMode: (String, String)): Option[(String, String)] = {
+    val (configFactory, usagePrefix) = usageMode
+    try {
+      // The Read/WriteConfig factories keep only keys under `spark.mongodb.` and discard
+      // everything else, so the relation's DataFrame `.option()` keys have to be lifted
+      // into the usage namespace first. Verified against connector 10.6.1: an unprefixed
+      // map produces an empty config whose getDatabaseName() reports "Missing
+      // configuration for: database". Keys the caller already scoped (`spark.`-prefixed,
+      // including `spark.mongodb.write.database`) pass through untouched.
+      val usageOptions = new JHashMap[String, String]()
+      options.asScala.foreach { case (key, value) =>
+        usageOptions.put(if (key.startsWith("spark.")) key else usagePrefix + key, value)
+      }
+      val usageConfig = invokeAs[AnyRef](
+        MONGO_CONFIG_CLASS,
+        configFactory,
+        (classOf[JMap[_, _]], usageOptions))
+      // getCollectionName() throws unless CollectionsConfig.Type is SINGLE, so a
+      // multi-collection spec -- collection="*", or a comma-separated list -- lands on
+      // UNRESOLVED. Authorizing that as one resource would misstate what is accessed;
+      // it needs one privilege object per collection, which a single-Table extractor
+      // cannot express.
+      //
+      // Every member is resolved against MongoConfig, which is public. Read/WriteConfig
+      // inherit these from the package-private AbstractMongoConfig, and resolving
+      // through that class cannot link from outside its package.
+      Some((
+        invokeAs[String]((MONGO_CONFIG_CLASS, usageConfig), "getDatabaseName"),
+        invokeAs[String]((MONGO_CONFIG_CLASS, usageConfig), "getCollectionName")))
+    } catch {
+      // The connector rejected these options -- no database, or a collection spec it
+      // will not reduce to one name. Expected; the caller denies via UNRESOLVED.
+      case NonFatal(e) =>
+        LOG.debug(s"MongoDB namespace resolution via $configFactory did not apply", e)
+        None
+      // The connector's own classes are on the classpath but its dependencies (org.bson)
+      // are not, so reflecting over its methods cannot link. This must be caught here:
+      // LinkageError is not an Exception, so neither NonFatal above nor the catch in
+      // PrivilegesBuilder.getTablePriv would stop it, and it would surface as a query
+      // crash rather than an access decision.
+      case e: LinkageError =>
+        LOG.warn(
+          "MongoDB connector classes are present but not fully linked, so its namespace " +
+            "cannot be resolved for authorization; denying via {}/{}",
+          Array[Object](MONGO_CATALOG, UNRESOLVED): _*)
+        LOG.debug("MongoDB connector linkage failure", e)
+        None
+    }
+  }
+}
+
+/**
  * org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
  */
 class DataSourceV2RelationTableExtractor extends TableExtractor {
@@ -241,9 +395,10 @@ class DataSourceV2RelationTableExtractor extends TableExtractor {
       // SupportsCatalogOptions, e.g. spark.read.format("mongodb")). That is a
       // privilege-check bypass -- a skipped relation produces no privilege object,
       // no Ranger request, and no audit event. This deployment authorizes every
-      // relation, so the skip is deliberately not wired up here: such a relation
-      // falls through to the extraction below and is authorized on its
-      // connector-defined name, which fails closed when no policy matches.
+      // relation, so the skip is deliberately not wired up here: such a relation falls
+      // through to the extraction below, which resolves the connector's real namespace
+      // where it can (see ExternalDataSourceV2Namespace) and otherwise emits a
+      // deny-by-default resource so the access is still requested and audited.
       case v2Relation: DataSourceV2Relation
           if v2Relation.identifier.isEmpty ||
             !isPathIdentifier(v2Relation.identifier.get.name(), spark) =>
@@ -259,9 +414,24 @@ class DataSourceV2RelationTableExtractor extends TableExtractor {
         // which would then be defaulted to the current database (fail-open).
         val identifierTable = invokeAs[Option[AnyRef]](v2Relation, "identifier")
           .flatMap(id => lookupExtractor[IdentifierTableExtractor].apply(spark, id))
-        identifierTable
-          .orElse(lookupExtractor[TableTableExtractor].apply(spark, v2Relation.table))
-          .map(_.copy(catalog = maybeCatalog, owner = maybeOwner))
+        identifierTable match {
+          case Some(table) =>
+            Some(table.copy(catalog = maybeCatalog, owner = maybeOwner))
+          // No identifier: a non-catalog TableProvider relation. `table.name()` is the
+          // last resort and for some connectors carries no namespace at all, so ask the
+          // connector-specific resolver for the real one first. It keeps whatever
+          // catalog it assigns, since a relation-level catalog is absent by definition
+          // on this path.
+          case None =>
+            ExternalDataSourceV2Namespace(v2Relation)
+              .map(_.copy(owner = maybeOwner))
+              .orElse(
+                lookupExtractor[TableTableExtractor].apply(spark, v2Relation.table)
+                  .map(_.copy(
+                    catalog = maybeCatalog.orElse(
+                      Some(ExternalDataSourceV2Namespace.EXTERNAL_CATALOG)),
+                    owner = maybeOwner)))
+        }
       case _ => None
     }
   }

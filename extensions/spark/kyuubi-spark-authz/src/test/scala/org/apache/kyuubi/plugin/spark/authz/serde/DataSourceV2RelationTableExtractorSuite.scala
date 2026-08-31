@@ -19,10 +19,15 @@ package org.apache.kyuubi.plugin.spark.authz.serde
 
 import java.util
 
+import scala.collection.JavaConverters._
+
+import com.mongodb.spark.sql.connector.MongoTableProvider
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.connector.catalog.{Identifier, Table => V2Table, TableCapability}
+import org.apache.spark.sql.connector.expressions.Transform
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.types.{StringType, StructField, StructType}
+import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 import org.apache.kyuubi.KyuubiFunSuite
 
@@ -65,6 +70,15 @@ class DataSourceV2RelationTableExtractorSuite extends KyuubiFunSuite {
     assert(maybeTable.get.database.isEmpty)
   }
 
+  // A relation with neither catalog nor identifier belongs to no Spark catalog, so an
+  // empty catalog here lets AccessResource fold it into the session default catalog --
+  // which maps onto the Iceberg policy namespace and makes the audit record claim an
+  // Iceberg access that never happened.
+  test("label an unrecognised catalog-less provider explicitly, not as the default catalog") {
+    val maybeTable = extractor.apply(spark, cataloglessRelation)
+    assert(maybeTable.get.catalog === Some("external"))
+  }
+
   // NX1 hardening: upstream KYUUBI #7230 lets this conf suppress the privilege object
   // entirely, which also suppresses the Ranger request and its audit event. We removed
   // that reader, so the conf must have no effect -- setting it must NOT yield an empty
@@ -94,5 +108,89 @@ class DataSourceV2RelationTableExtractorSuite extends KyuubiFunSuite {
     } finally {
       spark.conf.unset(skipConfKey)
     }
+  }
+
+  /**
+   * A real relation as Spark builds it for `format("mongodb")`: MongoTableProvider is a
+   * plain TableProvider, so Spark's non-catalog fallback passes (None, None) and the
+   * namespace survives only in the relation's options. Building the table through the
+   * provider rather than stubbing it keeps this suite honest about the contract the
+   * extractor relies on -- notably that MongoTable.name() carries no namespace.
+   */
+  private def mongoRelation(options: Map[String, String]): DataSourceV2Relation = {
+    val dsOptions = new CaseInsensitiveStringMap(options.asJava)
+    val table = new MongoTableProvider().getTable(
+      StructType(Seq(StructField("_id", StringType))),
+      Array.empty[Transform],
+      dsOptions.asCaseSensitiveMap())
+    DataSourceV2Relation.create(table, None, None, dsOptions)
+  }
+
+  test("MongoTable name() carries no namespace, so it cannot be the resource identity") {
+    val table = new MongoTableProvider().getTable(
+      StructType(Seq(StructField("_id", StringType))),
+      Array.empty[Transform],
+      Map("database" -> "db", "collection" -> "coll").asJava)
+    assert(
+      table.name() === "MongoTable()",
+      "MongoTableProvider always builds a SimpleMongoConfig, so name() takes its else " +
+        "branch and is the same constant for every MongoDB relation")
+  }
+
+  test("resolve the MongoDB namespace from explicit options") {
+    val relation = mongoRelation(Map(
+      "connection.uri" -> "mongodb://localhost:27017",
+      "database" -> "ciwat_servicenow_dev",
+      "collection" -> "BUSINESS_APPLICATION_DIMENSION"))
+    val maybeTable = extractor.apply(spark, relation)
+    assert(maybeTable.get.catalog === Some("mongodb"))
+    assert(maybeTable.get.database === Some("ciwat_servicenow_dev"))
+    assert(maybeTable.get.table === "BUSINESS_APPLICATION_DIMENSION")
+  }
+
+  test("resolve the MongoDB namespace from the connection.uri path") {
+    val relation = mongoRelation(
+      Map("connection.uri" -> "mongodb://localhost:27017/uri_db.uri_coll"))
+    val maybeTable = extractor.apply(spark, relation)
+    assert(maybeTable.get.database === Some("uri_db"))
+    assert(maybeTable.get.table === "uri_coll")
+  }
+
+  test("explicit options win over the connection.uri path") {
+    val relation = mongoRelation(Map(
+      "connection.uri" -> "mongodb://localhost:27017/uri_db.uri_coll",
+      "database" -> "option_db",
+      "collection" -> "option_coll"))
+    val maybeTable = extractor.apply(spark, relation)
+    assert(maybeTable.get.database === Some("option_db"))
+    assert(maybeTable.get.table === "option_coll")
+  }
+
+  // A wildcard or comma-separated spec names more than one collection, which a single
+  // Table cannot describe. Authorizing it as one resource would misstate what is
+  // accessed, so it has to deny -- while still producing a Ranger request, and with it
+  // an audit record.
+  Seq("*" -> "wildcard", "coll_a,coll_b" -> "comma-separated").foreach {
+    case (collection, description) =>
+      test(s"deny a $description collection spec instead of inventing one resource") {
+        val relation = mongoRelation(Map(
+          "connection.uri" -> "mongodb://localhost:27017",
+          "database" -> "some_db",
+          "collection" -> collection))
+        val maybeTable = extractor.apply(spark, relation)
+        assert(
+          maybeTable.nonEmpty,
+          "an unresolvable namespace must still yield a privilege object, otherwise the " +
+            "access is skipped rather than denied and no audit event is produced")
+        assert(maybeTable.get.catalog === Some("mongodb"))
+        assert(maybeTable.get.database === Some("__unresolved__"))
+        assert(maybeTable.get.table === "__unresolved__")
+      }
+  }
+
+  test("deny when the database cannot be resolved at all") {
+    val relation = mongoRelation(Map("connection.uri" -> "mongodb://localhost:27017"))
+    val maybeTable = extractor.apply(spark, relation)
+    assert(maybeTable.get.table === "__unresolved__")
   }
 }

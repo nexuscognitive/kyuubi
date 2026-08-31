@@ -17,9 +17,19 @@
 
 package org.apache.kyuubi.plugin.spark.authz.ranger
 
+import scala.collection.JavaConverters._
+
+import com.mongodb.spark.sql.connector.MongoTableProvider
+import org.apache.spark.sql.connector.expressions.Transform
+import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
+import org.apache.spark.sql.types.{StringType, StructField, StructType}
+import org.apache.spark.sql.util.CaseInsensitiveStringMap
+
 import org.apache.kyuubi.KyuubiFunSuite
+import org.apache.kyuubi.plugin.spark.authz.{OperationType, PrivilegeObject}
+import org.apache.kyuubi.plugin.spark.authz.{PrivilegeObjectActionType, SparkSessionProvider}
 import org.apache.kyuubi.plugin.spark.authz.ObjectType._
-import org.apache.kyuubi.plugin.spark.authz.SparkSessionProvider
+import org.apache.kyuubi.plugin.spark.authz.serde.DataSourceV2RelationTableExtractor
 
 class AccessResourceSuite extends KyuubiFunSuite with SparkSessionProvider {
   override protected val catalogImpl: String = "in-memory"
@@ -97,5 +107,39 @@ class AccessResourceSuite extends KyuubiFunSuite with SparkSessionProvider {
     assert(resource1.getTable === "my_table_name")
     assert(resource1.getColumn === "my_col_1,my_col_2")
     assert(resource1.getColumns === Seq("my_col_1", "my_col_2"))
+  }
+
+  test("KYUUBI #7230: a catalog-less MongoDB relation yields a namespace-scoped resource") {
+    val options = Map(
+      "connection.uri" -> "mongodb://localhost:27017",
+      "database" -> "ciwat_servicenow_dev",
+      "collection" -> "BUSINESS_APPLICATION_DIMENSION")
+    val dsOptions = new CaseInsensitiveStringMap(options.asJava)
+    val v2Table = new MongoTableProvider().getTable(
+      StructType(Seq(StructField("_id", StringType))),
+      Array.empty[Transform],
+      dsOptions.asCaseSensitiveMap())
+    val relation = DataSourceV2Relation.create(v2Table, None, None, dsOptions)
+
+    val table = new DataSourceV2RelationTableExtractor().apply(spark, relation).get
+    val resource = AccessResource(
+      PrivilegeObject(table, Nil, PrivilegeObjectActionType.INSERT),
+      OperationType.QUERY)
+
+    // The schema level is what makes the request matchable at all. Ranger's hierarchy
+    // matcher refuses a resource that is missing a parent level, so the pre-fix request
+    // -- catalog=iceberg (the mapped session default), no schema, table=MongoTable() --
+    // could not be authorized by any policy, and named neither the real database nor
+    // the real collection.
+    // Assert the element map rather than getAsString: the "/"-joined rendering is
+    // ordered by the Ranger service def, which is only loaded from a live Ranger
+    // service, so getAsString is null here. The map is what the policy matcher reads.
+    assert(resource.getAsMap.asScala === Map(
+      "catalog" -> "mongodb",
+      "schema" -> "ciwat_servicenow_dev",
+      "table" -> "BUSINESS_APPLICATION_DIMENSION"))
+    assert(resource.getCatalog === "mongodb")
+    assert(resource.getSchema === "ciwat_servicenow_dev")
+    assert(resource.getTable === "BUSINESS_APPLICATION_DIMENSION")
   }
 }

@@ -194,6 +194,8 @@
         <retrofit.version>2.9.0</retrofit.version>
         <paimon.version>0.8.2</paimon.version>
         <paimon.artifact>paimon-spark-${spark.binary.version}</paimon.artifact>
+        <mongo.spark.version>10.6.1</mongo.spark.version>
+        <mongo.spark.artifact>mongo-spark-connector_${scala.binary.version}</mongo.spark.artifact>
         <phoenix.version>6.0.0</phoenix.version>
         <postgresql.version>42.7.12</postgresql.version>
         <ojdbc.version>23.2.0.0</ojdbc.version>
@@ -1250,6 +1252,33 @@
                 <exclusions>
                     <exclusion>
                         <groupId>*</groupId>
+                        <artifactId>*</artifactId>
+                    </exclusion>
+                </exclusions>
+            </dependency>
+
+            <!--
+              Test-only. The Spark AuthZ plugin resolves a catalog-less MongoDB relation's
+              namespace through the connector's own config API, so its tests need the real
+              connector to stay honest about that contract. No MongoDB connection is ever
+              opened; only the config classes are exercised.
+
+              Only Spark and Scala are excluded, which the reactor already provides. The
+              MongoDB driver and org.bson must stay: resolving a namespace reflects over
+              MongoConfig's declared methods, and that links every type in their
+              signatures, so a driver-less classpath fails with a NoClassDefFoundError.
+            -->
+            <dependency>
+                <groupId>org.mongodb.spark</groupId>
+                <artifactId>${mongo.spark.artifact}</artifactId>
+                <version>${mongo.spark.version}</version>
+                <exclusions>
+                    <exclusion>
+                        <groupId>org.apache.spark</groupId>
+                        <artifactId>*</artifactId>
+                    </exclusion>
+                    <exclusion>
+                        <groupId>org.scala-lang</groupId>
                         <artifactId>*</artifactId>
                     </exclusion>
                 </exclusions>
