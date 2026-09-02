@@ -71,6 +71,7 @@ object AccessResource {
   val DEFAULT_SPARK_CATALOG_KEY = "ranger.plugin.spark.catalog.default.spark"
   val DEFAULT_TARGET_CATALOG_KEY = "ranger.plugin.spark.catalog.default.target"
   val CATALOG_MAPPING_KEY = "ranger.plugin.spark.catalog.mapping"
+  val EXCLUDED_CATALOGS_KEY = "ranger.plugin.spark.authz.excluded.catalogs"
 
   // Resource modes
   val MODE_HIVE = "hive"
@@ -413,6 +414,46 @@ object AccessResource {
       obj.owner,
       obj.catalog)
   }
+
+  /**
+   * Fully-qualified DSv2 `Table` class prefixes that a given friendly catalog name
+   * aliases when a connector does not register a Spark catalog. The friendly name
+   * is what admins put in `ranger.plugin.spark.authz.excluded.catalogs`; the prefix
+   * is what `table.getClass.getName` starts with for that connector. Add an entry
+   * when a new catalog-less connector needs to be excludable by its short name.
+   */
+  private val CATALOGLESS_TABLE_ALIASES: Map[String, Set[String]] = Map(
+    "mongodb" -> Set("com.mongodb.spark.sql.connector."))
+
+  /**
+   * Friendly catalog names for which Ranger authorization should be skipped, read
+   * from `ranger.plugin.spark.authz.excluded.catalogs` in ranger-spark-security.xml.
+   * Empty when the key is unset or contains only whitespace/empty entries.
+   */
+  def excludedCatalogs: Set[String] =
+    Option(SparkRangerAdminPlugin.getRangerConf.get(EXCLUDED_CATALOGS_KEY))
+      .map(_.split(",").iterator.map(_.trim).filter(_.nonEmpty).toSet)
+      .getOrElse(Set.empty)
+
+  /**
+   * Whether a DSv2 relation's Spark-registered catalog name is in the excluded set.
+   * A `None` catalog is never matched here -- see `isExcludedTableClass` for the
+   * alias-based fallback used when a connector does not register a catalog.
+   */
+  def isExcludedCatalog(catalog: Option[String], excluded: Set[String]): Boolean =
+    catalog.exists(excluded.contains)
+
+  /**
+   * Whether a DSv2 `Table` implementation class is aliased by any friendly name in
+   * the excluded set. Match is by package/class prefix: an entry
+   * `"com.mongodb.spark.sql.connector."` matches `com.mongodb.spark.sql.connector.MongoTable`
+   * and any sibling class in that package. Fallback for catalog-less connectors
+   * whose DSv2 relations carry no `TableCatalog`.
+   */
+  def isExcludedTableClass(className: String, excluded: Set[String]): Boolean =
+    excluded.iterator
+      .flatMap(name => CATALOGLESS_TABLE_ALIASES.get(name).iterator.flatten)
+      .exists(prefix => className.startsWith(prefix))
 
   /**
    * Reset cached configuration (for testing).

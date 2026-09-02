@@ -98,4 +98,75 @@ class AccessResourceSuite extends KyuubiFunSuite with SparkSessionProvider {
     assert(resource1.getColumn === "my_col_1,my_col_2")
     assert(resource1.getColumns === Seq("my_col_1", "my_col_2"))
   }
+
+  test("excluded catalogs: unset key excludes nothing") {
+    val conf = SparkRangerAdminPlugin.getRangerConf
+    conf.unset(AccessResource.EXCLUDED_CATALOGS_KEY)
+    try {
+      assert(AccessResource.excludedCatalogs.isEmpty)
+      assert(!AccessResource.isExcludedCatalog(Some("iceberg"), Set.empty))
+      assert(!AccessResource.isExcludedCatalog(None, Set.empty))
+      assert(!AccessResource.isExcludedTableClass(
+        "com.mongodb.spark.sql.connector.MongoTable",
+        Set.empty))
+    } finally {
+      conf.unset(AccessResource.EXCLUDED_CATALOGS_KEY)
+    }
+  }
+
+  test("excluded catalogs: catalog-name match for connectors that register a catalog") {
+    val conf = SparkRangerAdminPlugin.getRangerConf
+    conf.set(AccessResource.EXCLUDED_CATALOGS_KEY, "mongodb,kafka")
+    try {
+      val excluded = AccessResource.excludedCatalogs
+      assert(excluded === Set("mongodb", "kafka"))
+      // A relation registered under a Spark catalog with a matching name is excluded.
+      assert(AccessResource.isExcludedCatalog(Some("mongodb"), excluded))
+      assert(AccessResource.isExcludedCatalog(Some("kafka"), excluded))
+      // Non-listed catalogs and catalog-less relations are not matched by name.
+      assert(!AccessResource.isExcludedCatalog(Some("iceberg"), excluded))
+      assert(!AccessResource.isExcludedCatalog(None, excluded))
+    } finally {
+      conf.unset(AccessResource.EXCLUDED_CATALOGS_KEY)
+    }
+  }
+
+  test("excluded catalogs: table-class match via alias for catalog-less connectors") {
+    val excluded = Set("mongodb")
+    // The MongoDB Spark Connector's DSv2 Table classes match the aliased prefix.
+    assert(AccessResource.isExcludedTableClass(
+      "com.mongodb.spark.sql.connector.MongoTable",
+      excluded))
+    assert(AccessResource.isExcludedTableClass(
+      "com.mongodb.spark.sql.connector.internal.MongoTableV2",
+      excluded))
+    // A friendly name that has no alias entry matches no class.
+    assert(!AccessResource.isExcludedTableClass(
+      "com.mongodb.spark.sql.connector.MongoTable",
+      Set("elasticsearch")))
+    // A class outside every aliased prefix is not matched.
+    assert(!AccessResource.isExcludedTableClass(
+      "org.apache.iceberg.spark.source.SparkTable",
+      excluded))
+  }
+
+  test("excluded catalogs: whitespace and empty entries are ignored") {
+    val conf = SparkRangerAdminPlugin.getRangerConf
+    conf.set(AccessResource.EXCLUDED_CATALOGS_KEY, "  mongodb , ,  kafka  ,")
+    try {
+      assert(AccessResource.excludedCatalogs === Set("mongodb", "kafka"))
+    } finally {
+      conf.unset(AccessResource.EXCLUDED_CATALOGS_KEY)
+    }
+  }
+
+  test("excluded catalogs: an all-whitespace value is treated as unset") {
+    val conf = SparkRangerAdminPlugin.getRangerConf
+    conf.set(AccessResource.EXCLUDED_CATALOGS_KEY, "   ,  , ")
+    try {
+      assert(AccessResource.excludedCatalogs.isEmpty)
+    } finally {
+      conf.unset(AccessResource.EXCLUDED_CATALOGS_KEY)
+    }
+  }
 }
