@@ -98,4 +98,58 @@ class AccessResourceSuite extends KyuubiFunSuite with SparkSessionProvider {
     assert(resource1.getColumn === "my_col_1,my_col_2")
     assert(resource1.getColumns === Seq("my_col_1", "my_col_2"))
   }
+
+  test("catalog allowlist: unset key allows everything") {
+    val conf = SparkRangerAdminPlugin.getRangerConf
+    conf.unset(AccessResource.CATALOG_ALLOWLIST_KEY)
+    try {
+      assert(AccessResource.catalogAllowlist.isEmpty)
+      assert(AccessResource.isAllowlisted(None))
+      assert(AccessResource.isAllowlisted(Some("iceberg")))
+      assert(AccessResource.isAllowlisted(Some("anything_else")))
+    } finally {
+      conf.unset(AccessResource.CATALOG_ALLOWLIST_KEY)
+    }
+  }
+
+  test("catalog allowlist: named catalogs pass, others (incl None) fail") {
+    val conf = SparkRangerAdminPlugin.getRangerConf
+    conf.set(AccessResource.CATALOG_ALLOWLIST_KEY, "spark_catalog,iceberg,gravitino")
+    try {
+      assert(AccessResource.catalogAllowlist.contains(
+        Set("spark_catalog", "iceberg", "gravitino")))
+      assert(AccessResource.isAllowlisted(Some("iceberg")))
+      assert(AccessResource.isAllowlisted(Some("spark_catalog")))
+      assert(AccessResource.isAllowlisted(Some("gravitino")))
+      // None (identifier-less DSv2 relation) is never allowlisted under an enforced list.
+      assert(!AccessResource.isAllowlisted(None))
+      // Any other catalog name is external.
+      assert(!AccessResource.isAllowlisted(Some("mongodb")))
+      assert(!AccessResource.isAllowlisted(Some("kafka")))
+    } finally {
+      conf.unset(AccessResource.CATALOG_ALLOWLIST_KEY)
+    }
+  }
+
+  test("catalog allowlist: whitespace and empty entries are ignored") {
+    val conf = SparkRangerAdminPlugin.getRangerConf
+    conf.set(AccessResource.CATALOG_ALLOWLIST_KEY, "  iceberg , , spark_catalog  ,")
+    try {
+      assert(AccessResource.catalogAllowlist.contains(Set("iceberg", "spark_catalog")))
+    } finally {
+      conf.unset(AccessResource.CATALOG_ALLOWLIST_KEY)
+    }
+  }
+
+  test("catalog allowlist: an empty value is treated as unset (allow everything)") {
+    val conf = SparkRangerAdminPlugin.getRangerConf
+    conf.set(AccessResource.CATALOG_ALLOWLIST_KEY, "   ,  , ")
+    try {
+      assert(AccessResource.catalogAllowlist.isEmpty)
+      assert(AccessResource.isAllowlisted(None))
+      assert(AccessResource.isAllowlisted(Some("mongodb")))
+    } finally {
+      conf.unset(AccessResource.CATALOG_ALLOWLIST_KEY)
+    }
+  }
 }
