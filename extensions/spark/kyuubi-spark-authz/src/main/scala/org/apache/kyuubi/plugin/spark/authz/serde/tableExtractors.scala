@@ -31,6 +31,7 @@ import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.types.DataType
 import org.apache.spark.unsafe.types.UTF8String
 
+import org.apache.kyuubi.plugin.spark.authz.ranger.AccessResource
 import org.apache.kyuubi.plugin.spark.authz.util.AuthZUtils._
 import org.apache.kyuubi.plugin.spark.authz.util.PathIdentifier._
 import org.apache.kyuubi.util.reflect.ReflectUtils._
@@ -236,32 +237,38 @@ class DataSourceV2RelationTableExtractor extends TableExtractor {
   override def apply(spark: SparkSession, v1: AnyRef): Option[Table] = {
     val plan = v1.asInstanceOf[LogicalPlan]
     plan.find(_.getClass.getSimpleName == "DataSourceV2Relation").get match {
-      // NX1: upstream KYUUBI #7230 added an opt-out that returns None for a relation
-      // carrying neither catalog nor identifier (a TableProvider without
-      // SupportsCatalogOptions, e.g. spark.read.format("mongodb")). That is a
-      // privilege-check bypass -- a skipped relation produces no privilege object,
-      // no Ranger request, and no audit event. This deployment authorizes every
-      // relation, so the skip is deliberately not wired up here: such a relation
-      // falls through to the extraction below and is authorized on its
-      // connector-defined name, which fails closed when no policy matches.
+      // NX1: variant of upstream KYUUBI #7230, scoped by an allowlist of catalogs
+      // that Ranger is authoritative for (ranger.plugin.spark.catalog.allowlist).
+      // A relation whose catalog is outside that allowlist -- or has no catalog at
+      // all, as with a TableProvider that does not implement SupportsCatalogOptions
+      // (MongoDB, Kafka, JDBC-v2, most custom connectors) -- is external to nx1's
+      // policy model and is skipped here: no privilege object, no Ranger request,
+      // no audit event. Access to those destinations is governed by whatever authz
+      // the destination system enforces (MongoDB creds, Kafka ACLs, ...). When the
+      // allowlist key is unset the extractor behaves as before (every relation is
+      // allowlisted); this guard only fires for deployments that opt in.
       case v2Relation: DataSourceV2Relation
           if v2Relation.identifier.isEmpty ||
             !isPathIdentifier(v2Relation.identifier.get.name(), spark) =>
         val maybeCatalog = v2Relation.catalog.flatMap(catalogPlugin =>
           lookupExtractor[CatalogPluginCatalogExtractor].apply(catalogPlugin))
-        val maybeOwner = TableExtractor.getOwner(v2Relation)
-        // Prefer the relation's `identifier`: its `namespace()` is a real
-        // multi-level array, so nested namespaces (including a single level that
-        // contains a dot, e.g. `cat`.`a.b`.`tbl`) are preserved exactly. The
-        // `table.name()` string is dot-flattened and lossy - it cannot tell a
-        // nested namespace from a dotted single level, and yields an empty
-        // database for catalogs that don't encode the namespace in the name,
-        // which would then be defaulted to the current database (fail-open).
-        val identifierTable = invokeAs[Option[AnyRef]](v2Relation, "identifier")
-          .flatMap(id => lookupExtractor[IdentifierTableExtractor].apply(spark, id))
-        identifierTable
-          .orElse(lookupExtractor[TableTableExtractor].apply(spark, v2Relation.table))
-          .map(_.copy(catalog = maybeCatalog, owner = maybeOwner))
+        if (!AccessResource.isAllowlisted(maybeCatalog)) {
+          None
+        } else {
+          val maybeOwner = TableExtractor.getOwner(v2Relation)
+          // Prefer the relation's `identifier`: its `namespace()` is a real
+          // multi-level array, so nested namespaces (including a single level that
+          // contains a dot, e.g. `cat`.`a.b`.`tbl`) are preserved exactly. The
+          // `table.name()` string is dot-flattened and lossy - it cannot tell a
+          // nested namespace from a dotted single level, and yields an empty
+          // database for catalogs that don't encode the namespace in the name,
+          // which would then be defaulted to the current database (fail-open).
+          val identifierTable = invokeAs[Option[AnyRef]](v2Relation, "identifier")
+            .flatMap(id => lookupExtractor[IdentifierTableExtractor].apply(spark, id))
+          identifierTable
+            .orElse(lookupExtractor[TableTableExtractor].apply(spark, v2Relation.table))
+            .map(_.copy(catalog = maybeCatalog, owner = maybeOwner))
+        }
       case _ => None
     }
   }
