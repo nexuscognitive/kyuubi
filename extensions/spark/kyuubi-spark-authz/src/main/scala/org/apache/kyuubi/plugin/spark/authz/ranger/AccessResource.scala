@@ -71,6 +71,13 @@ object AccessResource {
   val DEFAULT_SPARK_CATALOG_KEY = "ranger.plugin.spark.catalog.default.spark"
   val DEFAULT_TARGET_CATALOG_KEY = "ranger.plugin.spark.catalog.default.target"
   val CATALOG_MAPPING_KEY = "ranger.plugin.spark.catalog.mapping"
+  val EXCLUDED_CATALOGS_KEY = "ranger.plugin.spark.authz.excluded.catalogs"
+  // Spark-conf mirror of EXCLUDED_CATALOGS_KEY. Injectable per-session via
+  // --conf, SparkSession.builder.config, or spark.conf.set. Takes precedence over
+  // the Ranger XML source so admins can override a shipped default without
+  // editing ranger-spark-security.xml (which is on a read-only PVC in the
+  // tenant deployment).
+  val SPARK_EXCLUDED_CATALOGS_KEY = "spark." + EXCLUDED_CATALOGS_KEY
 
   // Resource modes
   val MODE_HIVE = "hive"
@@ -413,6 +420,66 @@ object AccessResource {
       obj.owner,
       obj.catalog)
   }
+
+  /**
+   * Fully-qualified DSv2 `Table` class prefixes that a given friendly catalog name
+   * aliases when a connector does not register a Spark catalog. The friendly name
+   * is what admins put in `ranger.plugin.spark.authz.excluded.catalogs`; the prefix
+   * is what `table.getClass.getName` starts with for that connector. Add an entry
+   * when a new catalog-less connector needs to be excludable by its short name.
+   */
+  private val CATALOGLESS_TABLE_ALIASES: Map[String, Set[String]] = Map(
+    "mongodb" -> Set("com.mongodb.spark.sql.connector."))
+
+  /**
+   * Friendly catalog names for which Ranger authorization should be skipped. Read
+   * from two sources and unioned:
+   *   1. `spark.ranger.plugin.spark.authz.excluded.catalogs` in SparkConf --
+   *      injectable per session via `--conf`, `SparkSession.builder.config(...)`,
+   *      or `spark.conf.set(...)`.
+   *   2. `ranger.plugin.spark.authz.excluded.catalogs` in ranger-spark-security.xml
+   *      -- a platform-wide default shipped through the tenant's terraform
+   *      templatefile.
+   *
+   * Union semantics: both sources contribute, neither can turn off the other. A
+   * session can extend a platform-shipped list but cannot un-exclude an entry
+   * the platform explicitly listed -- removing a platform default requires
+   * platform-side action (edit terraform), not a per-session flag.
+   *
+   * Empty when both are unset or contain only whitespace/empty entries.
+   */
+  def excludedCatalogs(spark: SparkSession): Set[String] = {
+    val fromSpark = spark.conf.getOption(SPARK_EXCLUDED_CATALOGS_KEY)
+    val fromRanger = Option(SparkRangerAdminPlugin.getRangerConf.get(EXCLUDED_CATALOGS_KEY))
+    parseExcludedCatalogs(fromSpark) ++ parseExcludedCatalogs(fromRanger)
+  }
+
+  private def parseExcludedCatalogs(raw: Option[String]): Set[String] =
+    raw.iterator
+      .flatMap(_.split(","))
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .toSet
+
+  /**
+   * Whether a DSv2 relation's Spark-registered catalog name is in the excluded set.
+   * A `None` catalog is never matched here -- see `isExcludedTableClass` for the
+   * alias-based fallback used when a connector does not register a catalog.
+   */
+  def isExcludedCatalog(catalog: Option[String], excluded: Set[String]): Boolean =
+    catalog.exists(excluded.contains)
+
+  /**
+   * Whether a DSv2 `Table` implementation class is aliased by any friendly name in
+   * the excluded set. Match is by package/class prefix: an entry
+   * `"com.mongodb.spark.sql.connector."` matches `com.mongodb.spark.sql.connector.MongoTable`
+   * and any sibling class in that package. Fallback for catalog-less connectors
+   * whose DSv2 relations carry no `TableCatalog`.
+   */
+  def isExcludedTableClass(className: String, excluded: Set[String]): Boolean =
+    excluded.iterator
+      .flatMap(name => CATALOGLESS_TABLE_ALIASES.get(name).iterator.flatten)
+      .exists(prefix => className.startsWith(prefix))
 
   /**
    * Reset cached configuration (for testing).
