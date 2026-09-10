@@ -100,6 +100,9 @@ class SparkConnectResourceSuite extends KyuubiFunSuite with RestFrontendTestHelp
       generation: Int = 0,
       recoveryState: String = SparkConnectRecoveryState.NONE,
       lastRestartTime: Long = 0L): SparkConnectSessionInfo = {
+    // The store outlives a suite run, and a user's lookup takes their newest row: anything an
+    // earlier run left for this user would shadow a binding dated an hour back.
+    registry.forget(userName)
     val sessionId = UUID.randomUUID().toString
     val binding = SparkConnectSessionInfo(
       userName = userName,
