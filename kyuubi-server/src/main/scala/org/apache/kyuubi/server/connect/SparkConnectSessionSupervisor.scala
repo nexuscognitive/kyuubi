@@ -247,10 +247,8 @@ class SparkConnectSessionSupervisor(
     }
     val applicationState = driverObserver.applicationState(binding.engineTag)
     val driverPod = driverObserver.driverPod(binding.engineTag)
-    val everServed = binding.wasRestarted ||
-      binding.driverPostMortems.nonEmpty ||
-      recordState == STATE_RUNNING ||
-      applicationState.contains(ApplicationState.RUNNING)
+    val everServed =
+      recordState == STATE_RUNNING || currentEngineEverServed(binding, applicationState)
     driverPod match {
       case Some(pod) if pod.phase == POD_PHASE_RUNNING =>
         // The pod being up is necessary but not sufficient: an engine is only usable once the
@@ -360,13 +358,26 @@ class SparkConnectSessionSupervisor(
       case None =>
         val applicationState =
           if (observable) driverObserver.applicationState(binding.engineTag) else None
-        val everServed = binding.wasRestarted ||
-          binding.driverPostMortems.nonEmpty ||
-          applicationState.exists(state => state == ApplicationState.RUNNING || isTerminated(state))
+        val everServed = currentEngineEverServed(binding, applicationState)
         val engineRequestedTime = math.max(binding.createTime, binding.lastRestartTime)
         !everServed && System.currentTimeMillis() - engineRequestedTime <= engineInitTimeout
     }
   }
+
+  /**
+   * Whether anything outside Kyuubi's session record says that the engine the binding names now
+   * -- this tag, not one it replaced -- ever served: the informer saw it running or terminated, or
+   * its death was recorded.
+   *
+   * Evidence about earlier engines does not count. A binding that has just been through a
+   * relaunch names an engine with no pod yet, and taking its predecessor's death for its own
+   * would read every relaunch as dead the moment it was made, and relaunch it again.
+   */
+  private def currentEngineEverServed(
+      binding: SparkConnectSessionInfo,
+      applicationState: Option[ApplicationState.ApplicationState]): Boolean =
+    binding.driverPostMortems.exists(_.engineTag == binding.engineTag) ||
+      applicationState.exists(state => state == ApplicationState.RUNNING || isTerminated(state))
 
   /**
    * Whether `binding` is `RECOVERING` on the strength of a relaunch that nothing can still be

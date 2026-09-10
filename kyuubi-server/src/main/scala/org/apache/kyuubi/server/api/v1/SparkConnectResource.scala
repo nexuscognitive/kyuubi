@@ -305,23 +305,21 @@ private[v1] class SparkConnectResource extends ApiRequestContext with Logging {
   private def resolveOwnSession(sessionId: String): OwnSparkConnectSession = {
     val sessionHandle = requireSessionHandle(sessionId)
     val userName = fe.getSessionUser(Map.empty[String, String])
-    val session = sessionManager.getSessionOption(sessionHandle).getOrElse {
-      // Not held here, but it may be the caller's bound session -- after a restart, or on a peer
-      // -- which is the session the list shows them. Someone else's is as unknown as a made-up
-      // id, rather than forbidden: an id this instance does not hold says nothing about whose it
-      // is.
-      return sessionManager.sparkConnectSessionRegistry.lookup(userName)
-        .filter(_.sessionId == sessionId)
-        .map(Left(_))
-        .getOrElse(throw new WebApplicationException("session not found", 404))
-    }
-    if (session.user != userName) {
-      throw new ForbiddenException(s"$userName is not allowed to access session $sessionId")
-    }
-    session match {
-      case kyuubiSession: KyuubiSessionImpl if isSparkConnectSession(kyuubiSession.conf) =>
+    sessionManager.getSessionOption(sessionHandle) match {
+      case None =>
+        // Not held here, but it may be the caller's bound session -- after a restart, or on a
+        // peer -- which is the session the list shows them. Someone else's is as unknown as a
+        // made-up id, rather than forbidden: an id this instance does not hold says nothing
+        // about whose it is.
+        sessionManager.sparkConnectSessionRegistry.lookup(userName)
+          .filter(_.sessionId == sessionId)
+          .map(Left(_))
+          .getOrElse(throw new WebApplicationException("session not found", 404))
+      case Some(session) if session.user != userName =>
+        throw new ForbiddenException(s"$userName is not allowed to access session $sessionId")
+      case Some(kyuubiSession: KyuubiSessionImpl) if isSparkConnectSession(kyuubiSession.conf) =>
         Right(kyuubiSession)
-      case _ =>
+      case Some(_) =>
         // Reachable through this path only for a session opened on another frontend, which has
         // its own endpoints; answering 404 keeps this resource about Spark Connect sessions.
         throw new WebApplicationException("not a Spark Connect session", 404)

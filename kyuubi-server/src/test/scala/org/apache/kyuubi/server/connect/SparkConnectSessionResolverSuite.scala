@@ -336,6 +336,42 @@ class SparkConnectSessionResolverSuite extends KyuubiFunSuite {
     assert(provisionedEngines.peek().engineToken == engineToken)
   }
 
+  test("a create straight after a relaunch waits for the new engine, not relaunch it again") {
+    val deadEngineTag = bindingLeftByRestart()
+    val resolver = newResolver()
+    supervisor.recordDriverDeath(FakeSparkConnectDriverObserver.oomKilledPostMortem(deadEngineTag))
+    observer.driverDiedAndPodWasReclaimed(deadEngineTag)
+
+    val relaunched = open(resolver)
+    assert(relaunched.outcome == SparkConnectCreateOutcome.Relaunched)
+
+    // The new engine has no pod yet. The restart count and the post-mortem the binding carries
+    // are about the engine it replaced, and say nothing about this one.
+    val again = open(resolver)
+    Thread.sleep(200)
+
+    assert(again.outcome == SparkConnectCreateOutcome.AwaitingEngine)
+    assert(again.sessionId == relaunched.sessionId)
+    assert(provisionedEngines.size() == 1, "the new engine was relaunched before it could start")
+    assert(binding.engineTag == relaunched.sessionId)
+  }
+
+  test("an engine a peer has just relaunched is waited for, not replaced") {
+    val deadEngineTag = bindingLeftByRestart()
+    val resolver = newResolver()
+    supervisor.recordDriverDeath(FakeSparkConnectDriverObserver.oomKilledPostMortem(deadEngineTag))
+    // A peer relaunched it a moment ago: the binding names the peer's new session and engine,
+    // whose pod is not up yet.
+    val peerSessionId = UUID.randomUUID().toString
+    registry.completeRecovery(userName, peerSessionId, peerSessionId, "a-new-engine-credential")
+
+    val resolution = open(resolver)
+
+    assert(resolution.outcome == SparkConnectCreateOutcome.AwaitingEngine)
+    assert(resolution.sessionId == peerSessionId)
+    assert(provisionedEngines.isEmpty, "a second driver was launched behind the peer's")
+  }
+
   test("concurrent creates on a dead engine launch one engine and agree on the session") {
     val ghostSessionId = bindingLeftByRestart()
     observer.driverDiedAndPodWasReclaimed(ghostSessionId)

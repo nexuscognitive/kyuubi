@@ -122,8 +122,9 @@ class SparkConnectSessionRegistrySuite extends KyuubiFunSuite {
     assert(binding.restartCount == 1)
     // Whatever was keyed by the old id on this instance -- its pooled channel -- goes.
     assert(closed.toSeq == Seq(firstSession))
+    // Both are sessions this instance opened on that engine and has not seen close.
     assert(registry.localSessionIds("connect_user", firstSession).toSet ==
-      Set(secondSession))
+      Set(firstSession, secondSession))
   }
 
   test("reattaching refuses a binding that names another engine by now") {
