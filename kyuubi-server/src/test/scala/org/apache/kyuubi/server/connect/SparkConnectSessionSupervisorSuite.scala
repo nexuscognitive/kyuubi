@@ -18,7 +18,7 @@
 package org.apache.kyuubi.server.connect
 
 import java.util.UUID
-import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.{ConcurrentLinkedQueue, CountDownLatch, TimeUnit}
 
 import scala.concurrent.duration._
 
@@ -42,6 +42,7 @@ class SparkConnectSessionSupervisorSuite extends KyuubiFunSuite {
   private var observer: FakeSparkConnectDriverObserver = _
   private var provisionedEngines: ConcurrentLinkedQueue[SparkConnectEngineRequest] = _
   private var provisionFailure: Option[Throwable] = None
+  @volatile private var provisionGate: Option[CountDownLatch] = None
 
   override def beforeEach(): Unit = {
     super.beforeEach()
@@ -49,6 +50,7 @@ class SparkConnectSessionSupervisorSuite extends KyuubiFunSuite {
     observer = new FakeSparkConnectDriverObserver()
     provisionedEngines = new ConcurrentLinkedQueue[SparkConnectEngineRequest]()
     provisionFailure = None
+    provisionGate = None
   }
 
   /**
@@ -72,6 +74,7 @@ class SparkConnectSessionSupervisorSuite extends KyuubiFunSuite {
       observer,
       request => {
         provisionedEngines.add(request)
+        provisionGate.foreach(_.await(10, TimeUnit.SECONDS))
         provisionFailure.foreach(throw _)
         UUID.randomUUID().toString
       })
@@ -388,6 +391,82 @@ class SparkConnectSessionSupervisorSuite extends KyuubiFunSuite {
 
     assert(registry.lookup(userName).flatMap(_.latestPostMortem).map(_.events.size).contains(2))
   }
+
+  test("a RECOVERING flag nothing is running is not reported, and recovery goes ahead") {
+    val engineTag = registerSession()
+    observer.driverIsRunning(engineTag)
+    val supervisor = newSupervisor(staleAfterZeroConf())
+    observer.driverDiedAndPodWasReclaimed(engineTag)
+    // Set by an instance that died before the relaunch it scheduled could run.
+    registry.beginRecovery(userName)
+    Thread.sleep(20)
+
+    // Neither the session view nor recovery takes the flag's word for it.
+    assert(supervisor.sessionStatus(userName, STATE_RUNNING).state == STATE_DEAD)
+    assert(supervisor.recoverIfDead(userName, STATE_RUNNING) ==
+      SparkConnectRecoveryOutcome.Recovering)
+    awaitEngineCount(1)
+    eventually(timeout(10.seconds), interval(20.milliseconds)) {
+      val binding = registry.lookup(userName).getOrElse(fail("the binding disappeared"))
+      assert(binding.engineTag != engineTag)
+      assert(!binding.isRecovering)
+      // A lost relaunch spends no attempt; only the one that actually ran is counted.
+      assert(binding.restartCount == 1)
+    }
+  }
+
+  test("a RECOVERING flag a relaunch in flight here still holds is never stale") {
+    val engineTag = registerSession()
+    observer.driverIsRunning(engineTag)
+    val supervisor = newSupervisor(staleAfterZeroConf())
+    observer.driverDiedAndPodWasReclaimed(engineTag)
+    val gate = new CountDownLatch(1)
+    provisionGate = Some(gate)
+    try {
+      assert(supervisor.recoverIfDead(userName, STATE_RUNNING) ==
+        SparkConnectRecoveryOutcome.Recovering)
+      // The relaunch is provisioning, held at the gate, and its flag is already older than the
+      // threshold -- which is zero here.
+      awaitEngineCount(1)
+      Thread.sleep(20)
+      val binding = registry.lookup(userName).getOrElse(fail("the binding disappeared"))
+      assert(binding.isRecovering)
+      assert(!supervisor.isStaleRecovery(binding))
+      assert(supervisor.sessionStatus(userName, STATE_RUNNING).state == STATE_RECOVERING)
+      assert(supervisor.recoverIfDead(userName, STATE_RUNNING) ==
+        SparkConnectRecoveryOutcome.Recovering)
+    } finally {
+      gate.countDown()
+    }
+    awaitEngineCount(1)
+  }
+
+  test("starting clears the RECOVERING flags a dead instance left behind") {
+    val engineTag = registerSession()
+    registry.beginRecovery(userName)
+    Thread.sleep(20)
+
+    newSupervisor(staleAfterZeroConf())
+
+    val binding = registry.lookup(userName).getOrElse(fail("the binding disappeared"))
+    assert(!binding.isRecovering)
+    // Cleared, not replaced: the binding still names the engine it did, with nothing spent.
+    assert(binding.engineTag == engineTag)
+    assert(binding.restartCount == 0)
+    assert(provisionedEngines.isEmpty)
+  }
+
+  test("starting leaves a RECOVERING flag alone while a live relaunch could still hold it") {
+    registerSession()
+    registry.beginRecovery(userName)
+
+    newSupervisor()
+
+    assert(registry.lookup(userName).exists(_.isRecovering))
+  }
+
+  /** A conf under which any RECOVERING flag nothing here is running is already stale. */
+  private def staleAfterZeroConf(): KyuubiConf = recoveryConf().set(ENGINE_INIT_TIMEOUT, 0L)
 
   private def recoveryConf(maxAttempts: Int = 3): KyuubiConf = KyuubiConf()
     .set(FRONTEND_SPARK_CONNECT_RECOVERY_ENABLED, true)

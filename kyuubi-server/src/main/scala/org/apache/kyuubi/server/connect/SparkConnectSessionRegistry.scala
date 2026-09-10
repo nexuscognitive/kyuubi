@@ -46,6 +46,8 @@ class SparkConnectSessionRegistry(
     cacheExpirySeconds: Long = SparkConnectSessionRegistry.DEFAULT_CACHE_EXPIRY_SECONDS)
   extends Logging {
 
+  import SparkConnectSessionRegistry.LocalSession
+
   private val bindingsByUserName: Cache[String, SparkConnectSessionInfo] = CacheBuilder.newBuilder()
     .maximumSize(maxCacheSize)
     .expireAfterWrite(cacheExpirySeconds, TimeUnit.SECONDS)
@@ -64,9 +66,11 @@ class SparkConnectSessionRegistry(
     .maximumSize(maxCacheSize)
     .build[String, String]()
 
-  // Only holds sessions this instance created, so it is bounded by the local live session count.
+  // Only holds sessions this instance opened, so it is bounded by the local live session count.
   // A peer's sessions are reachable through the store, and are cleaned up by whoever closes them.
-  private val userNamesBySessionId = new ConcurrentHashMap[String, String]()
+  // The engine tag is kept so that a create can find a session this instance already holds on an
+  // engine, instead of opening one more on it.
+  private val localSessionsById = new ConcurrentHashMap[String, LocalSession]()
 
   private val closeListeners = new CopyOnWriteArrayList[String => Unit]()
 
@@ -102,7 +106,7 @@ class SparkConnectSessionRegistry(
       manager.insertSparkConnectSession(binding)
     }
     cacheBinding(binding)
-    userNamesBySessionId.put(sessionId, userName)
+    localSessionsById.put(sessionId, LocalSession(userName, engineTag))
     binding
   }
 
@@ -149,21 +153,26 @@ class SparkConnectSessionRegistry(
    * Called for every closing session, Spark Connect or not, so it must stay cheap and silent for
    * the overwhelming majority that were never registered here.
    */
-  def unregister(sessionId: String): Unit = {
-    val userName = userNamesBySessionId.remove(sessionId)
-    if (userName == null) {
-      return
+  def unregister(sessionId: String): Unit =
+    Option(localSessionsById.remove(sessionId)).foreach { local =>
+      detach(local.userName, sessionId)
     }
+
+  /**
+   * Stop routing `userName`'s calls to `sessionId`, keeping the engine binding.
+   *
+   * [[unregister]] is this for a session this instance holds. It is also reached directly for one
+   * it does not hold -- a binding a restart left behind, or one a peer holds -- when the user
+   * closes it here.
+   */
+  def detach(userName: String, sessionId: String): Unit = {
+    // Only while the binding still names this session: a create on another instance may have
+    // moved it on to a newer session on the same engine, and closing the old one must not stop
+    // routing to that.
     Option(bindingsByUserName.getIfPresent(userName))
+      .filter(_.sessionId == sessionId)
       .foreach(binding => bindingsByUserName.put(userName, binding.copy(sessionId = "")))
-    closeListeners.asScala.foreach { listener =>
-      try {
-        listener(sessionId)
-      } catch {
-        case NonFatal(e) =>
-          warn(s"A Spark Connect close listener failed for session $sessionId", e)
-      }
-    }
+    notifySessionClosed(sessionId)
     try {
       metadataManager.foreach(_.detachSparkConnectSessionBySessionId(sessionId))
     } catch {
@@ -172,10 +181,20 @@ class SparkConnectSessionRegistry(
     }
   }
 
+  private def notifySessionClosed(sessionId: String): Unit =
+    closeListeners.asScala.foreach { listener =>
+      try {
+        listener(sessionId)
+      } catch {
+        case NonFatal(e) =>
+          warn(s"A Spark Connect close listener failed for session $sessionId", e)
+      }
+    }
+
   /** Drop the binding outright, for an engine that is known to be gone. */
   def forget(userName: String): Unit = {
     Option(bindingsByUserName.getIfPresent(userName)).foreach { binding =>
-      userNamesBySessionId.remove(binding.sessionId)
+      localSessionsById.remove(binding.sessionId)
       userNamesByEngineTag.invalidate(binding.engineTag)
     }
     bindingsByUserName.invalidate(userName)
@@ -266,10 +285,82 @@ class SparkConnectSessionRegistry(
         lastRestartTime = System.currentTimeMillis(),
         recoveryState = SparkConnectRecoveryState.NONE,
         recoveryMessage = None)
-      userNamesBySessionId.remove(binding.sessionId)
-      userNamesBySessionId.put(sessionId, userName)
+      localSessionsById.remove(binding.sessionId)
+      localSessionsById.put(sessionId, LocalSession(userName, engineTag))
       persist(recovered)
     }
+
+  /**
+   * Point the user's binding at `sessionId`, a session opened on the engine the binding already
+   * names, keeping everything else.
+   *
+   * The tag and the credential are kept because the running driver carries them and neither can
+   * be changed from out here. The generation, restart count and post-mortems are kept because
+   * nothing was replaced: the Spark session on that driver, and everything the client built in
+   * it, is still there, and a generation that moved would tell the client otherwise.
+   *
+   * @return the rebound binding, or [[None]] when the binding no longer names `engineTag` --
+   *         a relaunch replaced the engine in the meantime.
+   */
+  def reattach(
+      userName: String,
+      engineTag: String,
+      sessionId: String): Option[SparkConnectSessionInfo] =
+    lookup(userName).filter(_.engineTag == engineTag).map { binding =>
+      localSessionsById.put(sessionId, LocalSession(userName, engineTag))
+      val rebound = persist(binding.copy(sessionId = sessionId))
+      // Nothing here routes to the previous id any more, so whatever is keyed by it -- a pooled
+      // upstream channel, above all -- goes, whether or not a peer still holds that session.
+      if (binding.sessionId.nonEmpty && binding.sessionId != sessionId) {
+        notifySessionClosed(binding.sessionId)
+      }
+      rebound
+    }
+
+  /**
+   * The sessions this instance opened for `userName` on the engine tagged `engineTag`, and has
+   * not seen close.
+   */
+  def localSessionIds(userName: String, engineTag: String): Seq[String] =
+    localSessionsById.asScala.collect {
+      case (sessionId, LocalSession(`userName`, `engineTag`)) => sessionId
+    }.toSeq
+
+  /**
+   * Take the user's binding out of `RECOVERING` without spending an attempt, for a relaunch that
+   * was lost rather than one that failed.
+   *
+   * Only while the binding is still the one `stale` describes: a relaunch begun since carries a
+   * newer `lastRestartTime` and is left to finish.
+   *
+   * @return the cleared binding, or [[None]] when it had already moved on.
+   */
+  def clearRecovery(stale: SparkConnectSessionInfo): Option[SparkConnectSessionInfo] =
+    lookup(stale.userName)
+      .filter(current => current.isRecovering && current.lastRestartTime == stale.lastRestartTime)
+      .map(current => persist(current.copy(recoveryState = SparkConnectRecoveryState.NONE)))
+
+  /**
+   * Take every binding whose relaunch began before `lastRestartBefore` out of `RECOVERING`, in
+   * the store as well as in this instance's cache.
+   *
+   * @return how many stored bindings were cleared.
+   */
+  def clearStaleRecoveries(lastRestartBefore: Long): Int = {
+    bindingsByUserName.asMap().values().asScala.toList
+      .filter(binding => binding.isRecovering && binding.lastRestartTime < lastRestartBefore)
+      .foreach(binding =>
+        bindingsByUserName.put(
+          binding.userName,
+          binding.copy(recoveryState = SparkConnectRecoveryState.NONE)))
+    try {
+      metadataManager.map(_.clearStaleSparkConnectRecoveries(lastRestartBefore)).getOrElse(0)
+    } catch {
+      case NonFatal(e) =>
+        error("Failed to clear stale Spark Connect recovery flags", e)
+        0
+    }
+  }
 
   /**
    * Give up on the user's engine, terminally, and say why.
@@ -324,6 +415,10 @@ class SparkConnectSessionRegistry(
 }
 
 object SparkConnectSessionRegistry {
+
+  /** A session this instance opened, and the engine it was bound to when it was. */
+  private case class LocalSession(userName: String, engineTag: String)
+
   private val DEFAULT_MAX_CACHE_SIZE = 10000L
   private val DEFAULT_CACHE_EXPIRY_SECONDS = 300L
 }

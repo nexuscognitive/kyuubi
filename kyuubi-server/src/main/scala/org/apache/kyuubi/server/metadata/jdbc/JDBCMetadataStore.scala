@@ -682,6 +682,20 @@ class JDBCMetadataStore(conf: KyuubiConf) extends MetadataStore with Logging {
     }
   }
 
+  override def clearStaleSparkConnectRecoveries(lastRestartBefore: Long): Int = {
+    val query =
+      s"UPDATE $SPARK_CONNECT_SESSION_TABLE SET recovery_state = ?" +
+        " WHERE recovery_state = ? AND last_restart_time < ?"
+    JdbcUtils.withConnection { connection =>
+      withUpdateCount(
+        connection,
+        query,
+        SparkConnectRecoveryState.NONE,
+        SparkConnectRecoveryState.RECOVERING,
+        lastRestartBefore) { count => count }
+    }
+  }
+
   override def cleanupSparkConnectSessionByUserName(userName: String): Unit = {
     val query = s"DELETE FROM $SPARK_CONNECT_SESSION_TABLE WHERE user_name = ?"
     JdbcUtils.withConnection { connection =>

@@ -553,6 +553,39 @@ class JDBCMetadataStoreSuite extends KyuubiFunSuite {
     jdbcMetadataStore.cleanupSparkConnectSessionByUserName("tagged_user")
   }
 
+  test("stale spark connect recovery flags are cleared, and only stale ones") {
+    val now = System.currentTimeMillis()
+    def insertRecovering(userName: String, lastRestartTime: Long): Unit = {
+      val sessionId = UUID.randomUUID().toString
+      jdbcMetadataStore.insertSparkConnectSession(SparkConnectSessionInfo(
+        userName = userName,
+        sessionId = sessionId,
+        engineTag = sessionId,
+        engineToken = "an-engine-credential",
+        createTime = now,
+        restartCount = 1,
+        lastRestartTime = lastRestartTime,
+        recoveryState = SparkConnectRecoveryState.RECOVERING))
+    }
+    // A relaunch lost with the instance that scheduled it, and one a live peer began just now.
+    insertRecovering("lost_relaunch_user", now - 3600000)
+    insertRecovering("live_relaunch_user", now)
+
+    assert(jdbcMetadataStore.clearStaleSparkConnectRecoveries(now - 600000) >= 1)
+
+    val lost = jdbcMetadataStore.getSparkConnectSessionByUserName("lost_relaunch_user")
+    assert(lost.exists(!_.isRecovering))
+    // Nothing else about the binding changes: the relaunch was lost, not failed, so no attempt is
+    // spent and the engine it names is still the one to look for.
+    assert(lost.map(_.restartCount).contains(1))
+    assert(lost.exists(_.hasLiveSession))
+    assert(jdbcMetadataStore.getSparkConnectSessionByUserName("live_relaunch_user")
+      .exists(_.isRecovering))
+
+    jdbcMetadataStore.cleanupSparkConnectSessionByUserName("lost_relaunch_user")
+    jdbcMetadataStore.cleanupSparkConnectSessionByUserName("live_relaunch_user")
+  }
+
   test("recovery bookkeeping and driver post-mortems survive a round trip") {
     val sessionId = UUID.randomUUID().toString
     jdbcMetadataStore.insertSparkConnectSession(SparkConnectSessionInfo(

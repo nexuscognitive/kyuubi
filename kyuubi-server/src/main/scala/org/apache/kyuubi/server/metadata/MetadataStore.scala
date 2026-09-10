@@ -171,6 +171,18 @@ trait MetadataStore extends Closeable {
   def detachSparkConnectSessionBySessionId(sessionId: String): Unit
 
   /**
+   * Take every Spark Connect record out of `RECOVERING` whose relaunch began before
+   * `lastRestartBefore`.
+   *
+   * A relaunch is scheduled on an in-memory executor after the flag is written, so an instance
+   * that dies in between leaves the flag behind with nothing left to clear it. Conditional on
+   * the timestamp, so that a relaunch a live peer began inside the window is left alone.
+   *
+   * @return the number of records cleared.
+   */
+  def clearStaleSparkConnectRecoveries(lastRestartBefore: Long): Int
+
+  /**
    * Drop a user's Spark Connect record outright.
    */
   def cleanupSparkConnectSessionByUserName(userName: String): Unit

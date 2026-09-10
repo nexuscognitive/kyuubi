@@ -17,11 +17,15 @@
 
 package org.apache.kyuubi.server.api.v1
 
+import java.net.{InetAddress, ServerSocket}
 import java.util.{Collections, UUID}
+import java.util.concurrent.ConcurrentHashMap
 import javax.ws.rs.client.Entity
 import javax.ws.rs.core.{GenericType, MediaType, Response}
 
 import scala.collection.JavaConverters._
+import scala.concurrent.{Await, Future}
+import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration._
 
 import org.apache.kyuubi.{KyuubiFunSuite, RestFrontendTestHelper}
@@ -30,11 +34,329 @@ import org.apache.kyuubi.client.api.v1.dto.{OperationLog, SessionOpenRequest, Sp
 import org.apache.kyuubi.client.api.v1.dto.SparkConnectSessionData
 import org.apache.kyuubi.config.KyuubiConf._
 import org.apache.kyuubi.engine.spark.SparkProcessBuilder
-import org.apache.kyuubi.server.connect.{SparkConnectEngineConf, SparkConnectSessionSupervisor}
+import org.apache.kyuubi.server.connect.{FakeSparkConnectDriverObserver, FakeSparkConnectEngine, GrpcSparkConnectEngineProbe, SparkConnect, SparkConnectEngineAddress, SparkConnectEngineConf, SparkConnectEngineLocator, SparkConnectSessionRegistry, SparkConnectSessionSupervisor}
+import org.apache.kyuubi.server.connect.SparkConnectSessionSupervisor.{STATE_PENDING, STATE_RECOVERING, STATE_RUNNING}
+import org.apache.kyuubi.server.connect.SparkConnectTestHelper.SESSION_NOT_FOUND_REPLY
 import org.apache.kyuubi.server.http.util.HttpAuthUtils.{basicAuthorizationHeader, AUTHORIZATION_HEADER}
-import org.apache.kyuubi.session.SessionHandle
+import org.apache.kyuubi.server.metadata.api.{SparkConnectRecoveryState, SparkConnectSessionInfo}
+import org.apache.kyuubi.session.{KyuubiSessionManager, SessionHandle}
 
 class SparkConnectResourceSuite extends KyuubiFunSuite with RestFrontendTestHelper {
+
+  import SparkConnectResourceSuite._
+
+  /** Stands in for the pod informer: which driver pods exist, and in what phase. */
+  private val driverObserver = new FakeSparkConnectDriverObserver(available = false)
+
+  /** Where each running engine's Spark Connect port is, by engine tag. */
+  private val engineAddresses = new ConcurrentHashMap[String, SparkConnectEngineAddress]()
+
+  private def sessionManager: KyuubiSessionManager =
+    server.backendService.sessionManager.asInstanceOf[KyuubiSessionManager]
+
+  private def registry: SparkConnectSessionRegistry = sessionManager.sparkConnectSessionRegistry
+
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    installDriverSeams()
+  }
+
+  override def afterEach(): Unit = {
+    // Back to a deployment with no cluster to observe, which is what every other test here
+    // assumes.
+    driverObserver.available = false
+    driverObserver.driverPods = Map.empty
+    driverObserver.applicationStates = Map.empty
+    engineAddresses.clear()
+    super.afterEach()
+  }
+
+  /**
+   * Put the REST paths on a cluster the test controls, and start their supervision afresh -- as a
+   * restarted instance would. The observer says which driver pods exist, a running one is
+   * reachable wherever the test put its engine, and the probe is the real one.
+   */
+  private def installDriverSeams(): Unit = {
+    val locator = new SparkConnectEngineLocator {
+      override def locate(engineTag: String): Option[SparkConnectEngineAddress] =
+        driverObserver.driverPod(engineTag)
+          .filter(_.phase == FakeSparkConnectDriverObserver.POD_PHASE_RUNNING)
+          .flatMap(_ => Option(engineAddresses.get(engineTag)))
+    }
+    sessionManager.replaceSparkConnectDriverSeams(
+      locator,
+      driverObserver,
+      new GrpcSparkConnectEngineProbe(PROBE_TIMEOUT_MILLIS))
+  }
+
+  /**
+   * A binding exactly as a restart leaves it: written by the instance that died, and naming a
+   * Kyuubi session that no instance holds. Written straight to the store, so that this instance
+   * meets it the way a restarted one does -- through a cache miss.
+   */
+  private def bindingLeftByRestart(
+      userName: String,
+      restartCount: Int = 0,
+      generation: Int = 0,
+      recoveryState: String = SparkConnectRecoveryState.NONE,
+      lastRestartTime: Long = 0L): SparkConnectSessionInfo = {
+    val sessionId = UUID.randomUUID().toString
+    val binding = SparkConnectSessionInfo(
+      userName = userName,
+      sessionId = sessionId,
+      engineTag = sessionId,
+      engineToken = SparkConnect.generateToken(),
+      // Long enough ago that no launch of its engine could still be under way.
+      createTime = System.currentTimeMillis() - AN_HOUR_MILLIS,
+      generation = generation,
+      restartCount = restartCount,
+      lastRestartTime = lastRestartTime,
+      recoveryState = recoveryState)
+    sessionManager.metadataManager.getOrElse(fail("the server has no metadata store"))
+      .insertSparkConnectSession(binding)
+    binding
+  }
+
+  /** Put a running driver behind `engineTag`, serving Spark Connect at `address`. */
+  private def engineIsRunning(engineTag: String, address: SparkConnectEngineAddress): Unit = {
+    driverObserver.available = true
+    driverObserver.driverIsRunning(engineTag)
+    engineAddresses.put(engineTag, address)
+  }
+
+  private def bindingOf(userName: String): SparkConnectSessionInfo =
+    registry.lookup(userName).getOrElse(fail(s"$userName has no binding"))
+
+  /** The session a page that shows one session shows: the first the list returns. */
+  private def listedFirst(userName: String): Option[String] =
+    listSparkConnectSessions(userName).headOption.map(_.getSessionId)
+
+  test("after a restart, a create reattaches to the engine still running, and lists it") {
+    val userName = "restart_live_engine"
+    val ghost = bindingLeftByRestart(userName, restartCount = 1, generation = 1)
+    val engine = new FakeSparkConnectEngine(SESSION_NOT_FOUND_REPLY, Some(ghost.engineToken))
+    try {
+      engineIsRunning(ghost.engineTag, engine.address)
+
+      val created = openSparkConnectSession(userName)
+      try {
+        assert(created.getSessionId != ghost.sessionId, "the create handed back the ghost")
+        // Reused only after it answered a call made with its own credential.
+        assert(engine.callCount == 1)
+        val binding = bindingOf(userName)
+        assert(binding.sessionId == created.getSessionId)
+        // The same driver, so the relay routes to the same pod with the same token, and the
+        // client's Spark session on it -- nothing was replaced -- keeps its generation.
+        assert(binding.engineTag == ghost.engineTag)
+        assert(binding.engineToken == ghost.engineToken)
+        assert(binding.generation == 1)
+        assert(sessionConf(created.getSessionId)(SESSION_SPARK_CONNECT_TOKEN.key) ==
+          ghost.engineToken)
+        assert(listedFirst(userName).contains(created.getSessionId))
+      } finally {
+        closeSparkConnectSession(userName, created.getSessionId)
+      }
+    } finally {
+      engine.stop()
+    }
+  }
+
+  test("after a restart, a create relaunches the engine that is gone, and lists it") {
+    val userName = "restart_dead_engine"
+    val ghost = bindingLeftByRestart(userName)
+    // The cluster is observable, and no driver pod carries the tag any more.
+    driverObserver.available = true
+
+    val created = openSparkConnectSession(userName)
+    try {
+      assert(created.getSessionId != ghost.sessionId, "the create handed back the ghost")
+      val binding = bindingOf(userName)
+      assert(binding.sessionId == created.getSessionId)
+      // A new driver: tagged by the session that launched it, with a credential of its own.
+      assert(binding.engineTag == created.getSessionId)
+      assert(binding.engineToken != ghost.engineToken)
+      // Counted as the recovery it is: the client's Spark session did not survive.
+      assert(binding.generation == 1)
+      assert(binding.restartCount == 1)
+      assert(listedFirst(userName).contains(created.getSessionId))
+    } finally {
+      closeSparkConnectSession(userName, created.getSessionId)
+    }
+  }
+
+  test("a create after a restart relaunches no more engines than recovery allows") {
+    val userName = "restart_exhausted_engine"
+    val maxAttempts = conf.get(FRONTEND_SPARK_CONNECT_RECOVERY_MAX_ATTEMPTS)
+    val ghost = bindingLeftByRestart(userName, restartCount = maxAttempts, generation = maxAttempts)
+    driverObserver.available = true
+
+    val created = openSparkConnectSession(userName)
+    try {
+      assert(created.getSessionId != ghost.sessionId, "the create handed back the ghost")
+      val binding = bindingOf(userName)
+      // Not one relaunch past the limit: a new session on a fresh engine, as on any session
+      // recovery gave up on.
+      assert(binding.sessionId == created.getSessionId)
+      assert(binding.restartCount == 0)
+      assert(binding.generation == 0)
+      assert(listedFirst(userName).contains(created.getSessionId))
+    } finally {
+      closeSparkConnectSession(userName, created.getSessionId)
+    }
+  }
+
+  test("a RECOVERING flag a restart left behind is cleared, not waited on") {
+    val userName = "restart_lost_relaunch"
+    val ghost = bindingLeftByRestart(
+      userName,
+      restartCount = 1,
+      generation = 1,
+      recoveryState = SparkConnectRecoveryState.RECOVERING,
+      lastRestartTime = System.currentTimeMillis() - AN_HOUR_MILLIS)
+    driverObserver.available = true
+
+    val created = openSparkConnectSession(userName)
+    try {
+      assert(created.getSessionId != ghost.sessionId, "the create waited on a lost relaunch")
+      val binding = bindingOf(userName)
+      assert(!binding.isRecovering)
+      assert(binding.sessionId == created.getSessionId)
+      // Relaunched once, now; the relaunch that was lost spent nothing.
+      assert(binding.restartCount == 2)
+      assert(listedFirst(userName).contains(created.getSessionId))
+    } finally {
+      closeSparkConnectSession(userName, created.getSessionId)
+    }
+  }
+
+  test("a relaunch another instance may be running is waited for, and listed") {
+    val userName = "peer_relaunch"
+    val bound = bindingLeftByRestart(
+      userName,
+      recoveryState = SparkConnectRecoveryState.RECOVERING,
+      lastRestartTime = System.currentTimeMillis())
+    driverObserver.available = true
+    try {
+      val answered = openSparkConnectSession(userName)
+
+      // No second driver: whoever is relaunching rebinds the user when it lands.
+      assert(answered.getSessionId == bound.sessionId)
+      assert(bindingOf(userName).isRecovering)
+      // And what the create answered with is on the list rather than missing from it.
+      val listed = listSparkConnectSessions(userName)
+      assert(listed.map(_.getSessionId) == Seq(bound.sessionId))
+      assert(listed.head.getState == STATE_RECOVERING)
+    } finally {
+      registry.forget(userName)
+    }
+  }
+
+  test("a live session is handed back unchanged, and only once its engine has answered") {
+    val userName = "live_session"
+    val first = openSparkConnectSession(userName)
+    try {
+      val binding = bindingOf(userName)
+      val engine = new FakeSparkConnectEngine(SESSION_NOT_FOUND_REPLY, Some(binding.engineToken))
+      try {
+        engineIsRunning(binding.engineTag, engine.address)
+
+        val second = openSparkConnectSession(userName)
+
+        assert(second.getSessionId == first.getSessionId)
+        assert(engine.callCount == 1, "the engine was reused without being probed")
+        assert(bindingOf(userName) == binding)
+        assert(listedFirst(userName).contains(first.getSessionId))
+      } finally {
+        engine.stop()
+      }
+    } finally {
+      closeSparkConnectSession(userName, first.getSessionId)
+    }
+  }
+
+  test("an engine port that hangs does not hang the create") {
+    val userName = "hung_engine"
+    val bound = bindingLeftByRestart(userName)
+    // Accepts connections from the backlog and never answers: a wedged driver, to a client.
+    val hungPort = new ServerSocket(0, 50, InetAddress.getLoopbackAddress)
+    try {
+      engineIsRunning(
+        bound.engineTag,
+        SparkConnectEngineAddress("127.0.0.1", hungPort.getLocalPort))
+
+      val started = System.nanoTime()
+      val answered = Await.result(Future(openSparkConnectSession(userName)), 60.seconds)
+      val elapsedMillis = (System.nanoTime() - started) / 1000000
+
+      assert(elapsedMillis < PROBE_TIMEOUT_MILLIS + 5000, s"the create took ${elapsedMillis}ms")
+      // A pod that runs without answering may be a driver still starting; replacing it would
+      // put two drivers behind the user. It is waited for, and listed as what it is.
+      assert(answered.getSessionId == bound.sessionId)
+      val listed = listSparkConnectSessions(userName)
+      assert(listed.map(_.getSessionId) == Seq(bound.sessionId))
+      assert(listed.head.getState == STATE_PENDING)
+    } finally {
+      hungPort.close()
+      registry.forget(userName)
+    }
+  }
+
+  test("a bound session this instance does not hold can be listed, viewed and closed") {
+    val userName = "unheld_session"
+    val bound = bindingLeftByRestart(userName)
+    val engine = new FakeSparkConnectEngine(SESSION_NOT_FOUND_REPLY, Some(bound.engineToken))
+    try {
+      engineIsRunning(bound.engineTag, engine.address)
+
+      // What a user sees on opening the page straight after a restart, before any create.
+      val listed = listSparkConnectSessions(userName)
+      assert(listed.map(_.getSessionId) == Seq(bound.sessionId))
+      assert(listed.head.getState == STATE_RUNNING)
+
+      val viewed = webTarget.path(s"api/v1/spark-connect/sessions/${bound.sessionId}")
+        .request(MediaType.APPLICATION_JSON_TYPE)
+        .header(AUTHORIZATION_HEADER, basicAuthorizationHeader(userName))
+        .get()
+      assert(200 == viewed.getStatus)
+      assert(viewed.readEntity(classOf[SparkConnectSessionData]).getSessionId == bound.sessionId)
+      // The page loads the diagnostics of whatever it lists, and none of them may fail.
+      Seq("log", "driver", "driver/log", "driver/events").foreach { path =>
+        assert(200 == driverRequest(userName, bound.sessionId, path).getStatus, path)
+      }
+      // Nobody else reaches it by naming it.
+      assert(404 == driverRequest("somebody_else", bound.sessionId, "driver").getStatus)
+      assert(404 == closeSparkConnectSession("somebody_else", bound.sessionId))
+
+      assert(200 == closeSparkConnectSession(userName, bound.sessionId))
+      assert(listSparkConnectSessions(userName).isEmpty)
+      assert(!bindingOf(userName).hasLiveSession)
+    } finally {
+      engine.stop()
+      registry.forget(userName)
+    }
+  }
+
+  test("starting clears the RECOVERING flags a dead instance left, and only stale ones") {
+    val lost = bindingLeftByRestart(
+      "startup_lost_relaunch",
+      recoveryState = SparkConnectRecoveryState.RECOVERING,
+      lastRestartTime = System.currentTimeMillis() - AN_HOUR_MILLIS)
+    val live = bindingLeftByRestart(
+      "startup_live_relaunch",
+      recoveryState = SparkConnectRecoveryState.RECOVERING,
+      lastRestartTime = System.currentTimeMillis())
+    try {
+      installDriverSeams()
+
+      val store = sessionManager.metadataManager.getOrElse(fail("no metadata store"))
+      assert(store.getSparkConnectSessionByUserName(lost.userName).exists(!_.isRecovering))
+      // Young enough that a live peer may be running it: left for the lazy check.
+      assert(store.getSparkConnectSessionByUserName(live.userName).exists(_.isRecovering))
+    } finally {
+      registry.forget(lost.userName)
+      registry.forget(live.userName)
+    }
+  }
 
   test("a Spark Connect session gets an engine of its user's own") {
     val conf = SparkConnectEngineConf.serverControlledConf("an-engine-credential")
@@ -376,10 +698,21 @@ class SparkConnectResourceSuite extends KyuubiFunSuite with RestFrontendTestHelp
     response.readEntity(new GenericType[Seq[SparkConnectSessionData]]() {})
   }
 
-  private def closeSparkConnectSession(user: String, sessionId: String): Unit = {
+  private def closeSparkConnectSession(user: String, sessionId: String): Int =
     webTarget.path(s"api/v1/spark-connect/sessions/$sessionId")
       .request(MediaType.APPLICATION_JSON_TYPE)
       .header(AUTHORIZATION_HEADER, basicAuthorizationHeader(user))
       .delete()
-  }
+      .getStatus
+}
+
+object SparkConnectResourceSuite {
+
+  /**
+   * Long enough for a first gRPC connection on loopback in a cold JVM, short enough that the test
+   * of a port that hangs costs the suite seconds rather than minutes.
+   */
+  private val PROBE_TIMEOUT_MILLIS = 2000L
+
+  private val AN_HOUR_MILLIS = 3600000L
 }

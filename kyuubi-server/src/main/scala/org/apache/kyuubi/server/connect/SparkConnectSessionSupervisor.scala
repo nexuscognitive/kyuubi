@@ -27,7 +27,7 @@ import org.apache.kyuubi.config.KyuubiConf
 import org.apache.kyuubi.config.KyuubiConf._
 import org.apache.kyuubi.engine.{ApplicationState, KubernetesDriverPostMortem}
 import org.apache.kyuubi.engine.ApplicationState.isTerminated
-import org.apache.kyuubi.server.metadata.api.{SparkConnectDriverPostMortem, SparkConnectSessionInfo}
+import org.apache.kyuubi.server.metadata.api.{SparkConnectDriverPostMortem, SparkConnectRecoveryState, SparkConnectSessionInfo}
 import org.apache.kyuubi.util.ThreadUtils
 
 /**
@@ -67,6 +67,15 @@ import org.apache.kyuubi.util.ThreadUtils
  * the endpoint stays dead until touched, which the session view says plainly rather than hiding.
  * [[KyuubiConf.FRONTEND_SPARK_CONNECT_RECOVERY_EAGER_ENABLED]] switches to eager for deployments
  * that would rather pay for the driver.
+ *
+ * ==What a restart leaves behind==
+ *
+ * Bindings live in the metadata store; Kyuubi sessions and scheduled relaunches live in memory. A
+ * restart therefore leaves bindings naming sessions nobody holds, and `RECOVERING` flags naming
+ * relaunches nobody will run. The first are resolved lazily, by [[SparkConnectSessionResolver]]
+ * on the next create, because a session missing from this instance's memory may be open on a
+ * peer. The second are cleared once they are older than any live relaunch could be -- at start,
+ * and wherever a flag is read -- see [[staleRecoveryThreshold]].
  */
 class SparkConnectSessionSupervisor(
     conf: KyuubiConf,
@@ -86,6 +95,21 @@ class SparkConnectSessionSupervisor(
   private val maxBackoff = conf.get(FRONTEND_SPARK_CONNECT_RECOVERY_BACKOFF_MAX)
   private val postMortemRetain = conf.get(FRONTEND_SPARK_CONNECT_POST_MORTEM_RETAIN)
   private val postMortemMaxEvents = conf.get(FRONTEND_SPARK_CONNECT_POST_MORTEM_MAX_EVENTS)
+  private val engineInitTimeout = conf.get(ENGINE_INIT_TIMEOUT)
+
+  /**
+   * How long a relaunch that is genuinely under way can leave a binding `RECOVERING`, on this
+   * instance or on any peer.
+   *
+   * The flag and `lastRestartTime` are written together, then the relaunch waits out its backoff
+   * -- at most the configured maximum -- and provisions. Provisioning returns once the Kyuubi
+   * session is open: seconds with the default asynchronous engine launch, and at most the engine
+   * initialize timeout with a synchronous one. Either way the flag is cleared or replaced as it
+   * returns. So no live relaunch holds the flag for longer than the maximum backoff plus the
+   * initialize timeout, and a flag older than that belongs to a relaunch that is not coming.
+   * Evaluated with this instance's settings, which assumes peers share them.
+   */
+  private[connect] val staleRecoveryThreshold: Long = maxBackoff + engineInitTimeout
 
   /**
    * Users whose engine this instance is currently relaunching.
@@ -113,6 +137,7 @@ class SparkConnectSessionSupervisor(
     recoveryExecutor = ThreadUtils.newDaemonSingleThreadScheduledExecutor(
       "spark-connect-recovery-thread")
     driverObserver.onDriverTerminated(recordDriverDeath)
+    clearStaleRecoveries()
     if (recoveryEnabled && eagerRecoveryEnabled) {
       info("Spark Connect engine recovery is eager: dead drivers are relaunched on detection")
       ThreadUtils.scheduleTolerableRunnableWithFixedDelay(
@@ -121,6 +146,22 @@ class SparkConnectSessionSupervisor(
         eagerRecoveryInterval,
         eagerRecoveryInterval,
         TimeUnit.MILLISECONDS)
+    }
+  }
+
+  /**
+   * Clear the `RECOVERING` flags that relaunches lost with a dead instance left in the store.
+   *
+   * Only flags past [[staleRecoveryThreshold]]: a younger one may be a relaunch a live peer is
+   * running, and is left to the lazy check that runs wherever a flag is read. Bindings themselves
+   * are not touched here -- see [[SparkConnectSessionResolver]] for why.
+   */
+  private def clearStaleRecoveries(): Unit = {
+    val cleared =
+      registry.clearStaleRecoveries(System.currentTimeMillis() - staleRecoveryThreshold)
+    if (cleared > 0) {
+      warn(s"Cleared $cleared stale Spark Connect recovery flags: each named a relaunch that no" +
+        s" live Kyuubi instance can still be running (older than ${staleRecoveryThreshold}ms)")
     }
   }
 
@@ -178,7 +219,7 @@ class SparkConnectSessionSupervisor(
     }
     binding match {
       case Some(record) if record.isRecoveryAbandoned => STATE_FAILED
-      case Some(record) if record.isRecovering => STATE_RECOVERING
+      case Some(record) if record.isRecovering && !isStaleRecovery(record) => STATE_RECOVERING
       case Some(record) => driverDerivedState(recordState, record)
       // Nothing binds this user to an engine, which is what the record says of a session whose
       // engine has been cleaned up entirely. There is no driver to ask about.
@@ -235,7 +276,7 @@ class SparkConnectSessionSupervisor(
    * better answered `UNAVAILABLE` and retried than held open.
    */
   def recoverIfDead(userName: String, recordState: String): SparkConnectRecoveryOutcome = {
-    val binding = registry.lookup(userName)
+    val binding = registry.lookup(userName).map(clearIfStale)
     binding match {
       case None => SparkConnectRecoveryOutcome.NoSession
       case Some(record) if record.isRecoveryAbandoned =>
@@ -252,6 +293,108 @@ class SparkConnectSessionSupervisor(
         SparkConnectRecoveryOutcome.Abandoned(reason)
       case Some(record) => scheduleRecovery(record)
     }
+  }
+
+  /**
+   * Relaunch, now and on the calling thread, the engine of a binding that no Kyuubi session on
+   * this instance holds and whose engine is not live -- the state a restart leaves bindings in.
+   *
+   * Bounded by the same rules as [[recoverIfDead]]: nothing when recovery is switched off and
+   * nothing once the attempts are spent, both answered
+   * [[SparkConnectRecoveryOutcome.Abandoned]] so that the caller creates a new session instead.
+   *
+   * What it skips is the backoff, deliberately. The backoff paces relaunches nobody asked for;
+   * this one is a user's create, it launches at most one engine per request, and the session it
+   * opens is held here -- so the next create finds that session and takes the paced path of
+   * [[recoverIfDead]] if its driver dies too. Waiting out minutes of backoff would only hold a
+   * REST thread for them.
+   *
+   * Synchronous because the caller has to answer with the new session's id, and cheap enough to
+   * be: provisioning opens a Kyuubi session and launches the engine behind it asynchronously.
+   * Throws what provisioning threw, having spent the attempt.
+   */
+  def relaunchNow(userName: String): SparkConnectRecoveryOutcome =
+    registry.lookup(userName).map(clearIfStale) match {
+      case None => SparkConnectRecoveryOutcome.NoSession
+      case Some(record) if record.isRecoveryAbandoned =>
+        SparkConnectRecoveryOutcome.Abandoned(
+          record.recoveryMessage.getOrElse(RECOVERY_ABANDONED_WITHOUT_REASON))
+      case Some(record) if record.isRecovering => SparkConnectRecoveryOutcome.Recovering
+      case Some(_) if !recoveryEnabled =>
+        SparkConnectRecoveryOutcome.Abandoned(RECOVERY_DISABLED_MESSAGE)
+      case Some(record) if record.restartCount >= maxRecoveryAttempts =>
+        val reason = exhaustedMessage(record)
+        registry.abandonRecovery(userName, reason)
+        SparkConnectRecoveryOutcome.Abandoned(reason)
+      case Some(_) if !recoveriesInFlight.add(userName) => SparkConnectRecoveryOutcome.Recovering
+      case Some(record) =>
+        try {
+          // Persisted before provisioning for the same reason as in scheduleRecovery: a peer
+          // reading the row meanwhile must see RECOVERING and not start a driver of its own.
+          registry.beginRecovery(userName)
+          info(s"Relaunching the Spark Connect engine of $userName now: no session on this" +
+            s" instance holds it, attempt ${record.restartCount + 1} of $maxRecoveryAttempts")
+          SparkConnectRecoveryOutcome.Relaunched(provisionReplacement(record))
+        } finally {
+          recoveriesInFlight.remove(userName)
+        }
+    }
+
+  /**
+   * Whether the engine of a binding that no session on this instance holds is still on its way
+   * up, as opposed to dead or never coming.
+   *
+   * Not holding the session is not proof that it is gone: with several instances behind HA it
+   * may be open on a peer that launched its engine a moment ago, and replacing an engine that is
+   * starting would put two drivers behind one user. So a driver pod that exists and has not
+   * terminated is waited for. With no pod at all, the engine is waited for only while a launch
+   * could still be producing one -- within the engine initialize timeout of when the engine was
+   * asked for -- and only if nothing says it ever served. Past that, or for an engine that has
+   * served and gone, nothing is coming.
+   */
+  private[connect] def engineIsStarting(binding: SparkConnectSessionInfo): Boolean = {
+    val observable = driverObserver.isAvailable
+    val driverPod = if (observable) driverObserver.driverPod(binding.engineTag) else None
+    driverPod match {
+      case Some(pod) => pod.phase == POD_PHASE_PENDING || pod.phase == POD_PHASE_RUNNING
+      case None =>
+        val applicationState =
+          if (observable) driverObserver.applicationState(binding.engineTag) else None
+        val everServed = binding.wasRestarted ||
+          binding.driverPostMortems.nonEmpty ||
+          applicationState.exists(state => state == ApplicationState.RUNNING || isTerminated(state))
+        val engineRequestedTime = math.max(binding.createTime, binding.lastRestartTime)
+        !everServed && System.currentTimeMillis() - engineRequestedTime <= engineInitTimeout
+    }
+  }
+
+  /**
+   * Whether `binding` is `RECOVERING` on the strength of a relaunch that nothing can still be
+   * running: none is in flight on this instance, and the flag is older than
+   * [[staleRecoveryThreshold]], which no live relaunch on a peer outlasts.
+   */
+  private[connect] def isStaleRecovery(binding: SparkConnectSessionInfo): Boolean =
+    binding.isRecovering &&
+      !recoveriesInFlight.contains(binding.userName) &&
+      System.currentTimeMillis() - binding.lastRestartTime > staleRecoveryThreshold
+
+  /**
+   * `binding`, taken out of a stale `RECOVERING` if it is in one.
+   *
+   * The flag is written before the relaunch is handed to an in-memory executor, so an instance
+   * that dies in between leaves it behind with nothing to clear it, and every caller that answers
+   * `Recovering` off it would do so forever. No attempt is spent: the relaunch was lost, not
+   * failed.
+   */
+  private[connect] def clearIfStale(binding: SparkConnectSessionInfo): SparkConnectSessionInfo = {
+    if (!isStaleRecovery(binding)) {
+      return binding
+    }
+    warn(s"Clearing the stale Spark Connect recovery flag of ${binding.userName}: the relaunch" +
+      s" it names began at ${binding.lastRestartTime} and nothing is running it")
+    registry.clearRecovery(binding)
+      .orElse(registry.lookup(binding.userName))
+      .getOrElse(binding.copy(recoveryState = SparkConnectRecoveryState.NONE))
   }
 
   private def exhaustedMessage(binding: SparkConnectSessionInfo): String = {
@@ -326,11 +469,25 @@ class SparkConnectSessionSupervisor(
       return
     }
     try {
+      provisionReplacement(binding.get)
+    } catch {
+      // Already logged and counted; on this path there is nobody to hand the failure to.
+      case NonFatal(_) =>
+    }
+  }
+
+  /**
+   * Provision the replacement engine for `binding` and rebind to it, answering with the new
+   * session's id; or spend the attempt and rethrow.
+   */
+  private def provisionReplacement(binding: SparkConnectSessionInfo): String = {
+    val userName = binding.userName
+    try {
       val engineToken = SparkConnect.generateToken()
       val sessionId = provisionEngine(SparkConnectEngineRequest(
         userName = userName,
         engineToken = engineToken,
-        requestedConf = binding.get.engineConf))
+        requestedConf = binding.engineConf))
       registry.completeRecovery(
         userName = userName,
         sessionId = sessionId,
@@ -339,6 +496,7 @@ class SparkConnectSessionSupervisor(
       info(s"Relaunched the Spark Connect engine of $userName as session $sessionId." +
         " Its Spark session state -- temporary views, cached frames, artifacts -- did not" +
         " survive the driver that held it.")
+      sessionId
     } catch {
       case NonFatal(e) =>
         // One failed launch is not the end of recovery: the attempt is spent, and the next touch
@@ -352,6 +510,7 @@ class SparkConnectSessionSupervisor(
             s"The last of $maxRecoveryAttempts engine relaunches failed to start:" +
               s" ${e.getMessage}")
         }
+        throw e
     }
   }
 
@@ -408,6 +567,13 @@ object SparkConnectRecoveryOutcome {
    * session nothing will ever answer, and hide `reason` behind a deadline exceeded at the end.
    */
   case class Abandoned(reason: String) extends SparkConnectRecoveryOutcome
+
+  /**
+   * A replacement engine was provisioned on the caller's thread and the binding now names
+   * `sessionId`, a session held by this instance. Only
+   * [[SparkConnectSessionSupervisor.relaunchNow]] answers this.
+   */
+  case class Relaunched(sessionId: String) extends SparkConnectRecoveryOutcome
 }
 
 object SparkConnectSessionSupervisor {

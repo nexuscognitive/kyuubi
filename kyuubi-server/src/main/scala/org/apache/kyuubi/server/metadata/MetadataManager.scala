@@ -264,6 +264,10 @@ class MetadataManager extends AbstractService("MetadataManager") {
     withMetadataRequestMetrics(_metadataStore.detachSparkConnectSessionBySessionId(sessionId))
   }
 
+  def clearStaleSparkConnectRecoveries(lastRestartBefore: Long): Int = {
+    withMetadataRequestMetrics(_metadataStore.clearStaleSparkConnectRecoveries(lastRestartBefore))
+  }
+
   def cleanupSparkConnectSessionByUserName(userName: String): Unit = {
     withMetadataRequestMetrics(_metadataStore.cleanupSparkConnectSessionByUserName(userName))
   }

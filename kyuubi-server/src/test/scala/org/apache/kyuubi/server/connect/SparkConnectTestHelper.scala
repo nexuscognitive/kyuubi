@@ -85,8 +85,13 @@ case class FakeEngineReply(
  * A real gRPC server on a real port rather than an in-process one, so the tests exercise genuine
  * HTTP/2 framing, headers and trailers -- which is the whole of what the proxy under test is
  * responsible for preserving.
+ *
+ * With `requiredToken` set it authenticates every call the way Spark's pre-shared-key interceptor
+ * does, answering `UNAUTHENTICATED` to any other bearer credential before any handler runs.
  */
-class FakeSparkConnectEngine(reply: (String, Seq[Array[Byte]]) => FakeEngineReply) {
+class FakeSparkConnectEngine(
+    reply: (String, Seq[Array[Byte]]) => FakeEngineReply,
+    requiredToken: Option[String] = None) {
 
   @volatile private var lastHeaders: Metadata = _
   private val callCounter = new AtomicInteger(0)
@@ -97,6 +102,12 @@ class FakeSparkConnectEngine(reply: (String, Seq[Array[Byte]]) => FakeEngineRepl
         headers: Metadata): ServerCall.Listener[Array[Byte]] = {
       lastHeaders = headers
       callCounter.incrementAndGet()
+      if (requiredToken.exists(token => !SparkConnect.bearerToken(headers).contains(token))) {
+        call.close(
+          Status.UNAUTHENTICATED.withDescription("Invalid authentication token"),
+          new Metadata())
+        return new ServerCall.Listener[Array[Byte]] {}
+      }
       call.request(1)
       val received = ListBuffer[Array[Byte]]()
       new ServerCall.Listener[Array[Byte]] {
@@ -160,6 +171,15 @@ case class ProxyCallResult(
 object SparkConnectTestHelper {
 
   val EXECUTE_PLAN_METHOD: String = SparkConnect.SERVICE_PATH_PREFIX + "ExecutePlan"
+
+  /**
+   * How Spark answers a call that names no Spark session it holds -- which is what the liveness
+   * probe's empty request always does.
+   */
+  val SESSION_NOT_FOUND_REPLY: (String, Seq[Array[Byte]]) => FakeEngineReply =
+    (_, _) =>
+      FakeEngineReply(status = Status.INTERNAL.withDescription(
+        "[INVALID_HANDLE.SESSION_NOT_FOUND] The handle is invalid."))
   val RELEASE_EXECUTE_METHOD: String = SparkConnect.SERVICE_PATH_PREFIX + "ReleaseExecute"
 
   def methodDescriptor(methodName: String): MethodDescriptor[Array[Byte], Array[Byte]] =

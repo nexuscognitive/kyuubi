@@ -1571,6 +1571,21 @@ object KyuubiConf {
       .checkValue(_ > 0, "must be positive")
       .createWithDefaultString("PT20S")
 
+  val FRONTEND_SPARK_CONNECT_ENGINE_PROBE_TIMEOUT: ConfigEntry[Long] =
+    buildConf("kyuubi.frontend.spark.connect.engine.probe.timeout")
+      .audience(SERVER)
+      .immutable
+      .doc("How long creating a Spark Connect session waits for the engine it would reuse to " +
+        "answer a Spark Connect call made with the engine's credential. An engine that does " +
+        "not answer in time is treated as not live, so this bounds how long a hung driver can " +
+        "hold up the request. Set it well above the in-cluster round trip: an engine wrongly " +
+        "judged dead while no session on this Kyuubi instance holds it is replaced, and its " +
+        "Spark session state is lost with it.")
+      .version("1.12.0")
+      .timeConf
+      .checkValue(_ > 0, "must be positive")
+      .createWithDefaultString("PT3S")
+
   val FRONTEND_SPARK_CONNECT_RECOVERY_ENABLED: ConfigEntry[Boolean] =
     buildConf("kyuubi.frontend.spark.connect.recovery.enabled")
       .audience(SERVER)

@@ -31,15 +31,16 @@ import org.apache.kyuubi.engine.ApplicationState.ApplicationState
  * observer rather than the Kubernetes operation: a reconciliation rule that can only be exercised
  * against a live cluster is a rule that is never exercised.
  */
-class FakeSparkConnectDriverObserver(var available: Boolean = true)
+class FakeSparkConnectDriverObserver(@volatile var available: Boolean = true)
   extends SparkConnectDriverObserver {
 
   import FakeSparkConnectDriverObserver._
 
   private val terminationListeners = ListBuffer[KubernetesDriverPostMortem => Unit]()
 
-  var applicationStates: Map[String, ApplicationState] = Map.empty
-  var driverPods: Map[String, KubernetesDriverPod] = Map.empty
+  // Volatile because a REST suite sets these on the test thread and reads them on a request one.
+  @volatile var applicationStates: Map[String, ApplicationState] = Map.empty
+  @volatile var driverPods: Map[String, KubernetesDriverPod] = Map.empty
 
   override def isAvailable: Boolean = available
 

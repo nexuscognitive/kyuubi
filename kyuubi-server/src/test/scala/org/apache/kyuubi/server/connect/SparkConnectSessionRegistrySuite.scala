@@ -99,6 +99,56 @@ class SparkConnectSessionRegistrySuite extends KyuubiFunSuite {
     assert(binding.exists(!_.hasLiveSession))
   }
 
+  test("reattaching moves the binding to a new session and keeps everything else") {
+    val registry = newRegistry()
+    val closed = ListBuffer[String]()
+    registry.onSessionClosed(closed += _)
+    val firstSession = UUID.randomUUID().toString
+    registry.register("connect_user", firstSession, firstSession, "engine-token")
+    // The engine has been through a relaunch, so there is history to lose.
+    registry.completeRecovery("connect_user", firstSession, firstSession, "engine-token")
+
+    val secondSession = UUID.randomUUID().toString
+    val rebound = registry.reattach("connect_user", firstSession, secondSession)
+
+    assert(rebound.map(_.sessionId).contains(secondSession))
+    val binding = registry.liveSession("connect_user").getOrElse(fail("nothing routes"))
+    assert(binding.sessionId == secondSession)
+    // The same driver: the relay routes to the same pod with the same credential.
+    assert(binding.engineTag == firstSession)
+    assert(binding.engineToken == "engine-token")
+    // Nothing was replaced, so a client comparing generations must not think it was.
+    assert(binding.generation == 1)
+    assert(binding.restartCount == 1)
+    // Whatever was keyed by the old id on this instance -- its pooled channel -- goes.
+    assert(closed.toSeq == Seq(firstSession))
+    assert(registry.localSessionIds("connect_user", firstSession).toSet ==
+      Set(secondSession))
+  }
+
+  test("reattaching refuses a binding that names another engine by now") {
+    val registry = newRegistry()
+    val sessionId = UUID.randomUUID().toString
+    registry.register("connect_user", sessionId, sessionId, "engine-token")
+
+    assert(registry.reattach("connect_user", "a-replaced-engine", UUID.randomUUID().toString)
+      .isEmpty)
+    assert(registry.liveSession("connect_user").map(_.sessionId).contains(sessionId))
+  }
+
+  test("closing a session the binding has moved on from leaves the binding alone") {
+    val registry = newRegistry()
+    val firstSession = UUID.randomUUID().toString
+    registry.register("connect_user", firstSession, firstSession, "engine-token")
+    // A create elsewhere moved the binding to a newer session on the same engine.
+    val secondSession = UUID.randomUUID().toString
+    registry.reattach("connect_user", firstSession, secondSession)
+
+    registry.unregister(firstSession)
+
+    assert(registry.liveSession("connect_user").map(_.sessionId).contains(secondSession))
+  }
+
   test("forgetting a user drops the engine binding outright") {
     val registry = newRegistry()
     val sessionId = UUID.randomUUID().toString

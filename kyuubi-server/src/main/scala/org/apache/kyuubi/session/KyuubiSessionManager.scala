@@ -36,7 +36,7 @@ import org.apache.kyuubi.metrics.MetricsConstants._
 import org.apache.kyuubi.metrics.MetricsSystem
 import org.apache.kyuubi.operation.{KyuubiOperationManager, OperationState}
 import org.apache.kyuubi.plugin.{GroupProvider, PluginLoader, SessionConfAdvisor}
-import org.apache.kyuubi.server.connect.{KubernetesSparkConnectDriverObserver, KubernetesSparkConnectEngineLocator, SparkConnectEngineConf, SparkConnectEngineLocator, SparkConnectEngineRequest, SparkConnectSessionRegistry, SparkConnectSessionSupervisor}
+import org.apache.kyuubi.server.connect.{GrpcSparkConnectEngineProbe, KubernetesSparkConnectDriverObserver, KubernetesSparkConnectEngineLocator, SparkConnectDriverObserver, SparkConnectEngineConf, SparkConnectEngineLocator, SparkConnectEngineProbe, SparkConnectEngineRequest, SparkConnectSessionRegistry, SparkConnectSessionResolver, SparkConnectSessionSupervisor}
 import org.apache.kyuubi.server.metadata.{MetadataManager, MetadataRequestsRetryRef}
 import org.apache.kyuubi.server.metadata.api.{Metadata, MetadataFilter}
 import org.apache.kyuubi.service.TempFileService
@@ -76,6 +76,11 @@ class KyuubiSessionManager private (name: String) extends SessionManager(name) {
   def sparkConnectSessionSupervisor: SparkConnectSessionSupervisor =
     _sparkConnectSessionSupervisor
 
+  // Decides what a Spark Connect create request is answered with, having verified that the
+  // session and engine it hands back are live rather than inferring it from the persisted binding.
+  private var _sparkConnectSessionResolver: SparkConnectSessionResolver = _
+  def sparkConnectSessionResolver: SparkConnectSessionResolver = _sparkConnectSessionResolver
+
   // lazy is required for plugins since the conf is null when this class initialization
   lazy val sessionConfAdvisor: Seq[SessionConfAdvisor] = PluginLoader.loadSessionConfAdvisor(conf)
   lazy val groupProvider: GroupProvider = PluginLoader.loadGroupProvider(conf)
@@ -96,15 +101,13 @@ class KyuubiSessionManager private (name: String) extends SessionManager(name) {
     if (conf.isRESTEnabled) metadataManager = Some(new MetadataManager())
     _sparkConnectSessionRegistry = new SparkConnectSessionRegistry(metadataManager)
     applicationManager = new KyuubiApplicationManager(metadataManager)
-    _sparkConnectEngineLocator = new KubernetesSparkConnectEngineLocator(
-      applicationManager,
-      conf.get(KyuubiConf.FRONTEND_SPARK_CONNECT_ENGINE_PORT))
-    _sparkConnectSessionSupervisor = new SparkConnectSessionSupervisor(
-      conf,
-      _sparkConnectSessionRegistry,
-      _sparkConnectEngineLocator,
+    buildSparkConnectSupervision(
+      new KubernetesSparkConnectEngineLocator(
+        applicationManager,
+        conf.get(KyuubiConf.FRONTEND_SPARK_CONNECT_ENGINE_PORT)),
       new KubernetesSparkConnectDriverObserver(applicationManager),
-      openSparkConnectEngineSession _)
+      new GrpcSparkConnectEngineProbe(
+        conf.get(KyuubiConf.FRONTEND_SPARK_CONNECT_ENGINE_PROBE_TIMEOUT)))
     addService(applicationManager)
     addService(credentialsManager)
     addService(tempFileService)
@@ -112,6 +115,46 @@ class KyuubiSessionManager private (name: String) extends SessionManager(name) {
     initSessionLimiter(conf)
     initEngineStartupProcessSemaphore(conf)
     super.initialize(conf)
+  }
+
+  /**
+   * Build the Spark Connect locator, supervisor and resolver around one set of driver seams, so
+   * that all three see the same cluster.
+   */
+  private def buildSparkConnectSupervision(
+      engineLocator: SparkConnectEngineLocator,
+      driverObserver: SparkConnectDriverObserver,
+      engineProbe: SparkConnectEngineProbe): Unit = {
+    _sparkConnectEngineLocator = engineLocator
+    _sparkConnectSessionSupervisor = new SparkConnectSessionSupervisor(
+      conf,
+      _sparkConnectSessionRegistry,
+      engineLocator,
+      driverObserver,
+      openSparkConnectEngineSession _)
+    _sparkConnectSessionResolver = new SparkConnectSessionResolver(
+      _sparkConnectSessionRegistry,
+      _sparkConnectSessionSupervisor,
+      engineLocator,
+      engineProbe,
+      openSparkConnectEngineSession _)
+  }
+
+  /**
+   * Rebuild the Spark Connect supervision around driver seams the caller controls, and start it.
+   *
+   * For suites that exercise the REST session paths without a Kubernetes cluster: the states
+   * that matter there -- a driver gone after a restart, a port that hangs -- cannot be produced
+   * on demand on a real one. Affects the REST paths from their next request on; a Spark Connect
+   * frontend already running keeps the seams it was built with.
+   */
+  private[kyuubi] def replaceSparkConnectDriverSeams(
+      engineLocator: SparkConnectEngineLocator,
+      driverObserver: SparkConnectDriverObserver,
+      engineProbe: SparkConnectEngineProbe): Unit = synchronized {
+    Option(_sparkConnectSessionSupervisor).foreach(_.stop())
+    buildSparkConnectSupervision(engineLocator, driverObserver, engineProbe)
+    _sparkConnectSessionSupervisor.start()
   }
 
   override protected def createSession(
