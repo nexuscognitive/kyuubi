@@ -71,6 +71,7 @@ object AccessResource {
   val DEFAULT_SPARK_CATALOG_KEY = "ranger.plugin.spark.catalog.default.spark"
   val DEFAULT_TARGET_CATALOG_KEY = "ranger.plugin.spark.catalog.default.target"
   val CATALOG_MAPPING_KEY = "ranger.plugin.spark.catalog.mapping"
+  val CATALOG_ALLOWLIST_KEY = "ranger.plugin.spark.catalog.allowlist"
 
   // Resource modes
   val MODE_HIVE = "hive"
@@ -412,6 +413,29 @@ object AccessResource {
       obj.columns.mkString(","),
       obj.owner,
       obj.catalog)
+  }
+
+  /**
+   * The set of Spark catalog names that Ranger is authoritative for, read from
+   * `ranger.plugin.spark.catalog.allowlist` in ranger-spark-security.xml. `None`
+   * means the key is unset and the allowlist is not enforced -- callers should
+   * treat every catalog as allowlisted.
+   */
+  def catalogAllowlist: Option[Set[String]] =
+    Option(SparkRangerAdminPlugin.getRangerConf.get(CATALOG_ALLOWLIST_KEY))
+      .map(_.split(",").iterator.map(_.trim).filter(_.nonEmpty).toSet)
+      .filter(_.nonEmpty)
+
+  /**
+   * Whether a given catalog is inside the configured allowlist. A `None` catalog
+   * -- e.g. an identifier-less DSv2 relation from a non-catalog TableProvider --
+   * is never allowlisted when the allowlist is enforced; the caller is expected
+   * to skip authorization for it. Returns `true` unconditionally when the
+   * allowlist is unset, so unopted-in deployments see no behavior change.
+   */
+  def isAllowlisted(catalog: Option[String]): Boolean = catalogAllowlist match {
+    case None => true
+    case Some(allowed) => catalog.exists(allowed)
   }
 
   /**

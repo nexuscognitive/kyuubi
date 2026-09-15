@@ -25,6 +25,7 @@ import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.types.{StringType, StructField, StructType}
 
 import org.apache.kyuubi.KyuubiFunSuite
+import org.apache.kyuubi.plugin.spark.authz.ranger.{AccessResource, SparkRangerAdminPlugin}
 
 class DataSourceV2RelationTableExtractorSuite extends KyuubiFunSuite {
 
@@ -94,5 +95,32 @@ class DataSourceV2RelationTableExtractorSuite extends KyuubiFunSuite {
     } finally {
       spark.conf.unset(skipConfKey)
     }
+  }
+
+  // NX1: with the catalog allowlist enforced, a catalog-less relation (external
+  // TableProvider like MongoDB) is dropped from privilege extraction entirely, so
+  // authz for the destination is skipped rather than routed through nx1's Ranger
+  // policies. The catalog-plus-name allowlist decision itself is exercised by
+  // AccessResourceSuite.
+  test("catalog-less relation is skipped when allowlist is enforced") {
+    val rangerConf = SparkRangerAdminPlugin.getRangerConf
+    rangerConf.set(AccessResource.CATALOG_ALLOWLIST_KEY, "spark_catalog,iceberg")
+    try {
+      val maybeTable = extractor.apply(spark, cataloglessRelation)
+      assert(
+        maybeTable.isEmpty,
+        "an identifier-less DSv2 relation with no catalog must be skipped when the " +
+          "allowlist is enforced -- external destinations are outside nx1's authz scope")
+    } finally {
+      rangerConf.unset(AccessResource.CATALOG_ALLOWLIST_KEY)
+    }
+  }
+
+  test("catalog-less relation is extracted when allowlist is unset (no regression)") {
+    val rangerConf = SparkRangerAdminPlugin.getRangerConf
+    rangerConf.unset(AccessResource.CATALOG_ALLOWLIST_KEY)
+    val maybeTable = extractor.apply(spark, cataloglessRelation)
+    assert(maybeTable.nonEmpty)
+    assert(maybeTable.get.table === "MongoTable()")
   }
 }
