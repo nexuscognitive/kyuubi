@@ -695,6 +695,47 @@
     "isEnabled" : true,
     "version" : 1,
     "service" : "hive_jenkins",
+    "name" : "masked_column_only_access",
+    "policyType" : 0,
+    "policyPriority" : 0,
+    "isAuditEnabled" : true,
+    "resources" : {
+      "catalog" : {
+        "values" : [ "iceberg" ],
+        "isExcludes" : false,
+        "isRecursive" : false
+      },
+      "column" : {
+        "values" : [ "value1" ],
+        "isExcludes" : false,
+        "isRecursive" : false
+      },
+      "schema" : {
+        "values" : [ "default" ],
+        "isExcludes" : false,
+        "isRecursive" : false
+      },
+      "table" : {
+        "values" : [ "src" ],
+        "isExcludes" : false,
+        "isRecursive" : false
+      }
+    },
+    "policyItems" : [ {
+      "accesses" : [ {
+        "type" : "select",
+        "isAllowed" : true
+      } ],
+      "users" : [ "user_masked_column_only" ],
+      "delegateAdmin" : false
+    } ],
+    "isDenyAllElse" : false
+  }, {
+    "id" : 13,
+    "guid" : "c51ce410-c124-310e-8db5-e4b97fc2af39",
+    "isEnabled" : true,
+    "version" : 1,
+    "service" : "hive_jenkins",
     "name" : "src_key_less_than_20",
     "policyType" : 2,
     "policyPriority" : 0,
@@ -729,8 +770,8 @@
     } ],
     "isDenyAllElse" : false
   }, {
-    "id" : 13,
-    "guid" : "c51ce410-c124-310e-8db5-e4b97fc2af39",
+    "id" : 14,
+    "guid" : "aab32389-22bc-325a-af60-6eb525ffdc56",
     "isEnabled" : true,
     "version" : 1,
     "service" : "hive_jenkins",
@@ -768,8 +809,8 @@
     } ],
     "isDenyAllElse" : false
   }, {
-    "id" : 14,
-    "guid" : "aab32389-22bc-325a-af60-6eb525ffdc56",
+    "id" : 15,
+    "guid" : "9bf31c7f-f062-336a-96d3-c8bd1f8f2ff3",
     "isEnabled" : true,
     "version" : 1,
     "service" : "hive_jenkins",
@@ -812,8 +853,8 @@
     } ],
     "isDenyAllElse" : false
   }, {
-    "id" : 15,
-    "guid" : "9bf31c7f-f062-336a-96d3-c8bd1f8f2ff3",
+    "id" : 16,
+    "guid" : "c74d97b0-1eae-357e-84aa-9d5bade97baf",
     "isEnabled" : true,
     "version" : 1,
     "service" : "hive_jenkins",
@@ -856,8 +897,8 @@
     } ],
     "isDenyAllElse" : false
   }, {
-    "id" : 16,
-    "guid" : "c74d97b0-1eae-357e-84aa-9d5bade97baf",
+    "id" : 17,
+    "guid" : "70efdf2e-c9b0-3607-9795-c442636b55fb",
     "isEnabled" : true,
     "version" : 1,
     "service" : "hive_jenkins",
@@ -900,8 +941,8 @@
     } ],
     "isDenyAllElse" : false
   }, {
-    "id" : 17,
-    "guid" : "70efdf2e-c9b0-3607-9795-c442636b55fb",
+    "id" : 18,
+    "guid" : "6f4922f4-5568-361a-8cdf-4ad2299f6d23",
     "isEnabled" : true,
     "version" : 1,
     "service" : "hive_jenkins",
@@ -944,8 +985,8 @@
     } ],
     "isDenyAllElse" : false
   }, {
-    "id" : 18,
-    "guid" : "6f4922f4-5568-361a-8cdf-4ad2299f6d23",
+    "id" : 19,
+    "guid" : "1f0e3dad-9990-3345-b743-9f8ffabdffc4",
     "isEnabled" : true,
     "version" : 1,
     "service" : "hive_jenkins",
@@ -988,8 +1029,8 @@
     } ],
     "isDenyAllElse" : false
   }, {
-    "id" : 19,
-    "guid" : "1f0e3dad-9990-3345-b743-9f8ffabdffc4",
+    "id" : 20,
+    "guid" : "98f13708-2101-34c4-b568-7be6106a3b84",
     "isEnabled" : true,
     "version" : 1,
     "service" : "hive_jenkins",
@@ -1032,8 +1073,8 @@
     } ],
     "isDenyAllElse" : false
   }, {
-    "id" : 20,
-    "guid" : "98f13708-2101-34c4-b568-7be6106a3b84",
+    "id" : 21,
+    "guid" : "3c59dc04-8e88-3024-bbe8-079a5c74d079",
     "isEnabled" : true,
     "version" : 1,
     "service" : "hive_jenkins",
@@ -1072,6 +1113,50 @@
       "delegateAdmin" : true,
       "dataMaskInfo" : {
         "dataMaskType" : "MASK"
+      }
+    } ],
+    "isDenyAllElse" : false
+  }, {
+    "id" : 22,
+    "guid" : "b6d767d2-f8ed-3d21-a44b-0e5886680cb9",
+    "isEnabled" : true,
+    "version" : 1,
+    "service" : "hive_jenkins",
+    "name" : "masked_column_only_mask",
+    "policyType" : 1,
+    "policyPriority" : 0,
+    "isAuditEnabled" : true,
+    "resources" : {
+      "catalog" : {
+        "values" : [ "iceberg" ],
+        "isExcludes" : false,
+        "isRecursive" : false
+      },
+      "column" : {
+        "values" : [ "value1" ],
+        "isExcludes" : false,
+        "isRecursive" : false
+      },
+      "schema" : {
+        "values" : [ "default" ],
+        "isExcludes" : false,
+        "isRecursive" : false
+      },
+      "table" : {
+        "values" : [ "src" ],
+        "isExcludes" : false,
+        "isRecursive" : false
+      }
+    },
+    "dataMaskPolicyItems" : [ {
+      "accesses" : [ {
+        "type" : "select",
+        "isAllowed" : true
+      } ],
+      "users" : [ "user_masked_column_only" ],
+      "delegateAdmin" : false,
+      "dataMaskInfo" : {
+        "dataMaskType" : "MASK_NULL"
       }
     } ],
     "isDenyAllElse" : false

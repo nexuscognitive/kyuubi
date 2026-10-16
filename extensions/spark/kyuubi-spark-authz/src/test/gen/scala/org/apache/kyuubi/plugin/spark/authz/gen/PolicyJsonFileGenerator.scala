@@ -181,6 +181,7 @@ class PolicyJsonFileGenerator extends KyuubiFunSuite {
       policyAccessForPaimonNsTable1SelectOnly,
       policyAccessForDefaultDbUDF,
       policyAccessForCatalogWithoutMasking,
+      policyAccessForMaskedColumnOnly,
       // row filter
       policyFilterForSrcTableKeyLessThan20,
       policyFilterForPermViewKeyLessThan20,
@@ -191,7 +192,8 @@ class PolicyJsonFileGenerator extends KyuubiFunSuite {
       policyMaskShowFirst4ForValue3,
       policyMaskDateShowYearForValue4,
       policyMaskShowFirst4ForValue5,
-      policyMaskForPermViewMaskedValue2)
+      policyMaskForPermViewMaskedValue2,
+      policyMaskForMaskedColumnOnly)
       // catalog mode: every schema/table/udf-scoped policy is rooted at the
       // `iceberg` catalog (test catalogs are all mapped to it). url-only
       // policies have no catalog resource.
@@ -449,6 +451,34 @@ class PolicyJsonFileGenerator extends KyuubiFunSuite {
         users = List(permViewUser),
         accesses = allowTypes(select),
         delegateAdmin = true)))
+
+  // Access and a mask on a single column, and nothing else of that table: the shape a
+  // tag-based grant takes, where the user may read exactly the column the mask covers.
+  private val policyAccessForMaskedColumnOnly = KRangerPolicy(
+    name = "masked_column_only_access",
+    resources = Map(
+      databaseRes(defaultDb),
+      srcTableRes,
+      columnRes("value1")),
+    policyItems = List(
+      KRangerPolicyItem(
+        users = List(maskedColumnOnlyUser),
+        accesses = allowTypes(select),
+        delegateAdmin = false)))
+
+  private val policyMaskForMaskedColumnOnly = KRangerPolicy(
+    name = "masked_column_only_mask",
+    policyType = POLICY_TYPE_DATAMASK,
+    resources = Map(
+      databaseRes(defaultDb),
+      srcTableRes,
+      columnRes("value1")),
+    dataMaskPolicyItems = List(
+      KRangerDataMaskPolicyItem(
+        dataMaskInfo = KRangerPolicyItemDataMaskInfo(dataMaskType = "MASK_NULL"),
+        users = List(maskedColumnOnlyUser),
+        accesses = allowTypes(select),
+        delegateAdmin = false)))
 
   // A second catalog that grants access but defines no masking or row-filter policy.
   // `iceberg`'s masks and filters must not reach the identically named tables here, which

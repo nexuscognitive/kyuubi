@@ -28,6 +28,7 @@ import org.slf4j.LoggerFactory
 import org.apache.kyuubi.plugin.spark.authz.OperationType.OperationType
 import org.apache.kyuubi.plugin.spark.authz.PrivilegeObjectActionType._
 import org.apache.kyuubi.plugin.spark.authz.rule.Authorization._
+import org.apache.kyuubi.plugin.spark.authz.rule.datamasking.DataMaskingStage0Marker
 import org.apache.kyuubi.plugin.spark.authz.rule.rowfilter._
 import org.apache.kyuubi.plugin.spark.authz.serde._
 import org.apache.kyuubi.plugin.spark.authz.util.AuthZUtils._
@@ -117,6 +118,40 @@ object PrivilegesBuilder {
         val db = quote(parts.init)
         val table = Table(None, Some(db), parts.last, None)
         privilegeObjects += PrivilegeObject(table)
+
+      // The masking projection this plugin inserts rebuilds every column of the scan,
+      // masked or not, so walking it as an ordinary Project would authorize columns the
+      // query never asked for -- and a user granted only the masked column then loses the
+      // query the mask was written for. Only the maskers of the requested columns are
+      // read; pruning through them keeps whatever else a masker references (a custom mask
+      // over another column still authorizes that column), and an unrecognized shape
+      // falls back to the whole scan.
+      case marker: DataMaskingStage0Marker =>
+        // By name, not by exprId: a masker is an alias, so the column reaching here may
+        // carry either the scan's id or the masked output's, depending on where above the
+        // marker it was picked up.
+        val requestedNames =
+          (columnPrune(projectionList, marker.outputSet) ++
+            columnPrune(projectionList, marker.scan.outputSet)).map(_.name).toSet
+        val maskers = marker.child match {
+          case maskers: Project if requestedNames.nonEmpty =>
+            maskers.projectList.filter(expr => requestedNames.contains(expr.name))
+          // nothing identifiable: authorize the whole scan, as before
+          case other => other.output
+        }
+        // The requested columns themselves, plus whatever else their maskers read -- a
+        // custom mask over another column authorizes that column too. The maskers alone
+        // are not enough: MASK_NULL is a literal and reads nothing, which would leave the
+        // list empty and send mergeProjection back to the whole scan.
+        val readColumns =
+          marker.scan.output.filter(attr => requestedNames.contains(attr.name)) ++
+            columnPrune(maskers, marker.scan.outputSet)
+        buildQuery(
+          marker.scan,
+          privilegeObjects,
+          readColumns.distinct,
+          conditionList,
+          spark)
 
       case p =>
         for (child <- p.children) {
