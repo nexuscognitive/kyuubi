@@ -626,6 +626,75 @@
     "isEnabled" : true,
     "version" : 1,
     "service" : "hive_jenkins",
+    "name" : "catalog_without_masking_all",
+    "policyType" : 0,
+    "policyPriority" : 0,
+    "description" : "Policy for all - catalog, schema, table, column",
+    "isAuditEnabled" : true,
+    "resources" : {
+      "catalog" : {
+        "values" : [ "catalog_without_masking" ],
+        "isExcludes" : false,
+        "isRecursive" : false
+      },
+      "column" : {
+        "values" : [ "*" ],
+        "isExcludes" : false,
+        "isRecursive" : false
+      },
+      "schema" : {
+        "values" : [ "*" ],
+        "isExcludes" : false,
+        "isRecursive" : false
+      },
+      "table" : {
+        "values" : [ "*" ],
+        "isExcludes" : false,
+        "isRecursive" : false
+      }
+    },
+    "policyItems" : [ {
+      "accesses" : [ {
+        "type" : "select",
+        "isAllowed" : true
+      }, {
+        "type" : "update",
+        "isAllowed" : true
+      }, {
+        "type" : "create",
+        "isAllowed" : true
+      }, {
+        "type" : "drop",
+        "isAllowed" : true
+      }, {
+        "type" : "alter",
+        "isAllowed" : true
+      }, {
+        "type" : "index",
+        "isAllowed" : true
+      }, {
+        "type" : "lock",
+        "isAllowed" : true
+      }, {
+        "type" : "all",
+        "isAllowed" : true
+      }, {
+        "type" : "read",
+        "isAllowed" : true
+      }, {
+        "type" : "write",
+        "isAllowed" : true
+      } ],
+      "users" : [ "admin", "bob" ],
+      "delegateAdmin" : true
+    } ],
+    "isDenyAllElse" : false
+  }, {
+    "id" : 12,
+    "guid" : "c20ad4d7-6fe9-3759-aa27-a0c99bff6710",
+    "isEnabled" : true,
+    "version" : 1,
+    "service" : "hive_jenkins",
     "name" : "src_key_less_than_20",
     "policyType" : 2,
     "policyPriority" : 0,
@@ -660,8 +729,8 @@
     } ],
     "isDenyAllElse" : false
   }, {
-    "id" : 12,
-    "guid" : "c20ad4d7-6fe9-3759-aa27-a0c99bff6710",
+    "id" : 13,
+    "guid" : "c51ce410-c124-310e-8db5-e4b97fc2af39",
     "isEnabled" : true,
     "version" : 1,
     "service" : "hive_jenkins",
@@ -699,8 +768,8 @@
     } ],
     "isDenyAllElse" : false
   }, {
-    "id" : 13,
-    "guid" : "c51ce410-c124-310e-8db5-e4b97fc2af39",
+    "id" : 14,
+    "guid" : "aab32389-22bc-325a-af60-6eb525ffdc56",
     "isEnabled" : true,
     "version" : 1,
     "service" : "hive_jenkins",
@@ -743,8 +812,8 @@
     } ],
     "isDenyAllElse" : false
   }, {
-    "id" : 14,
-    "guid" : "aab32389-22bc-325a-af60-6eb525ffdc56",
+    "id" : 15,
+    "guid" : "9bf31c7f-f062-336a-96d3-c8bd1f8f2ff3",
     "isEnabled" : true,
     "version" : 1,
     "service" : "hive_jenkins",
@@ -787,8 +856,8 @@
     } ],
     "isDenyAllElse" : false
   }, {
-    "id" : 15,
-    "guid" : "9bf31c7f-f062-336a-96d3-c8bd1f8f2ff3",
+    "id" : 16,
+    "guid" : "c74d97b0-1eae-357e-84aa-9d5bade97baf",
     "isEnabled" : true,
     "version" : 1,
     "service" : "hive_jenkins",
@@ -831,8 +900,8 @@
     } ],
     "isDenyAllElse" : false
   }, {
-    "id" : 16,
-    "guid" : "c74d97b0-1eae-357e-84aa-9d5bade97baf",
+    "id" : 17,
+    "guid" : "70efdf2e-c9b0-3607-9795-c442636b55fb",
     "isEnabled" : true,
     "version" : 1,
     "service" : "hive_jenkins",
@@ -875,8 +944,8 @@
     } ],
     "isDenyAllElse" : false
   }, {
-    "id" : 17,
-    "guid" : "70efdf2e-c9b0-3607-9795-c442636b55fb",
+    "id" : 18,
+    "guid" : "6f4922f4-5568-361a-8cdf-4ad2299f6d23",
     "isEnabled" : true,
     "version" : 1,
     "service" : "hive_jenkins",
@@ -919,8 +988,8 @@
     } ],
     "isDenyAllElse" : false
   }, {
-    "id" : 18,
-    "guid" : "6f4922f4-5568-361a-8cdf-4ad2299f6d23",
+    "id" : 19,
+    "guid" : "1f0e3dad-9990-3345-b743-9f8ffabdffc4",
     "isEnabled" : true,
     "version" : 1,
     "service" : "hive_jenkins",
@@ -963,8 +1032,8 @@
     } ],
     "isDenyAllElse" : false
   }, {
-    "id" : 19,
-    "guid" : "1f0e3dad-9990-3345-b743-9f8ffabdffc4",
+    "id" : 20,
+    "guid" : "98f13708-2101-34c4-b568-7be6106a3b84",
     "isEnabled" : true,
     "version" : 1,
     "service" : "hive_jenkins",
@@ -1476,5 +1545,235 @@
     "updateTime" : "20190401-20:14:36.000-+0800",
     "version" : 1
   },
-  "auditMode" : "audit-default"
+  "auditMode" : "audit-default",
+  "tagPolicies" : {
+    "serviceName" : "tag_jenkins",
+    "serviceId" : 2,
+    "policyVersion" : 1,
+    "serviceDef" : {
+      "id" : 100,
+      "name" : "tag",
+      "displayName" : "tag",
+      "implClass" : "org.apache.ranger.services.tag.RangerServiceTag",
+      "label" : "TAG",
+      "description" : "TAG Service Definition",
+      "guid" : "0d047248-baff-4cf9-8e9e-d5d377284b2e",
+      "options" : {
+        "ui.pages" : "tag-based-policies"
+      },
+      "resources" : [ {
+        "itemId" : 1,
+        "name" : "tag",
+        "type" : "string",
+        "level" : 1,
+        "parent" : "",
+        "mandatory" : true,
+        "lookupSupported" : true,
+        "recursiveSupported" : false,
+        "excludesSupported" : false,
+        "matcher" : "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+        "matcherOptions" : {
+          "wildCard" : false,
+          "ignoreCase" : false
+        },
+        "validationRegEx" : "",
+        "validationMessage" : "",
+        "uiHint" : "{ \"singleValue\":true }",
+        "label" : "TAG",
+        "description" : "TAG"
+      } ],
+      "accessTypes" : [ {
+        "itemId" : 1,
+        "name" : "hive:select",
+        "label" : "select",
+        "impliedGrants" : [ ]
+      }, {
+        "itemId" : 2,
+        "name" : "hive:update",
+        "label" : "update",
+        "impliedGrants" : [ ]
+      }, {
+        "itemId" : 3,
+        "name" : "hive:create",
+        "label" : "Create",
+        "impliedGrants" : [ ]
+      }, {
+        "itemId" : 4,
+        "name" : "hive:drop",
+        "label" : "Drop",
+        "impliedGrants" : [ ]
+      }, {
+        "itemId" : 5,
+        "name" : "hive:alter",
+        "label" : "Alter",
+        "impliedGrants" : [ ]
+      }, {
+        "itemId" : 6,
+        "name" : "hive:index",
+        "label" : "Index",
+        "impliedGrants" : [ ]
+      }, {
+        "itemId" : 7,
+        "name" : "hive:lock",
+        "label" : "Lock",
+        "impliedGrants" : [ ]
+      }, {
+        "itemId" : 8,
+        "name" : "hive:all",
+        "label" : "All",
+        "impliedGrants" : [ "hive:select", "hive:update", "hive:create", "hive:drop", "hive:alter", "hive:index", "hive:lock", "hive:read", "hive:write" ]
+      }, {
+        "itemId" : 9,
+        "name" : "hive:read",
+        "label" : "Read",
+        "impliedGrants" : [ ]
+      }, {
+        "itemId" : 10,
+        "name" : "hive:write",
+        "label" : "Write",
+        "impliedGrants" : [ ]
+      } ],
+      "configs" : [ {
+        "itemId" : 1,
+        "name" : "ranger.plugin.audit.filters",
+        "type" : "string",
+        "subType" : "",
+        "mandatory" : false,
+        "validationRegEx" : "",
+        "validationMessage" : "",
+        "uiHint" : "",
+        "label" : "Ranger Default Audit Filters",
+        "defaultValue" : "[ {'accessResult': 'DENIED', 'isAudited': true} ]"
+      } ],
+      "enums" : [ ],
+      "contextEnrichers" : [ {
+        "itemId" : 1,
+        "name" : "TagEnricher",
+        "enricher" : "org.apache.ranger.plugin.contextenricher.RangerTagEnricher",
+        "enricherOptions" : {
+          "tagRetrieverClassName" : "org.apache.ranger.plugin.contextenricher.RangerAdminTagRetriever",
+          "tagRefresherPollingInterval" : 60000
+        }
+      } ],
+      "policyConditions" : [ {
+        "itemId" : 1,
+        "name" : "accessed-after-expiry",
+        "evaluator" : "org.apache.ranger.plugin.conditionevaluator.RangerScriptTemplateConditionEvaluator",
+        "evaluatorOptions" : {
+          "scriptTemplate" : "ctx.isAccessedAfter('expiry_date');"
+        },
+        "uiHint" : "{ \"singleValue\":true }",
+        "label" : "Accessed after expiry_date (yes/no)?",
+        "description" : "Accessed after expiry_date? (yes/no)"
+      }, {
+        "itemId" : 2,
+        "name" : "expression",
+        "evaluator" : "org.apache.ranger.plugin.conditionevaluator.RangerScriptConditionEvaluator",
+        "evaluatorOptions" : {
+          "engineName" : "JavaScript",
+          "ui.isMultiline" : "true"
+        },
+        "label" : "Enter boolean expression",
+        "description" : "Boolean expression",
+        "uiHint" : "{ \"isMultiline\":true }"
+      } ],
+      "dataMaskDef" : {
+        "maskTypes" : [ {
+          "itemId" : 1,
+          "name" : "MASK",
+          "label" : "Redact",
+          "description" : "Replace lowercase with 'x', uppercase with 'X', digits with '0'",
+          "transformer" : "mask({col})",
+          "dataMaskOptions" : { }
+        }, {
+          "itemId" : 2,
+          "name" : "MASK_SHOW_LAST_4",
+          "label" : "Partial mask: show last 4",
+          "description" : "Show last 4 characters; replace rest with 'x'",
+          "transformer" : "mask_show_last_n({col}, 4, 'x', 'x', 'x', -1, '1')",
+          "dataMaskOptions" : { }
+        }, {
+          "itemId" : 3,
+          "name" : "MASK_SHOW_FIRST_4",
+          "label" : "Partial mask: show first 4",
+          "description" : "Show first 4 characters; replace rest with 'x'",
+          "transformer" : "mask_show_first_n({col}, 4, 'x', 'x', 'x', -1, '1')",
+          "dataMaskOptions" : { }
+        }, {
+          "itemId" : 4,
+          "name" : "MASK_HASH",
+          "label" : "Hash",
+          "description" : "Hash the value",
+          "transformer" : "mask_hash({col})",
+          "dataMaskOptions" : { }
+        }, {
+          "itemId" : 5,
+          "name" : "MASK_NULL",
+          "label" : "Nullify",
+          "description" : "Replace with NULL",
+          "dataMaskOptions" : { }
+        }, {
+          "itemId" : 6,
+          "name" : "MASK_NONE",
+          "label" : "Unmasked (retain original value)",
+          "description" : "No masking",
+          "dataMaskOptions" : { }
+        }, {
+          "itemId" : 12,
+          "name" : "MASK_DATE_SHOW_YEAR",
+          "label" : "Date: show only year",
+          "description" : "Date: show only year",
+          "transformer" : "mask({col}, 'x', 'x', 'x', -1, '1', 1, 0, -1)",
+          "dataMaskOptions" : { }
+        }, {
+          "itemId" : 13,
+          "name" : "CUSTOM",
+          "label" : "Custom",
+          "description" : "Custom",
+          "dataMaskOptions" : { }
+        } ],
+        "accessTypes" : [ {
+          "itemId" : 1,
+          "name" : "hive:select",
+          "label" : "select",
+          "impliedGrants" : [ ]
+        } ],
+        "resources" : [ {
+          "name" : "tag"
+        } ]
+      }
+    },
+    "policies" : [ {
+      "id" : 0,
+      "guid" : "5e1b172f-b340-3e9f-8765-5f5acb4eb917",
+      "isEnabled" : true,
+      "version" : 1,
+      "service" : "tag_jenkins",
+      "name" : "pii_nullify",
+      "policyType" : 1,
+      "policyPriority" : 0,
+      "description" : "Nullify every column tagged PII",
+      "isAuditEnabled" : true,
+      "resources" : {
+        "tag" : {
+          "values" : [ "PII" ],
+          "isExcludes" : false,
+          "isRecursive" : false
+        }
+      },
+      "dataMaskPolicyItems" : [ {
+        "accesses" : [ {
+          "type" : "hive:select",
+          "isAllowed" : true
+        } ],
+        "users" : [ "bob" ],
+        "delegateAdmin" : true,
+        "dataMaskInfo" : {
+          "dataMaskType" : "MASK_NULL"
+        }
+      } ],
+      "isDenyAllElse" : false
+    } ],
+    "auditMode" : "audit-default"
+  }
 }

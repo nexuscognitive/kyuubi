@@ -104,6 +104,38 @@ By default, Authz plugin checks required privileges one by one and throw the fir
 </property>
 ```
 
+##### Catalog-aware resources and tag-based policies
+
+This build runs the plugin in catalog mode: a resource is `catalog/schema/table/column`
+rather than Hive's `database/table/column`, so the Ranger service def it checks against has
+to declare that hierarchy (see `service-defs/ranger-servicedef-spark.json` in the plugin
+jar). Spark catalog names are mapped onto the policy catalog before the check, so policies
+are written against the mapped name.
+
+```xml
+    <property>
+        <name>ranger.plugin.spark.resource.mode</name>
+        <value>catalog</value>
+        <description>catalog: resources are catalog/schema/table/column. hive: the upstream database/table/column hierarchy.</description>
+    </property>
+
+    <property>
+        <name>ranger.plugin.spark.catalog.mapping</name>
+        <value>spark_catalog:iceberg,other_spark_catalog:other_policy_catalog</value>
+        <description>Maps Spark catalog names onto the catalog the policies are written against. The session catalog's default mapping is ranger.plugin.spark.catalog.default.spark -> ranger.plugin.spark.catalog.default.target.</description>
+    </property>
+```
+
+Tag-based policies need the same hierarchy. Ranger's tag enricher reaches the plugin
+through the tag service attached to the Ranger service, and it can only attach a tag to a
+request whose resource matches a tagged service resource of that service. A tagged service
+resource is keyed by resource def name, so in catalog mode it must carry
+`catalog`/`schema`/`table`/`column` -- with the *mapped* catalog name -- and tags created
+against the stock `database`/`table`/`column` hierarchy (Atlas tagsync's Hive resource
+mapper produces those) do not match and have to be re-synced. Nothing fails loudly when
+they do not match: the request simply carries no tags, and every tag-based access, masking
+and row-filter policy is skipped.
+
 #### ranger-spark-audit.xml
 
 Create `ranger-spark-audit.xml` in `$SPARK_HOME/conf` and add the following configurations

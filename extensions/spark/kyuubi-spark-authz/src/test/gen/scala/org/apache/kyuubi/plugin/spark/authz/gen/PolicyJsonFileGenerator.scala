@@ -21,6 +21,8 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Paths, StandardOpenOption}
 import java.util.UUID
 
+import scala.collection.JavaConverters._
+
 import com.fasterxml.jackson.annotation.JsonInclude.Include
 import com.fasterxml.jackson.databind.{JsonNode, ObjectMapper, SerializationFeature}
 import com.fasterxml.jackson.databind.json.JsonMapper
@@ -92,6 +94,75 @@ class PolicyJsonFileGenerator extends KyuubiFunSuite {
     println(s"Generated ${policies.size} policies.")
     // scalastyle:on println
     rootObjNode.set("policies", mapper.readTree(mapper.writeValueAsString(policies)))
+    rootObjNode.set("tagPolicies", genTagPolicies(rootObjNode.get("serviceDef")))
+  }
+
+  /**
+   * The tag service as a plugin receives it, attached to the resource service's policies.
+   *
+   * It is what carries Ranger's tag enricher to the plugin -- the component service def
+   * declares no enricher of its own -- so without this node no tag ever reaches an access
+   * request and every tag-based policy is skipped without a trace.
+   */
+  private def genTagPolicies(componentServiceDef: JsonNode): ObjectNode = {
+    val tagServiceDef = mapper.readTree(
+      Thread.currentThread().getContextClassLoader
+        .getResourceAsStream("service-defs/ranger-servicedef-tag.json")).asInstanceOf[ObjectNode]
+    // Ranger Admin copies each component's access types into the tag service def, prefixed
+    // with the component's name, and the plugin strips that prefix again when it builds the
+    // tag policy repository. Tag policy items whose access type does not carry the prefix
+    // are pruned there, so the prefix is what makes tag policies apply to this component.
+    val componentType = componentServiceDef.get("name").asText()
+    tagServiceDef.set[JsonNode](
+      "accessTypes",
+      prefixAccessTypes(componentServiceDef.get("accessTypes"), componentType))
+    val dataMaskDef = componentServiceDef.get("dataMaskDef").deepCopy[ObjectNode]()
+    dataMaskDef.set[JsonNode](
+      "accessTypes",
+      prefixAccessTypes(dataMaskDef.get("accessTypes"), componentType))
+    // a tag policy is written against the `tag` resource, not the component's hierarchy
+    dataMaskDef.set[JsonNode](
+      "resources",
+      mapper.createArrayNode().add(mapper.createObjectNode().put("name", tagResourceName)))
+    tagServiceDef.set[JsonNode]("dataMaskDef", dataMaskDef)
+
+    val tagPolicies = mapper.createObjectNode()
+    tagPolicies.put("serviceName", tagService)
+    tagPolicies.put("serviceId", 2)
+    tagPolicies.put("policyVersion", 1)
+    tagPolicies.set[JsonNode]("serviceDef", tagServiceDef)
+    tagPolicies.set[JsonNode](
+      "policies",
+      mapper.readTree(mapper.writeValueAsString(genTagBasedPolicies)))
+    tagPolicies.put("auditMode", "audit-default")
+    tagPolicies
+  }
+
+  private def prefixAccessTypes(accessTypes: JsonNode, componentType: String): JsonNode = {
+    val prefixed = mapper.createArrayNode()
+    accessTypes.elements().asScala.foreach { accessType =>
+      val copy = accessType.deepCopy[ObjectNode]()
+      copy.put("name", s"$componentType:${accessType.get("name").asText()}")
+      Option(copy.get("impliedGrants")).foreach { impliedGrants =>
+        val prefixedGrants = mapper.createArrayNode()
+        impliedGrants.elements().asScala
+          .foreach(grant => prefixedGrants.add(s"$componentType:${grant.asText()}"))
+        copy.set[JsonNode]("impliedGrants", prefixedGrants)
+      }
+      prefixed.add(copy)
+    }
+    prefixed
+  }
+
+  private def genTagBasedPolicies: Iterable[RangerPolicy] = {
+    List[RangerPolicy](policyTagMaskNullifyForPii)
+      .zipWithIndex
+      .map {
+        case (p, index) =>
+          p.setId(index)
+          p.setGuid(UUID.nameUUIDFromBytes(s"tag-$index".getBytes()).toString)
+          p
+      }
   }
 
   private def genPolicies: Iterable[RangerPolicy] = {
@@ -109,6 +180,7 @@ class PolicyJsonFileGenerator extends KyuubiFunSuite {
       policyAccessForTable2AccessOnly,
       policyAccessForPaimonNsTable1SelectOnly,
       policyAccessForDefaultDbUDF,
+      policyAccessForCatalogWithoutMasking,
       // row filter
       policyFilterForSrcTableKeyLessThan20,
       policyFilterForPermViewKeyLessThan20,
@@ -135,11 +207,16 @@ class PolicyJsonFileGenerator extends KyuubiFunSuite {
   }
 
   private val icebergCatalog = "iceberg"
+  private val maskFreeCatalog = "catalog_without_masking"
+  private val tagService = "tag_jenkins"
+  private val tagResourceName = "tag"
+  private val piiTag = "PII"
 
   private def withIcebergCatalog(p: RangerPolicy): RangerPolicy = {
     val resources = p.getResources
-    if (resources.containsKey("schema") || resources.containsKey("table") ||
-      resources.containsKey("udf")) {
+    if (!resources.containsKey("catalog") &&
+      (resources.containsKey("schema") || resources.containsKey("table") ||
+        resources.containsKey("udf"))) {
       val catalog = new org.apache.ranger.plugin.model.RangerPolicy.RangerPolicyResource()
       catalog.setValues(java.util.Collections.singletonList(icebergCatalog))
       resources.put("catalog", catalog)
@@ -371,6 +448,38 @@ class PolicyJsonFileGenerator extends KyuubiFunSuite {
         dataMaskInfo = KRangerPolicyItemDataMaskInfo(dataMaskType = "MASK"),
         users = List(permViewUser),
         accesses = allowTypes(select),
+        delegateAdmin = true)))
+
+  // A second catalog that grants access but defines no masking or row-filter policy.
+  // `iceberg`'s masks and filters must not reach the identically named tables here, which
+  // is what a lookup that resolves the catalog to the default instead of the table's own
+  // would do.
+  private val policyAccessForCatalogWithoutMasking = KRangerPolicy(
+    name = "catalog_without_masking_all",
+    description = "Policy for all - catalog, schema, table, column",
+    resources = Map(
+      catalogRes(maskFreeCatalog),
+      allDatabaseRes,
+      allTableRes,
+      allColumnRes),
+    policyItems = List(
+      KRangerPolicyItem(
+        users = List(admin, bob),
+        accesses = allowTypes(select, update, create, drop, alter, index, lock, all, read, write),
+        delegateAdmin = true)))
+
+  // The `tag_src.secret` column is tagged PII by sparkSql_hive_jenkins_tags.json.
+  private val policyTagMaskNullifyForPii = KRangerPolicy(
+    service = tagService,
+    name = "pii_nullify",
+    description = "Nullify every column tagged PII",
+    policyType = POLICY_TYPE_DATAMASK,
+    resources = Map(tagResourceName -> KRangerPolicyResource(values = List(piiTag))),
+    dataMaskPolicyItems = List(
+      KRangerDataMaskPolicyItem(
+        dataMaskInfo = KRangerPolicyItemDataMaskInfo(dataMaskType = "MASK_NULL"),
+        users = List(bob),
+        accesses = allowTypes(s"hive:$select"),
         delegateAdmin = true)))
 
   private val policyAccessForPermViewAccessOnly = KRangerPolicy(

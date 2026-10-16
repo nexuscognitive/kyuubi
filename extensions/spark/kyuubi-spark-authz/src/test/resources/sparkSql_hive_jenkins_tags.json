@@ -1,0 +1,43 @@
+{
+  "op" : "add_or_update",
+  "serviceName" : "hive_jenkins",
+  "tagVersion" : 1,
+  "tagDefinitions" : {
+    "1" : {
+      "id" : 1,
+      "name" : "PII",
+      "source" : "test",
+      "isEnabled" : true
+    }
+  },
+  "tags" : {
+    "1" : {
+      "id" : 1,
+      "type" : "PII",
+      "owner" : 0,
+      "isEnabled" : true
+    }
+  },
+  "serviceResources" : [ {
+    "id" : 1,
+    "serviceName" : "hive_jenkins",
+    "isEnabled" : true,
+    "resourceElements" : {
+      "catalog" : {
+        "values" : [ "iceberg" ]
+      },
+      "schema" : {
+        "values" : [ "default" ]
+      },
+      "table" : {
+        "values" : [ "tag_src" ]
+      },
+      "column" : {
+        "values" : [ "secret" ]
+      }
+    }
+  } ],
+  "resourceToTagIds" : {
+    "1" : [ 1 ]
+  }
+}
