@@ -22,7 +22,7 @@ import java.text.SimpleDateFormat
 import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.databind.json.JsonMapper
 import org.apache.ranger.admin.client.RangerAdminRESTClient
-import org.apache.ranger.plugin.util.ServicePolicies
+import org.apache.ranger.plugin.util.{ServicePolicies, ServiceTags}
 
 class RangerLocalClient extends RangerAdminRESTClient with RangerClientHelper {
 
@@ -38,6 +38,19 @@ class RangerLocalClient extends RangerAdminRESTClient with RangerClientHelper {
     mapper.readValue(inputStream, classOf[ServicePolicies])
   }
 
+  /**
+   * Tags are downloaded through the same admin client as the policies, so the local client
+   * has to serve them too -- otherwise Ranger's tag enricher finds no tags and every
+   * tag-based policy is silently skipped.
+   */
+  private val serviceTags: ServiceTags = {
+    val loader = Thread.currentThread().getContextClassLoader
+    val inputStream = {
+      loader.getResourceAsStream("sparkSql_hive_jenkins_tags.json")
+    }
+    mapper.readValue(inputStream, classOf[ServiceTags])
+  }
+
   override def getServicePoliciesIfUpdated(
       lastKnownVersion: Long,
       lastActivationTimeInMillis: Long): ServicePolicies = {
@@ -47,6 +60,12 @@ class RangerLocalClient extends RangerAdminRESTClient with RangerClientHelper {
   override def getServicePoliciesIfUpdated(
       lastKnownVersion: Long): ServicePolicies = {
     policies
+  }
+
+  override def getServiceTagsIfUpdated(
+      lastKnownVersion: Long,
+      lastActivationTimeInMillis: Long): ServiceTags = {
+    serviceTags
   }
 }
 

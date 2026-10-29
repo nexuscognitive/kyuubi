@@ -55,7 +55,8 @@ case class FilteredShowTablesCommand(delegated: RunnableCommand)
     val table = r.getString(1)
     val isTemp = r.getBoolean(2)
     val objectType = if (isTemp) ObjectType.VIEW else ObjectType.TABLE
-    val resource = AccessResource(objectType, database, table, null)
+    // v1 SHOW TABLES only ever lists the session catalog, hence `catalog = None`.
+    val resource = AccessResource(objectType, database, table, null, catalog = None)
     val accessType = if (isExtended) AccessType.SELECT else AccessType.USE
     val request = AccessRequest(resource, ugi, OperationType.SHOWTABLES, accessType)
     val result = SparkRangerAdminPlugin.isAccessAllowed(request)
@@ -90,7 +91,8 @@ case class FilteredShowFunctionsCommand(delegated: RunnableCommand)
       return true
     }
 
-    val resource = AccessResource(ObjectType.FUNCTION, items(0), items(1), null)
+    // v1 SHOW FUNCTIONS only ever lists the session catalog, hence `catalog = None`.
+    val resource = AccessResource(ObjectType.FUNCTION, items(0), items(1), null, catalog = None)
     val request = AccessRequest(resource, ugi, OperationType.SHOWFUNCTIONS, AccessType.USE)
     val result = SparkRangerAdminPlugin.isAccessAllowed(request)
     result != null && result.getIsAllowed
@@ -111,7 +113,14 @@ case class FilteredShowColumnsCommand(delegated: RunnableCommand)
   }
 
   override protected def isAllowed(r: Row, ugi: UserGroupInformation): Boolean = {
-    val resource = AccessResource(ObjectType.COLUMN, r.getString(0), r.getString(1), r.getString(2))
+    // v1 SHOW COLUMNS resolves against the session catalog, hence `catalog = None`.
+    val resource =
+      AccessResource(
+        ObjectType.COLUMN,
+        r.getString(0),
+        r.getString(1),
+        r.getString(2),
+        catalog = None)
     val request = AccessRequest(resource, ugi, OperationType.SHOWCOLUMNS, AccessType.USE)
     val result = SparkRangerAdminPlugin.isAccessAllowed(request)
     result != null && result.getIsAllowed

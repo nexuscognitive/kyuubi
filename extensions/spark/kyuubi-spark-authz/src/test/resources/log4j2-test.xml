@@ -44,5 +44,12 @@
             <AppenderRef ref="stdout"/>
             <AppenderRef ref="file"/>
         </Logger>
+        <!-- Ranger 2.6 logs the matcher count without a null check, and the retriever
+             returns null for a resource whose keys have no tag trie at all (a `url`, when
+             no url is tagged), so tag enrichment fails w/ NPE when DEBUG is enabled -->
+        <Logger name="org.apache.ranger.plugin.util.CachedResourceEvaluators" level="WARN" additivity="false">
+            <AppenderRef ref="stdout"/>
+            <AppenderRef ref="file"/>
+        </Logger>
     </Loggers>
 </Configuration>

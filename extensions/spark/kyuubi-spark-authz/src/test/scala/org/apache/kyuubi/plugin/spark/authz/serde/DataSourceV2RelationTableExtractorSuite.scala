@@ -25,6 +25,7 @@ import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.types.{StringType, StructField, StructType}
 
 import org.apache.kyuubi.KyuubiFunSuite
+import org.apache.kyuubi.plugin.spark.authz.ranger.{AccessResource, SparkRangerAdminPlugin}
 
 class DataSourceV2RelationTableExtractorSuite extends KyuubiFunSuite {
 
@@ -93,6 +94,77 @@ class DataSourceV2RelationTableExtractorSuite extends KyuubiFunSuite {
       assert(maybeTable.get.database === Some("some_db"))
     } finally {
       spark.conf.unset(skipConfKey)
+    }
+  }
+
+  // NX1: with the excluded-catalogs config unset, the extractor behaves as it did
+  // before -- every DSv2 relation, catalog-less or not, produces a privilege object
+  // and is routed through Ranger. The per-catalog / per-Table-class exclusion
+  // decision itself is exercised in AccessResourceSuite.
+  test("catalog-less relation is extracted when no catalogs are excluded") {
+    val rangerConf = SparkRangerAdminPlugin.getRangerConf
+    rangerConf.unset(AccessResource.EXCLUDED_CATALOGS_KEY)
+    val maybeTable = extractor.apply(spark, cataloglessRelation)
+    assert(maybeTable.nonEmpty)
+    assert(maybeTable.get.table === "MongoTable()")
+  }
+
+  // The excluded set has a friendly name whose alias prefix does not match this
+  // test's `CatalogLessTable` class, so no skip fires and the extractor still
+  // produces a Table -- guards against the excluded-catalogs check accidentally
+  // dropping unrelated catalog-less relations.
+  test("catalog-less relation is extracted when excluded name does not alias its class") {
+    val rangerConf = SparkRangerAdminPlugin.getRangerConf
+    rangerConf.set(AccessResource.EXCLUDED_CATALOGS_KEY, "mongodb")
+    try {
+      val maybeTable = extractor.apply(spark, cataloglessRelation)
+      assert(
+        maybeTable.nonEmpty,
+        "a catalog-less relation whose Table class is outside every aliased prefix " +
+          "must not be dropped by the excluded-catalogs check")
+      assert(maybeTable.get.table === "MongoTable()")
+    } finally {
+      rangerConf.unset(AccessResource.EXCLUDED_CATALOGS_KEY)
+    }
+  }
+
+  // Positive class-match path: the fixture's class lives under
+  // `com.mongodb.spark.sql.connector.testfixture.`, which starts with the prefix
+  // aliased by the friendly name "mongodb" in AccessResource. Exercising this
+  // through the extractor proves the wiring reads the config, extracts the
+  // Table's class name, and short-circuits to `None` when the alias matches.
+  test("catalog-less relation is skipped when its class matches an aliased prefix") {
+    val rangerConf = SparkRangerAdminPlugin.getRangerConf
+    rangerConf.set(AccessResource.EXCLUDED_CATALOGS_KEY, "mongodb")
+    try {
+      val relation = DataSourceV2Relation.create(
+        new com.mongodb.spark.sql.connector.testfixture.MongoTableFixture, None, None)
+      val maybeTable = extractor.apply(spark, relation)
+      assert(
+        maybeTable.isEmpty,
+        "a catalog-less relation whose Table class matches an aliased prefix must " +
+          "be dropped so no privilege object reaches Ranger")
+    } finally {
+      rangerConf.unset(AccessResource.EXCLUDED_CATALOGS_KEY)
+    }
+  }
+
+  // Same positive skip, but driven by the SparkConf-injectable key rather than the
+  // Ranger XML source. Proves the second config route reaches the extractor.
+  test("catalog-less relation is skipped when SparkConf sets the excluded set") {
+    val rangerConf = SparkRangerAdminPlugin.getRangerConf
+    rangerConf.unset(AccessResource.EXCLUDED_CATALOGS_KEY)
+    spark.conf.set(AccessResource.SPARK_EXCLUDED_CATALOGS_KEY, "mongodb")
+    try {
+      val relation = DataSourceV2Relation.create(
+        new com.mongodb.spark.sql.connector.testfixture.MongoTableFixture, None, None)
+      val maybeTable = extractor.apply(spark, relation)
+      assert(
+        maybeTable.isEmpty,
+        "an excluded set injected via SparkConf must skip the same as one set in " +
+          "ranger-spark-security.xml")
+    } finally {
+      spark.conf.unset(AccessResource.SPARK_EXCLUDED_CATALOGS_KEY)
     }
   }
 }

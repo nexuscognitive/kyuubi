@@ -18,18 +18,35 @@
 package org.apache.kyuubi.plugin.spark.authz.ranger
 
 import org.apache.hadoop.security.UserGroupInformation
+import org.apache.spark.sql.SparkSessionExtensions
 
 import org.apache.kyuubi.KyuubiFunSuite
-import org.apache.kyuubi.plugin.spark.authz.{ObjectType, OperationType}
+import org.apache.kyuubi.plugin.spark.authz.{ObjectType, OperationType, SparkSessionProvider}
 import org.apache.kyuubi.plugin.spark.authz.RangerTestNamespace._
 import org.apache.kyuubi.plugin.spark.authz.RangerTestUsers._
 import org.apache.kyuubi.plugin.spark.authz.ranger.SparkRangerAdminPlugin._
 
-class SparkRangerAdminPluginSuite extends KyuubiFunSuite {
+class SparkRangerAdminPluginSuite extends KyuubiFunSuite with SparkSessionProvider {
+  override protected val catalogImpl: String = "in-memory"
+  // installing the extension is what initializes the Ranger plugin, and without it every
+  // policy lookup below returns nothing
+  override protected val extension: SparkSessionExtensions => Unit = new RangerSparkExtension
+
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    // `spark` is lazy, and building a resource resolves the catalog mapping through
+    // SparkSession.active, so the session has to exist before the first request.
+    assert(spark.sparkContext != null)
+  }
+
+  override def afterAll(): Unit = {
+    spark.stop()
+    super.afterAll()
+  }
 
   test("get filter expression") {
     val bob = UserGroupInformation.createRemoteUser("bob")
-    val are = AccessResource(ObjectType.TABLE, defaultDb, "src", null)
+    val are = AccessResource(ObjectType.TABLE, defaultDb, "src", null, catalog = None)
     def buildAccessRequest(ugi: UserGroupInformation): AccessRequest = {
       AccessRequest(are, ugi, OperationType.QUERY, AccessType.SELECT)
     }
@@ -45,7 +62,7 @@ class SparkRangerAdminPluginSuite extends KyuubiFunSuite {
   test("get data masker") {
     val bob = UserGroupInformation.createRemoteUser("bob")
     def buildAccessRequest(ugi: UserGroupInformation, column: String): AccessRequest = {
-      val are = AccessResource(ObjectType.COLUMN, defaultDb, "src", column)
+      val are = AccessResource(ObjectType.COLUMN, defaultDb, "src", column, catalog = None)
       AccessRequest(are, ugi, OperationType.QUERY, AccessType.SELECT)
     }
     assert(getMaskingExpr(buildAccessRequest(bob, "value1")).get === "md5(cast(value1 as string))")
@@ -64,5 +81,30 @@ class SparkRangerAdminPluginSuite extends KyuubiFunSuite {
       val maybeString = getMaskingExpr(buildAccessRequest(ugi, "value1"))
       assert(maybeString.isEmpty)
     }
+  }
+
+  test("mask and row filter lookups are catalog-scoped") {
+    val bob = UserGroupInformation.createRemoteUser("bob")
+    // The test policies are rooted at the `iceberg` catalog, which the default catalog is
+    // mapped onto. A table of the same name in a catalog without policies must not inherit
+    // them -- so a mask or row-filter lookup that resolves the catalog to the default
+    // instead of the table's own silently reads another catalog's policies.
+    val unpoliced = Some("catalog_without_policies")
+
+    val maskedColumn = AccessResource(ObjectType.COLUMN, defaultDb, "src", "value1", None, None)
+    val sameColumnElsewhere =
+      AccessResource(ObjectType.COLUMN, defaultDb, "src", "value1", None, unpoliced)
+    assert(getMaskingExpr(request(maskedColumn, bob)).nonEmpty)
+    assert(getMaskingExpr(request(sameColumnElsewhere, bob)).isEmpty)
+
+    val filteredTable = AccessResource(ObjectType.TABLE, defaultDb, "src", null, None, None)
+    val sameTableElsewhere =
+      AccessResource(ObjectType.TABLE, defaultDb, "src", null, None, unpoliced)
+    assert(getFilterExpr(request(filteredTable, bob)).nonEmpty)
+    assert(getFilterExpr(request(sameTableElsewhere, bob)).isEmpty)
+  }
+
+  private def request(resource: AccessResource, ugi: UserGroupInformation): AccessRequest = {
+    AccessRequest(resource, ugi, OperationType.QUERY, AccessType.SELECT)
   }
 }
