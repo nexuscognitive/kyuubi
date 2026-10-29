@@ -21,17 +21,29 @@ import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.SparkStrategy
 
+import org.apache.kyuubi.plugin.spark.authz.serde.{lookupExtractor, ResolvedNamespaceCatalogExtractor}
+
 case class FilterDataSourceV2Strategy(spark: SparkSession) extends SparkStrategy {
   override def apply(plan: LogicalPlan): Seq[SparkPlan] = plan match {
     case ObjectFilterPlaceHolder(child)
         if child.nodeName == "ShowNamespaces" || child.nodeName == "ShowNamespacesCommand" =>
       spark.sessionState.planner.plan(child)
-        .map(FilteredShowNamespaceExec(_, spark.sparkContext)).toSeq
+        .map(FilteredShowNamespaceExec(_, spark.sparkContext, catalogOf(child))).toSeq
 
     case ObjectFilterPlaceHolder(child) if child.nodeName == "ShowTables" =>
       spark.sessionState.planner.plan(child)
-        .map(FilteredShowTablesExec(_, spark.sparkContext)).toSeq
+        .map(FilteredShowTablesExec(_, spark.sparkContext, catalogOf(child))).toSeq
 
     case _ => Nil
+  }
+
+  /**
+   * The catalog the v2 SHOW command lists, taken from its resolved namespace. None means
+   * the session catalog -- the filtered rows are checked against catalog-scoped
+   * resources, so the catalog cannot be left to default.
+   */
+  private def catalogOf(plan: LogicalPlan): Option[String] = {
+    plan.collectFirst { case p if p.nodeName == "ResolvedNamespace" => p }
+      .flatMap(lookupExtractor[ResolvedNamespaceCatalogExtractor].apply)
   }
 }

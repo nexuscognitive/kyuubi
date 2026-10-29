@@ -20,6 +20,7 @@ package org.apache.kyuubi.plugin.spark.authz.ranger
 import org.apache.kyuubi.KyuubiFunSuite
 import org.apache.kyuubi.plugin.spark.authz.ObjectType._
 import org.apache.kyuubi.plugin.spark.authz.SparkSessionProvider
+import org.apache.kyuubi.plugin.spark.authz.ranger.AccessResource.DEFAULT_SPARK_CATALOG
 
 class AccessResourceSuite extends KyuubiFunSuite with SparkSessionProvider {
   override protected val catalogImpl: String = "in-memory"
@@ -49,7 +50,7 @@ class AccessResourceSuite extends KyuubiFunSuite with SparkSessionProvider {
     assert(resource.getColumns.isEmpty)
 
     val resource1 =
-      AccessResource(DATABASE, null, "my_table_name", "my_col_1,my_col_2", Some("Bob"))
+      AccessResource(DATABASE, null, "my_table_name", "my_col_1,my_col_2", Some("Bob"), None)
     assert(resource1.catalog.isEmpty)
     assert(resource1.getSchema === null)
     assert(resource1.getTable === null)
@@ -57,7 +58,7 @@ class AccessResourceSuite extends KyuubiFunSuite with SparkSessionProvider {
     assert(resource1.getColumns.isEmpty)
     assert(resource1.getOwnerUser === "Bob")
 
-    val resource2 = AccessResource(FUNCTION, "my_db_name", "my_func_name", null)
+    val resource2 = AccessResource(FUNCTION, "my_db_name", "my_func_name", null, catalog = None)
     assert(resource2.catalog.isEmpty)
     assert(resource2.getSchema === "my_db_name")
     assert(resource2.getTable === null)
@@ -65,19 +66,54 @@ class AccessResourceSuite extends KyuubiFunSuite with SparkSessionProvider {
     assert(resource1.getColumn === null)
     assert(resource1.getColumns.isEmpty)
 
-    val resource3 = AccessResource(TABLE, "my_db_name", "my_table_name", "my_col_1,my_col_2")
+    val resource3 =
+      AccessResource(TABLE, "my_db_name", "my_table_name", "my_col_1,my_col_2", catalog = None)
     assert(resource3.catalog.isEmpty)
     assert(resource3.getSchema === "my_db_name")
     assert(resource3.getTable === "my_table_name")
     assert(resource3.getColumn === null)
     assert(resource3.getColumns.isEmpty)
 
-    val resource4 = AccessResource(COLUMN, "my_db_name", "my_table_name", "my_col_1,my_col_2")
+    val resource4 =
+      AccessResource(COLUMN, "my_db_name", "my_table_name", "my_col_1,my_col_2", catalog = None)
     assert(resource4.catalog.isEmpty)
     assert(resource4.getSchema === "my_db_name")
     assert(resource4.getTable === "my_table_name")
     assert(resource4.getColumn === "my_col_1,my_col_2")
     assert(resource4.getColumns === Seq("my_col_1", "my_col_2"))
+  }
+
+  test("catalog settings are read from the Ranger plugin conf") {
+    // spark-submit drops every `--conf` key that does not start with `spark.`, so
+    // ranger-spark-security.xml is the only place a deployment can set these -- reading
+    // them from the session conf alone left them silently stuck on the built-in defaults.
+    val rangerConf = SparkRangerAdminPlugin.getRangerConf
+    assert(spark.conf.getOption(AccessResource.RESOURCE_MODE_KEY).isEmpty)
+    rangerConf.set(AccessResource.RESOURCE_MODE_KEY, AccessResource.MODE_HIVE)
+    AccessResource.reset()
+    try {
+      val resource = AccessResource(TABLE, "my_db_name", "my_table_name", null, None, None)
+      assert(resource.getCatalog === null, "hive mode has no catalog level")
+      assert(resource.getDatabase === "my_db_name")
+    } finally {
+      rangerConf.unset(AccessResource.RESOURCE_MODE_KEY)
+      AccessResource.reset()
+    }
+  }
+
+  test("an explicit mapping overrides the default catalog's target") {
+    // the session catalog's default pair is a fallback; before, it was applied last and
+    // silently won, so `...catalog.mapping` could never redirect the session catalog
+    val previous = spark.conf.getOption(AccessResource.CATALOG_MAPPING_KEY)
+    spark.conf.set(AccessResource.CATALOG_MAPPING_KEY, s"$DEFAULT_SPARK_CATALOG:redirected")
+    AccessResource.reset()
+    try {
+      val resource = AccessResource(TABLE, "my_db_name", "my_table_name", null, None, None)
+      assert(resource.getCatalog === "redirected")
+    } finally {
+      previous.foreach(spark.conf.set(AccessResource.CATALOG_MAPPING_KEY, _))
+      AccessResource.reset()
+    }
   }
 
   test("KYUUBI #3605: generate spark ranger resources with catalog") {

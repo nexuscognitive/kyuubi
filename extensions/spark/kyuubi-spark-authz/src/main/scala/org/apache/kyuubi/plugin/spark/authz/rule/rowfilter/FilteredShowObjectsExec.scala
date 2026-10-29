@@ -32,7 +32,14 @@ trait FilteredShowObjectsExec extends V2CommandExec with LeafExecNode {
 }
 
 trait FilteredShowObjectsCheck {
-  def isAllowed(r: InternalRow, ugi: UserGroupInformation): Boolean
+
+  /**
+   * @param catalog the catalog the delegated v2 command listed, or None for the session
+   *                catalog. It has to travel with the row: the resource a SHOW filter is
+   *                checked against is catalog-scoped, and resolving it to the default
+   *                catalog instead would check another catalog's policies.
+   */
+  def isAllowed(r: InternalRow, ugi: UserGroupInformation, catalog: Option[String]): Boolean
 }
 
 case class FilteredShowNamespaceExec(result: Array[InternalRow], output: Seq[Attribute])
@@ -41,15 +48,21 @@ case class FilteredShowNamespaceExec(result: Array[InternalRow], output: Seq[Att
 }
 
 object FilteredShowNamespaceExec extends FilteredShowObjectsCheck {
-  def apply(delegated: SparkPlan, sc: SparkContext): FilteredShowNamespaceExec = {
+  def apply(
+      delegated: SparkPlan,
+      sc: SparkContext,
+      catalog: Option[String]): FilteredShowNamespaceExec = {
     val result = delegated.executeCollect()
-      .filter(isAllowed(_, AuthZUtils.getAuthzUgi(sc)))
+      .filter(isAllowed(_, AuthZUtils.getAuthzUgi(sc), catalog))
     new FilteredShowNamespaceExec(result, delegated.output)
   }
 
-  override def isAllowed(r: InternalRow, ugi: UserGroupInformation): Boolean = {
+  override def isAllowed(
+      r: InternalRow,
+      ugi: UserGroupInformation,
+      catalog: Option[String]): Boolean = {
     val database = r.getString(0)
-    val resource = AccessResource(ObjectType.DATABASE, database, null, null)
+    val resource = AccessResource(ObjectType.DATABASE, database, null, null, catalog = catalog)
     val request = AccessRequest(resource, ugi, OperationType.SHOWDATABASES, AccessType.USE)
     val result = SparkRangerAdminPlugin.isAccessAllowed(request)
     result != null && result.getIsAllowed
@@ -62,18 +75,24 @@ case class FilteredShowTablesExec(result: Array[InternalRow], output: Seq[Attrib
 }
 
 object FilteredShowTablesExec extends FilteredShowObjectsCheck {
-  def apply(delegated: SparkPlan, sc: SparkContext): FilteredShowNamespaceExec = {
+  def apply(
+      delegated: SparkPlan,
+      sc: SparkContext,
+      catalog: Option[String]): FilteredShowNamespaceExec = {
     val result = delegated.executeCollect()
-      .filter(isAllowed(_, AuthZUtils.getAuthzUgi(sc)))
+      .filter(isAllowed(_, AuthZUtils.getAuthzUgi(sc), catalog))
     new FilteredShowNamespaceExec(result, delegated.output)
   }
 
-  override def isAllowed(r: InternalRow, ugi: UserGroupInformation): Boolean = {
+  override def isAllowed(
+      r: InternalRow,
+      ugi: UserGroupInformation,
+      catalog: Option[String]): Boolean = {
     val database = r.getString(0)
     val table = r.getString(1)
     val isTemp = r.getBoolean(2)
     val objectType = if (isTemp) ObjectType.VIEW else ObjectType.TABLE
-    val resource = AccessResource(objectType, database, table, null)
+    val resource = AccessResource(objectType, database, table, null, catalog = catalog)
     val request = AccessRequest(resource, ugi, OperationType.SHOWTABLES, AccessType.USE)
     val result = SparkRangerAdminPlugin.isAccessAllowed(request)
     result != null && result.getIsAllowed
