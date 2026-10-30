@@ -138,7 +138,9 @@ class DataSourceV2RelationTableExtractorSuite extends KyuubiFunSuite {
     rangerConf.set(AccessResource.EXCLUDED_CATALOGS_KEY, "mongodb")
     try {
       val relation = DataSourceV2Relation.create(
-        new com.mongodb.spark.sql.connector.testfixture.MongoTableFixture, None, None)
+        new com.mongodb.spark.sql.connector.testfixture.MongoTableFixture,
+        None,
+        None)
       val maybeTable = extractor.apply(spark, relation)
       assert(
         maybeTable.isEmpty,
@@ -157,7 +159,9 @@ class DataSourceV2RelationTableExtractorSuite extends KyuubiFunSuite {
     spark.conf.set(AccessResource.SPARK_EXCLUDED_CATALOGS_KEY, "mongodb")
     try {
       val relation = DataSourceV2Relation.create(
-        new com.mongodb.spark.sql.connector.testfixture.MongoTableFixture, None, None)
+        new com.mongodb.spark.sql.connector.testfixture.MongoTableFixture,
+        None,
+        None)
       val maybeTable = extractor.apply(spark, relation)
       assert(
         maybeTable.isEmpty,
