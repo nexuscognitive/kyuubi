@@ -46,8 +46,13 @@ ENV KYUUBI_LOG_DIR=${KYUUBI_HOME}/logs
 ENV KYUUBI_PID_DIR=${KYUUBI_HOME}/pid
 ENV KYUUBI_WORK_DIR_ROOT=${KYUUBI_HOME}/work
 
+# `upgrade` first: the eclipse-temurin base is only rebuilt periodically, so without it
+# every kyuubi-base tag froze that image's (already aged) OS packages -- 30-54 pending
+# security updates by the time downstream scans ran. Same-release patches only; no
+# packages are added or removed by `upgrade`.
 RUN set -ex && \
     apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::="--force-confold" upgrade && \
     apt-get install -y --no-install-recommends \
       bash tini curl procps krb5-user libc6 libpam-modules libnss3 && \
     rm -rf /var/lib/apt/lists/* && \
