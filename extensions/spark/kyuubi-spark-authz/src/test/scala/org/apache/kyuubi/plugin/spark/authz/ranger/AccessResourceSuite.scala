@@ -218,6 +218,31 @@ class AccessResourceSuite extends KyuubiFunSuite with SparkSessionProvider {
       excluded))
   }
 
+  test("excluded catalogs: table-class match via direct class-prefix entry") {
+    // Entries ending with `.` are interpreted as class-name prefixes directly, so
+    // admins can exclude a new catalog-less connector (e.g. Neo4j) by editing
+    // config only -- no entry in CATALOGLESS_TABLE_ALIASES required.
+    val excluded = Set("org.neo4j.spark.")
+    assert(AccessResource.isExcludedTableClass(
+      "org.neo4j.spark.v2.Neo4jTable",
+      excluded))
+    assert(AccessResource.isExcludedTableClass(
+      "org.neo4j.spark.service.Neo4jWriterTable",
+      excluded))
+    // A class outside the configured prefix is not matched.
+    assert(!AccessResource.isExcludedTableClass(
+      "org.apache.iceberg.spark.source.SparkTable",
+      excluded))
+    // Friendly-name and direct-prefix entries coexist in the same config.
+    val mixed = Set("mongodb", "org.neo4j.spark.")
+    assert(AccessResource.isExcludedTableClass(
+      "com.mongodb.spark.sql.connector.MongoTable",
+      mixed))
+    assert(AccessResource.isExcludedTableClass(
+      "org.neo4j.spark.v2.Neo4jTable",
+      mixed))
+  }
+
   test("excluded catalogs: whitespace and empty entries are ignored") {
     val conf = SparkRangerAdminPlugin.getRangerConf
     conf.set(AccessResource.EXCLUDED_CATALOGS_KEY, "  mongodb , ,  kafka  ,")

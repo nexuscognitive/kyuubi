@@ -319,18 +319,31 @@ object AccessResource {
   }
 
   /**
-   * Fully-qualified DSv2 `Table` class prefixes that a given friendly catalog name
-   * aliases when a connector does not register a Spark catalog. The friendly name
-   * is what admins put in `ranger.plugin.spark.authz.excluded.catalogs`; the prefix
-   * is what `table.getClass.getName` starts with for that connector. Add an entry
-   * when a new catalog-less connector needs to be excludable by its short name.
+   * Built-in friendly-name aliases for catalog-less connectors. Each friendly name
+   * (what an admin writes in `ranger.plugin.spark.authz.excluded.catalogs`) resolves
+   * to one or more fully-qualified `Table` class prefixes used by that connector.
+   * Kept for backward compatibility with configs written before direct class-prefix
+   * support; new catalog-less connectors are expected to be excluded by adding the
+   * class prefix directly to the config (any entry ending with `.`), so this map
+   * does not need a new entry for each connector.
    */
   private val CATALOGLESS_TABLE_ALIASES: Map[String, Set[String]] = Map(
     "mongodb" -> Set("com.mongodb.spark.sql.connector."))
 
   /**
-   * Friendly catalog names for which Ranger authorization should be skipped. Read
-   * from two sources and unioned:
+   * Entries for which Ranger authorization should be skipped. Each parsed entry is
+   * one of:
+   *   - a Spark-registered catalog name (e.g. `iceberg`, a tenant's own DSv2
+   *     catalog) -- matched by name against the relation's catalog in
+   *     [[isExcludedCatalog]].
+   *   - a fully-qualified Java class-name prefix ending with `.` (e.g.
+   *     `org.neo4j.spark.`) -- matched against `table.getClass.getName` in
+   *     [[isExcludedTableClass]] for catalog-less connectors. Admins can add new
+   *     catalog-less connectors via config alone, no code change.
+   *   - a built-in friendly alias from [[CATALOGLESS_TABLE_ALIASES]] (e.g.
+   *     `mongodb`) -- backward-compat shorthand that expands to a class prefix.
+   *
+   * Read from two sources and unioned:
    *   1. `spark.ranger.plugin.spark.authz.excluded.catalogs` in SparkConf --
    *      injectable per session via `--conf`, `SparkSession.builder.config(...)`,
    *      or `spark.conf.set(...)`.
@@ -367,16 +380,25 @@ object AccessResource {
     catalog.exists(excluded.contains)
 
   /**
-   * Whether a DSv2 `Table` implementation class is aliased by any friendly name in
-   * the excluded set. Match is by package/class prefix: an entry
-   * `"com.mongodb.spark.sql.connector."` matches `com.mongodb.spark.sql.connector.MongoTable`
-   * and any sibling class in that package. Fallback for catalog-less connectors
-   * whose DSv2 relations carry no `TableCatalog`.
+   * Whether a DSv2 `Table` implementation class matches any entry in the excluded
+   * set. Entries are interpreted by shape:
+   *   - ending with `.` -- a fully-qualified class-name prefix matched directly
+   *     against `className.startsWith(entry)` (e.g. `org.neo4j.spark.` matches
+   *     `org.neo4j.spark.v2.Neo4jTable`). Admins can add a new catalog-less
+   *     connector by appending its class prefix to the config; no code change.
+   *   - otherwise -- a friendly-name alias looked up in [[CATALOGLESS_TABLE_ALIASES]]
+   *     (e.g. `mongodb` expands to `com.mongodb.spark.sql.connector.`). Kept for
+   *     backward compat with pre-existing configs.
+   *
+   * Fallback for catalog-less connectors whose DSv2 relations carry no `TableCatalog`.
    */
-  def isExcludedTableClass(className: String, excluded: Set[String]): Boolean =
-    excluded.iterator
-      .flatMap(name => CATALOGLESS_TABLE_ALIASES.get(name).iterator.flatten)
-      .exists(prefix => className.startsWith(prefix))
+  def isExcludedTableClass(className: String, excluded: Set[String]): Boolean = {
+    val prefixes = excluded.iterator.flatMap { entry =>
+      if (entry.endsWith(".")) Iterator.single(entry)
+      else CATALOGLESS_TABLE_ALIASES.get(entry).iterator.flatten
+    }
+    prefixes.exists(prefix => className.startsWith(prefix))
+  }
 
   /**
    * Drop the cached per-session settings, so the next resource re-reads them.

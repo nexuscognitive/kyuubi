@@ -68,7 +68,10 @@ class StringSeqURIExtractor extends URIExtractor {
 
 class CatalogStorageFormatURIExtractor extends URIExtractor {
   override def apply(spark: SparkSession, v1: AnyRef): Seq[Uri] = {
-    v1.asInstanceOf[CatalogStorageFormat].locationUri.map(uri => Uri(uri.getPath)).toSeq
+    // URI.toString, not URI.getPath -- getPath drops scheme and authority, so an
+    // s3a://bucket/key reaches Ranger as just /key and policies written against
+    // the full URL silently miss. Mirrors CatalogTableURIExtractor.
+    v1.asInstanceOf[CatalogStorageFormat].locationUri.map(_.toString).map(Uri).toSeq
   }
 }
 
